@@ -9,16 +9,20 @@ import streamlit as st
 from PIL import Image, ImageOps
 from dotenv import load_dotenv
 
-# ---- Gemini ----
 import google.generativeai as genai
 
 # ------------- Setup -------------
 load_dotenv()
 st.set_page_config(page_title="Calorie Lens 🍽️", page_icon="🍽️", layout="wide")
 
-GEMINI_DEFAULT_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-1.5-flash")
-GEMINI_FALLBACK_VISION_MODEL = os.getenv("GEMINI_FALLBACK_VISION_MODEL", "gemini-pro-vision")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+# --- Keys & models from Streamlit Secrets (fallback to .env) ---
+GEMINI_DEFAULT_VISION_MODEL = (
+    st.secrets.get("GEMINI_VISION_MODEL", os.getenv("GEMINI_VISION_MODEL", "gemini-1.5-flash"))
+)
+GEMINI_FALLBACK_VISION_MODEL = (
+    st.secrets.get("GEMINI_FALLBACK_VISION_MODEL", os.getenv("GEMINI_FALLBACK_VISION_MODEL", "gemini-pro-vision"))
+)
+GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", os.getenv("GOOGLE_API_KEY"))
 
 if not GOOGLE_API_KEY:
     st.error("Missing GOOGLE_API_KEY in your environment. Create a .env file with GOOGLE_API_KEY=your_key")
@@ -26,7 +30,6 @@ if not GOOGLE_API_KEY:
 
 genai.configure(api_key=GOOGLE_API_KEY)
 
-# ------------- Prompt -------------
 SYSTEM_PROMPT = """You are a nutrition analyst. Given a single food photo, produce a careful, honest estimate.
 Return STRICT JSON with this schema (no extra text):
 
@@ -62,7 +65,7 @@ Rules:
 - Avoid hallucinating nutrition for invisible fillings.
 """
 
-# ------------- Utility -------------
+# Helpers
 def _image_to_part(uploaded_file) -> List[Dict[str, Any]]:
     """Convert uploaded file to Gemini inline data part."""
     if not uploaded_file:
@@ -70,14 +73,13 @@ def _image_to_part(uploaded_file) -> List[Dict[str, Any]]:
     bytes_data = uploaded_file.getvalue()
     return [{
         "mime_type": uploaded_file.type or "image/jpeg",
-        "data": bytes_data,  # IMPORTANT: key is 'data'
+        "data": bytes_data,  
     }]
 
 def _safe_json_loads(s: str) -> Dict[str, Any]:
     try:
         return json.loads(s)
     except Exception:
-        # try to extract JSON block if model added text
         try:
             start = s.find("{")
             end = s.rfind("}")
@@ -104,7 +106,6 @@ def _bytes_from_pil(img: Image.Image, format="JPEG", quality=90) -> bytes:
     img.save(buf, format=format, quality=quality)
     return buf.getvalue()
 
-# ------------- Model Call -------------
 def analyze_image_with_gemini(model_name: str, uploaded_file, user_notes: str="") -> Dict[str, Any]:
     image_parts = _image_to_part(uploaded_file)
 
