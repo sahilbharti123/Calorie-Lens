@@ -143,7 +143,7 @@ def analyze_image_with_gemini(model_name: str, uploaded_file, user_notes: str=""
     return data
 
 # ------------- UI -------------
-st.title("🍽️ Calorie Lens — Food Photo → Calories & Health Insights")
+st.title("🍽️ Calorie Lens: Food Photo → Calories & Health Insights")
 st.caption("Uses Google Gemini Vision. Estimates only; may be inaccurate. Not medical advice.")
 
 # Sidebar
