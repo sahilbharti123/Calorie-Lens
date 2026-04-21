@@ -1,331 +1,283 @@
-import os
+import csv
 import io
 import json
-import base64
-from datetime import datetime
-from typing import Dict, Any, List
-
-import streamlit as st
-from PIL import Image, ImageOps
-from dotenv import load_dotenv
+import os
+from datetime import date, datetime
+from typing import Any, Dict, List
 
 import google.generativeai as genai
+import streamlit as st
+from dotenv import load_dotenv
 
-# ------------- Setup -------------
+
 load_dotenv()
-st.set_page_config(page_title="Calorie Lens 🍽️", page_icon="🍽️", layout="wide")
+st.set_page_config(page_title="HealthifyMe-style Fitness Tracker", page_icon="💪", layout="wide")
 
-# --- Keys & models from Streamlit Secrets (fallback to .env) ---
-GEMINI_DEFAULT_VISION_MODEL = (
-    st.secrets.get("GEMINI_VISION_MODEL", os.getenv("GEMINI_VISION_MODEL", "gemini-1.5-flash"))
-)
-GEMINI_FALLBACK_VISION_MODEL = (
-    st.secrets.get("GEMINI_FALLBACK_VISION_MODEL", os.getenv("GEMINI_FALLBACK_VISION_MODEL", "gemini-pro-vision"))
-)
 GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", os.getenv("GOOGLE_API_KEY"))
+TEXT_MODEL = st.secrets.get("GEMINI_TEXT_MODEL", os.getenv("GEMINI_TEXT_MODEL", "gemini-1.5-flash"))
 
 if not GOOGLE_API_KEY:
-    st.error("Missing GOOGLE_API_KEY in your environment. Create a .env file with GOOGLE_API_KEY=your_key")
+    st.error("Missing GOOGLE_API_KEY. Add it to Streamlit secrets or your .env file.")
     st.stop()
 
 genai.configure(api_key=GOOGLE_API_KEY)
 
-SYSTEM_PROMPT = """You are a nutrition analyst. Given a single food photo, produce a careful, honest estimate.
-Return STRICT JSON with this schema (no extra text):
+MEAL_SLOTS = ["Breakfast", "Lunch", "Evening Snack", "Dinner"]
 
+CALORIE_PROMPT = """You are a nutrition logging assistant.
+User will provide one meal as free text with food names and quantities.
+Estimate calories and macros for each item using common Indian and global food references.
+Return STRICT JSON only:
 {
   "items": [
     {
       "name": "string",
-      "portion_grams": number,             // estimated edible grams for THIS item
-      "calories_kcal": number,             // estimated kcal for THIS item
-      "macros": {"protein_g": number, "carbs_g": number, "fat_g": number},
-      "tags": ["vegetarian|vegan|gluten_free|dairy_free|egg_free|nut_free|halal|kosher|unknown"...],
-      "allergens": ["milk","egg","fish","shellfish","tree_nuts","peanuts","wheat","soy","sesame"]
+      "quantity_text": "string",
+      "calories_kcal": number,
+      "protein_g": number,
+      "carbs_g": number,
+      "fat_g": number
     }
   ],
-  "totals": {
-    "portion_grams": number,
+  "meal_total": {
     "calories_kcal": number,
-    "macros": {"protein_g": number, "carbs_g": number, "fat_g": number}
+    "protein_g": number,
+    "carbs_g": number,
+    "fat_g": number
   },
-  "health_assessment": {
-    "summary": "2-4 sentences about healthfulness based on visual cues; include caveats",
-    "reasons_positive": ["..."],
-    "reasons_negative": ["..."],
-    "suggestions": ["practical swaps/portion advice"]
-  },
-  "confidence": 0-1
+  "confidence": 0-1,
+  "notes": "short caveat on uncertainty"
 }
-
 Rules:
-- If unsure, be conservative and say so via lower confidence.
-- Assume common recipes for the cuisine you detect.
-- Include sauces/oils if visible.
-- Avoid hallucinating nutrition for invisible fillings.
+- Be practical and conservative when uncertain.
+- Use quantity provided by user; infer only when needed.
+- Never add non-JSON text.
 """
 
-# Helpers
-def _image_to_part(uploaded_file) -> List[Dict[str, Any]]:
-    """Convert uploaded file to Gemini inline data part."""
-    if not uploaded_file:
-        raise ValueError("Invalid image file")
-    bytes_data = uploaded_file.getvalue()
-    return [{
-        "mime_type": uploaded_file.type or "image/jpeg",
-        "data": bytes_data,  
-    }]
 
-def _safe_json_loads(s: str) -> Dict[str, Any]:
+def _safe_json_loads(raw: str) -> Dict[str, Any]:
     try:
-        return json.loads(s)
+        return json.loads(raw)
     except Exception:
-        try:
-            start = s.find("{")
-            end = s.rfind("}")
-            if start != -1 and end != -1 and end > start:
-                return json.loads(s[start:end+1])
-        except Exception:
-            pass
-        return {}
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                return json.loads(raw[start : end + 1])
+            except Exception:
+                return {}
+    return {}
 
-def _sum_items(items: List[Dict[str, Any]]) -> Dict[str, Any]:
-    tot_g = sum(i.get("portion_grams", 0) for i in items)
-    tot_cal = sum(i.get("calories_kcal", 0) for i in items)
-    tot_pro = sum(i.get("macros", {}).get("protein_g", 0) for i in items)
-    tot_carb = sum(i.get("macros", {}).get("carbs_g", 0) for i in items)
-    tot_fat = sum(i.get("macros", {}).get("fat_g", 0) for i in items)
+
+def _today_state(day: str) -> Dict[str, Any]:
+    if "fitness_log" not in st.session_state:
+        st.session_state.fitness_log = {}
+    if day not in st.session_state.fitness_log:
+        st.session_state.fitness_log[day] = {
+            "water_ml": 0,
+            "sleep_hours": 0.0,
+            "steps": 0,
+            "weight_kg": None,
+            "meals": {slot: [] for slot in MEAL_SLOTS},
+            "exercises": [],
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+        }
+    return st.session_state.fitness_log[day]
+
+
+def estimate_meal_from_text(user_text: str) -> Dict[str, Any]:
+    model = genai.GenerativeModel(TEXT_MODEL)
+    response = model.generate_content([CALORIE_PROMPT, f"Meal text: {user_text}"])
+    payload = _safe_json_loads(response.text or "")
+
+    payload.setdefault("items", [])
+    payload.setdefault("meal_total", {"calories_kcal": 0, "protein_g": 0, "carbs_g": 0, "fat_g": 0})
+    payload.setdefault("confidence", 0.45)
+    payload.setdefault("notes", "Estimated using common references.")
+
+    if not payload["meal_total"]["calories_kcal"] and payload["items"]:
+        payload["meal_total"] = {
+            "calories_kcal": round(sum(i.get("calories_kcal", 0) for i in payload["items"]), 1),
+            "protein_g": round(sum(i.get("protein_g", 0) for i in payload["items"]), 1),
+            "carbs_g": round(sum(i.get("carbs_g", 0) for i in payload["items"]), 1),
+            "fat_g": round(sum(i.get("fat_g", 0) for i in payload["items"]), 1),
+        }
+
+    return payload
+
+
+def day_totals(day_log: Dict[str, Any]) -> Dict[str, float]:
+    calories = protein = carbs = fat = exercise_burn = 0.0
+    for slot in MEAL_SLOTS:
+        for entry in day_log["meals"][slot]:
+            meal_total = entry.get("meal_total", {})
+            calories += float(meal_total.get("calories_kcal", 0))
+            protein += float(meal_total.get("protein_g", 0))
+            carbs += float(meal_total.get("carbs_g", 0))
+            fat += float(meal_total.get("fat_g", 0))
+
+    for ex in day_log["exercises"]:
+        exercise_burn += float(ex.get("calories_burned", 0))
+
     return {
-        "portion_grams": round(tot_g, 1),
-        "calories_kcal": round(tot_cal, 0),
-        "macros": {"protein_g": round(tot_pro,1), "carbs_g": round(tot_carb,1), "fat_g": round(tot_fat,1)}
+        "calories_in": round(calories, 1),
+        "protein_g": round(protein, 1),
+        "carbs_g": round(carbs, 1),
+        "fat_g": round(fat, 1),
+        "calories_out": round(exercise_burn, 1),
+        "net_calories": round(calories - exercise_burn, 1),
     }
 
-def _bytes_from_pil(img: Image.Image, format="JPEG", quality=90) -> bytes:
-    buf = io.BytesIO()
-    img.save(buf, format=format, quality=quality)
-    return buf.getvalue()
 
-def analyze_image_with_gemini(model_name: str, uploaded_file, user_notes: str="") -> Dict[str, Any]:
-    image_parts = _image_to_part(uploaded_file)
+st.title("💪 HealthifyMe-style Personal Fitness Tracker")
+st.caption(
+    "Log food with plain text (e.g., '2 rotis + 1 cup dal'), track meals, water, exercise, steps, sleep, and calories in one place."
+)
 
-    user_prompt = SYSTEM_PROMPT
-    if user_notes:
-        user_prompt += f'\nUser notes/preferences/intolerances (may influence assessment): "{user_notes}".'
+selected_date = st.date_input("Tracking date", value=date.today())
+day_key = selected_date.isoformat()
+log = _today_state(day_key)
 
-    model = genai.GenerativeModel(model_name)
-    resp = model.generate_content([user_prompt, image_parts[0]])
-    text = resp.text or ""
-    data = _safe_json_loads(text)
-
-    # Minimal validation & backfill
-    if not data.get("items"):
-        data["items"] = []
-    for it in data["items"]:
-        it.setdefault("name", "unknown")
-        it.setdefault("portion_grams", 0)
-        it.setdefault("calories_kcal", 0)
-        it.setdefault("macros", {"protein_g":0,"carbs_g":0,"fat_g":0})
-        it.setdefault("tags", [])
-        it.setdefault("allergens", [])
-
-    if "totals" not in data or not data["totals"]:
-        data["totals"] = _sum_items(data["items"])
-
-    data.setdefault("health_assessment", {
-        "summary": "No assessment available.",
-        "reasons_positive": [],
-        "reasons_negative": [],
-        "suggestions": []
-    })
-    data.setdefault("confidence", 0.4)
-
-    return data
-
-# ------------- UI -------------
-st.title("🍽️ Calorie Lens: Food Photo → Calories & Health Insights")
-st.caption("Uses Google Gemini Vision. Estimates only; may be inaccurate. Not medical advice.")
-
-# Sidebar
 with st.sidebar:
-    st.header("Settings")
-    model_choice = st.selectbox(
-        "Vision model",
-        [GEMINI_DEFAULT_VISION_MODEL, GEMINI_FALLBACK_VISION_MODEL, "gemini-1.5-pro-latest"],
-        help="1.5-flash is fast & cheap, 1.5-pro is stronger, pro-vision is legacy."
+    st.header("Daily Goals")
+    calorie_goal = st.number_input("Calorie goal (kcal)", min_value=800, max_value=6000, value=2200, step=50)
+    water_goal = st.number_input("Water goal (ml)", min_value=500, max_value=8000, value=3000, step=100)
+    step_goal = st.number_input("Step goal", min_value=1000, max_value=50000, value=8000, step=500)
+    st.markdown("---")
+    st.caption("All data is stored in the current app session.")
+
+summary = day_totals(log)
+m1, m2, m3, m4, m5 = st.columns(5)
+m1.metric("Calories In", f"{summary['calories_in']:.0f} kcal")
+m2.metric("Calories Out", f"{summary['calories_out']:.0f} kcal")
+m3.metric("Net", f"{summary['net_calories']:.0f} kcal", delta=f"Goal {calorie_goal} kcal")
+m4.metric("Water", f"{log['water_ml']} ml", delta=f"{log['water_ml']-water_goal} vs goal")
+m5.metric("Steps", f"{log['steps']}", delta=f"{log['steps']-step_goal} vs goal")
+
+st.progress(min(log["water_ml"] / max(water_goal, 1), 1.0), text="Water goal progress")
+
+track_tab, meals_tab, exercise_tab, export_tab = st.tabs(["Daily Tracking", "Meal Logging", "Exercise", "Export / History"])
+
+with track_tab:
+    st.subheader("Body + Lifestyle")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        log["water_ml"] = st.number_input("Water intake (ml)", min_value=0, max_value=10000, step=100, value=int(log["water_ml"]))
+    with c2:
+        log["sleep_hours"] = st.number_input("Sleep (hours)", min_value=0.0, max_value=24.0, step=0.5, value=float(log["sleep_hours"]))
+    with c3:
+        log["steps"] = st.number_input("Steps", min_value=0, max_value=100000, step=100, value=int(log["steps"]))
+
+    weight_value = 60.0 if log["weight_kg"] is None else float(log["weight_kg"])
+    log["weight_kg"] = st.number_input("Weight (kg)", min_value=20.0, max_value=300.0, step=0.1, value=weight_value)
+
+with meals_tab:
+    st.subheader("Log Meals with Natural Language")
+    meal_slot = st.selectbox("Meal type", MEAL_SLOTS)
+    meal_text = st.text_area(
+        "What did you eat? Include quantity.",
+        placeholder="Example: 2 egg omelette with 1 tsp butter, 2 slices whole wheat toast, 1 banana",
     )
-    enable_camera = st.toggle("Use camera input", value=False)
-    st.markdown("---")
-    st.write("**Optional notes** (diet goals, allergies, cuisine, etc.)")
-    user_notes = st.text_area("Notes", placeholder="e.g., lactose intolerant, tracking high protein…")
-    st.markdown("---")
-    st.info("Tip: Good lighting and a clear angle improve recognition. Include cutlery for scale if possible.")
 
-# Main input
-col1, col2 = st.columns([1,1])
-
-with col1:
-    uploaded_file = None
-    if enable_camera:
-        cam = st.camera_input("Take a photo")
-        if cam: uploaded_file = cam
-    else:
-        uploaded_file = st.file_uploader("Upload a food image", type=["jpg","jpeg","png","webp"])
-
-    analyze_btn = st.button("Analyze Image 🔍", type="primary", use_container_width=True, disabled=not uploaded_file)
-
-with col2:
-    st.subheader("History")
-    if "history" not in st.session_state:
-        st.session_state.history = []
-    if st.session_state.history:
-        for i, h in enumerate(reversed(st.session_state.history[-5:])):
-            with st.expander(f"{h['timestamp']} · {h['totals']['calories_kcal']} kcal · {h.get('title','(image)')}"):
-                st.json(h["result"])
-    else:
-        st.caption("No analyses yet.")
-
-# ------------- Run analysis -------------
-if analyze_btn and uploaded_file:
-    try:
-        # Preprocess: light EXIF fix & resize cap
-        img = Image.open(uploaded_file).convert("RGB")
-        img = ImageOps.exif_transpose(img)
-        # limit very large images for latency
-        max_dim = 1600
-        if max(img.size) > max_dim:
-            img.thumbnail((max_dim, max_dim))
-
-        # Replace uploaded file bytes with processed image bytes for consistent input
-        processed = _bytes_from_pil(img)
-        uploaded_file = type("UploadedLike", (), {
-            "getvalue": lambda self: processed,
-            "type": "image/jpeg",
-            "name": getattr(uploaded_file, "name", "photo.jpg")
-        })()
-
-        # Primary call
-        data = analyze_image_with_gemini(model_choice, uploaded_file, user_notes)
-
-        # UI: show image and quick metrics
-        st.image(img, caption="Analyzed image", use_container_width=True)
-        totals = data["totals"]
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Calories", f"{totals['calories_kcal']:.0f} kcal")
-        m2.metric("Total Portion", f"{totals['portion_grams']:.0f} g")
-        m3.metric("Protein", f"{totals['macros']['protein_g']:.1f} g")
-        m4.metric("Carbs / Fat", f"{totals['macros']['carbs_g']:.1f} g / {totals['macros']['fat_g']:.1f} g")
-
-        # Per-item editable portions
-        st.subheader("Per-item breakdown (adjust portions if needed)")
-        new_items = []
-        for idx, item in enumerate(data["items"]):
-            with st.expander(f"{idx+1}. {item['name']} — {item['calories_kcal']:.0f} kcal (est.)"):
-                c1, c2 = st.columns([2,1])
-                with c1:
-                    st.write(f"Estimated macros: **P {item['macros']['protein_g']} g** · **C {item['macros']['carbs_g']} g** · **F {item['macros']['fat_g']} g**")
-                    st.write(f"Tags: {', '.join(item.get('tags',[]) or ['—'])}")
-                    st.write(f"Potential allergens: {', '.join(item.get('allergens',[]) or ['—'])}")
-                with c2:
-                    portion = st.number_input(
-                        f"Portion (g) — {item['name']}",
-                        min_value=0.0,
-                        value=float(item.get("portion_grams", 0.0)),
-                        step=5.0,
-                        key=f"portion_{idx}"
-                    )
-                # Re-scale calories/macros linearly with portion change (assume model's estimate is baseline)
-                baseline_g = max(item.get("portion_grams", 1e-6), 1e-6)
-                scale = (portion / baseline_g) if baseline_g > 0 else 1.0
-                adj_item = {
-                    **item,
-                    "portion_grams": round(portion,1),
-                    "calories_kcal": round(item["calories_kcal"] * scale, 1),
-                    "macros": {
-                        "protein_g": round(item["macros"]["protein_g"] * scale, 2),
-                        "carbs_g": round(item["macros"]["carbs_g"] * scale, 2),
-                        "fat_g": round(item["macros"]["fat_g"] * scale, 2),
+    if st.button("Estimate and add meal", type="primary", use_container_width=True):
+        if not meal_text.strip():
+            st.warning("Please enter a meal description first.")
+        else:
+            with st.spinner("Estimating calories and macros..."):
+                result = estimate_meal_from_text(meal_text.strip())
+                log["meals"][meal_slot].append(
+                    {
+                        "logged_at": datetime.now().strftime("%H:%M"),
+                        "input_text": meal_text.strip(),
+                        **result,
                     }
+                )
+            st.success(f"Added to {meal_slot}.")
+
+    st.markdown("### Today's meal log")
+    for slot in MEAL_SLOTS:
+        entries = log["meals"][slot]
+        with st.expander(f"{slot} ({len(entries)} entries)", expanded=(slot == "Breakfast")):
+            if not entries:
+                st.caption("No entries yet.")
+                continue
+            for idx, entry in enumerate(entries, start=1):
+                mt = entry.get("meal_total", {})
+                st.markdown(
+                    f"**{idx}. {entry['logged_at']}** — {mt.get('calories_kcal', 0):.0f} kcal · "
+                    f"P {mt.get('protein_g', 0):.1f}g · C {mt.get('carbs_g', 0):.1f}g · F {mt.get('fat_g', 0):.1f}g"
+                )
+                st.caption(f"Input: {entry.get('input_text', '')}")
+                if entry.get("notes"):
+                    st.caption(f"Note: {entry['notes']} (confidence {entry.get('confidence', 0):.2f})")
+                if entry.get("items"):
+                    st.table(entry["items"])
+
+with exercise_tab:
+    st.subheader("Track Exercise")
+    ex1, ex2, ex3 = st.columns(3)
+    with ex1:
+        exercise_name = st.text_input("Exercise name", placeholder="Brisk walking")
+    with ex2:
+        duration_min = st.number_input("Duration (minutes)", min_value=0, max_value=600, value=30, step=5)
+    with ex3:
+        calories_burned = st.number_input("Calories burned (kcal)", min_value=0, max_value=3000, value=150, step=10)
+
+    if st.button("Add exercise"):
+        if exercise_name.strip():
+            log["exercises"].append(
+                {
+                    "name": exercise_name.strip(),
+                    "duration_min": duration_min,
+                    "calories_burned": calories_burned,
+                    "logged_at": datetime.now().strftime("%H:%M"),
                 }
-                new_items.append(adj_item)
+            )
+            st.success("Exercise added.")
+        else:
+            st.warning("Please provide an exercise name.")
 
-        # Recompute totals after user adjustments
-        adj_totals = _sum_items(new_items)
-        st.markdown("### Adjusted totals")
-        t1, t2, t3, t4 = st.columns(4)
-        t1.metric("Calories", f"{adj_totals['calories_kcal']:.0f} kcal")
-        t2.metric("Portion", f"{adj_totals['portion_grams']:.0f} g")
-        t3.metric("Protein", f"{adj_totals['macros']['protein_g']:.1f} g")
-        t4.metric("Carbs / Fat", f"{adj_totals['macros']['carbs_g']:.1f} g / {adj_totals['macros']['fat_g']:.1f} g")
+    if log["exercises"]:
+        st.table(log["exercises"])
+    else:
+        st.caption("No exercises added yet.")
 
-        # Health assessment
-        st.subheader("Health Assessment")
-        ha = data.get("health_assessment", {})
-        st.write(ha.get("summary",""))
-        cpos, cneg, csug = st.columns(3)
-        with cpos:
-            st.markdown("**Positives**")
-            st.write("\n".join([f"• {r}" for r in ha.get("reasons_positive", [])]) or "—")
-        with cneg:
-            st.markdown("**Watch-outs**")
-            st.write("\n".join([f"• {r}" for r in ha.get("reasons_negative", [])]) or "—")
-        with csug:
-            st.markdown("**Suggestions**")
-            st.write("\n".join([f"• {r}" for r in ha.get("suggestions", [])]) or "—")
+with export_tab:
+    st.subheader("Daily Summary")
+    st.json({"date": day_key, "summary": summary, "log": log})
 
-        st.caption(f"Model confidence: **{data.get('confidence',0):.2f}** (0=low, 1=high)")
+    payload = {"date": day_key, "summary": summary, "log": log}
+    st.download_button(
+        "Download day JSON",
+        data=json.dumps(payload, indent=2).encode("utf-8"),
+        file_name=f"fitness_log_{day_key}.json",
+        mime="application/json",
+    )
 
-        # Downloads
-        st.subheader("Export")
-        export_payload = {
-            "timestamp": datetime.now().isoformat(timespec="seconds"),
-            "notes": user_notes,
-            "items": new_items,
-            "totals": adj_totals,
-            "model": model_choice,
-            "confidence": data.get("confidence", 0)
-        }
-        st.download_button(
-            "Download JSON",
-            data=json.dumps(export_payload, indent=2).encode("utf-8"),
-            file_name="calorie_lens_result.json",
-            mime="application/json"
-        )
+    csv_buf = io.StringIO()
+    writer = csv.writer(csv_buf)
+    writer.writerow(["date", "meal", "logged_at", "input_text", "calories_kcal", "protein_g", "carbs_g", "fat_g"])
+    for slot in MEAL_SLOTS:
+        for entry in log["meals"][slot]:
+            mt = entry.get("meal_total", {})
+            writer.writerow(
+                [
+                    day_key,
+                    slot,
+                    entry.get("logged_at", ""),
+                    entry.get("input_text", ""),
+                    mt.get("calories_kcal", 0),
+                    mt.get("protein_g", 0),
+                    mt.get("carbs_g", 0),
+                    mt.get("fat_g", 0),
+                ]
+            )
 
-        # CSV export
-        import csv
-        csv_buf = io.StringIO()
-        writer = csv.writer(csv_buf)
-        writer.writerow(["name","portion_grams","calories_kcal","protein_g","carbs_g","fat_g","tags","allergens"])
-        for it in new_items:
-            writer.writerow([
-                it["name"],
-                it["portion_grams"],
-                it["calories_kcal"],
-                it["macros"]["protein_g"],
-                it["macros"]["carbs_g"],
-                it["macros"]["fat_g"],
-                "|".join(it.get("tags",[])),
-                "|".join(it.get("allergens",[])),
-            ])
-        st.download_button(
-            "Download CSV",
-            data=csv_buf.getvalue().encode("utf-8"),
-            file_name="calorie_lens_items.csv",
-            mime="text/csv"
-        )
+    st.download_button(
+        "Download meals CSV",
+        data=csv_buf.getvalue().encode("utf-8"),
+        file_name=f"meals_{day_key}.csv",
+        mime="text/csv",
+    )
 
-        # Save to history
-        st.session_state.history.append({
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "title": uploaded_file.name if hasattr(uploaded_file, "name") else "photo.jpg",
-            "result": export_payload,
-            "totals": adj_totals
-        })
-
-        # Disclaimer
-        st.info("This is an automated estimate from an image and can be wrong. For medical or dietary advice, consult a professional.")
-
-    except Exception as e:
-        st.error(f"Something went wrong: {e}")
-        st.stop()
+st.info("Estimates can be inaccurate. Use as a personal tracking aid, not medical advice.")
