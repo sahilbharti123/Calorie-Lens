@@ -22,3 +22,7 @@ venv/
 # Logs/cache
 *.log
 .cache/
+
+# Local app data
+.codex/
+data/fitness_logs.json
