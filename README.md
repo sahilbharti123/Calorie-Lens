@@ -1,6 +1,6 @@
 # Calorie Lens
 
-A personal HealthifyMe-style fitness tracker built with Streamlit.
+A personal HealthifyMe-style fitness tracker built with Streamlit. Try it here: https://calorie-lens-count.streamlit.app/
 
 ## What it does
 
