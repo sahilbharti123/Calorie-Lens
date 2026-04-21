@@ -23,6 +23,7 @@ APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = APP_DIR / "data"
 DATA_FILE = DATA_DIR / "fitness_logs.json"
 DEVICE_COOKIE_NAME = "calorie_lens_device"
+DEVICE_STORAGE_KEY = "calorie_lens_device_token"
 MEAL_SLOTS = ["Breakfast", "Lunch", "Evening Snack", "Dinner"]
 DEFAULT_PROFILE = {
     "display_name": "",
@@ -149,6 +150,8 @@ def default_day_log() -> Dict[str, Any]:
         "steps": 0,
         "weight_kg": None,
         "notes": "",
+        "mood": "Steady",
+        "energy": "Balanced",
         "meals": {slot: [] for slot in MEAL_SLOTS},
         "exercises": [],
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -222,6 +225,8 @@ def ensure_day(user: Dict[str, Any], day_key: str) -> Dict[str, Any]:
         user["days"][day_key] = default_day_log()
     day_log = user["days"][day_key]
     day_log.setdefault("notes", "")
+    day_log.setdefault("mood", "Steady")
+    day_log.setdefault("energy", "Balanced")
     day_log.setdefault("water_ml", 0)
     day_log.setdefault("sleep_hours", 0.0)
     day_log.setdefault("steps", 0)
@@ -241,8 +246,11 @@ def set_cookie(name: str, value: str, days: int = 365) -> None:
     components.html(
         f"""
         <script>
-        const expires = new Date(Date.now() + {days} * 24 * 60 * 60 * 1000).toUTCString();
-        document.cookie = {json.dumps(name)} + "=" + {json.dumps(value)} + "; expires=" + expires + "; path=/; SameSite=Lax";
+        const tokenValue = {json.dumps(value)};
+        const maxAge = {days} * 24 * 60 * 60;
+        const secureFlag = window.location.protocol === "https:" ? "; Secure" : "";
+        document.cookie = {json.dumps(name)} + "=" + tokenValue + "; max-age=" + maxAge + "; path=/; SameSite=Lax" + secureFlag;
+        window.localStorage.setItem({json.dumps(DEVICE_STORAGE_KEY)}, tokenValue);
         </script>
         """,
         height=0,
@@ -253,7 +261,28 @@ def clear_cookie(name: str) -> None:
     components.html(
         f"""
         <script>
-        document.cookie = {json.dumps(name)} + "=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax";
+        const secureFlag = window.location.protocol === "https:" ? "; Secure" : "";
+        document.cookie = {json.dumps(name)} + "=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax" + secureFlag;
+        window.localStorage.removeItem({json.dumps(DEVICE_STORAGE_KEY)});
+        </script>
+        """,
+        height=0,
+    )
+
+
+def bootstrap_remembered_login() -> None:
+    components.html(
+        f"""
+        <script>
+        const cookieName = {json.dumps(DEVICE_COOKIE_NAME)};
+        const storageKey = {json.dumps(DEVICE_STORAGE_KEY)};
+        const hasCookie = document.cookie.split("; ").some((item) => item.startsWith(cookieName + "="));
+        const storedToken = window.localStorage.getItem(storageKey);
+        if (!hasCookie && storedToken) {{
+          const secureFlag = window.location.protocol === "https:" ? "; Secure" : "";
+          document.cookie = cookieName + "=" + storedToken + "; max-age=" + (365 * 24 * 60 * 60) + "; path=/; SameSite=Lax" + secureFlag;
+          window.setTimeout(() => window.location.reload(), 50);
+        }}
         </script>
         """,
         height=0,
@@ -626,7 +655,521 @@ def latest_known_weight(user: Dict[str, Any], day_key: str) -> float:
     return 60.0
 
 
+def ratio(current: float, goal: float) -> float:
+    if goal <= 0:
+        return 0.0
+    return max(0.0, min(current / goal, 1.0))
+
+
+def whole_ratio(current: float, goal: float) -> int:
+    return int(round(ratio(current, goal) * 100))
+
+
+def completion_streak(user: Dict[str, Any]) -> int:
+    streak = 0
+    cursor = date.today()
+    while True:
+        day_key = cursor.isoformat()
+        day_log = user["days"].get(day_key)
+        if not day_log:
+            break
+        totals = day_totals(day_log)
+        completed = 0
+        if totals["calories_in"] >= 0.6 * float(user["profile"]["calorie_goal"]):
+            completed += 1
+        if day_log.get("water_ml", 0) >= 0.8 * float(user["profile"]["water_goal"]):
+            completed += 1
+        if day_log.get("steps", 0) >= 0.8 * float(user["profile"]["step_goal"]):
+            completed += 1
+        if day_log.get("sleep_hours", 0) >= 6:
+            completed += 1
+        if completed < 2:
+            break
+        streak += 1
+        cursor -= timedelta(days=1)
+    return streak
+
+
+def readiness_score(day_log: Dict[str, Any], profile: Dict[str, Any], totals: Dict[str, float]) -> int:
+    score = 0
+    score += whole_ratio(day_log.get("water_ml", 0), float(profile["water_goal"])) * 0.25
+    score += whole_ratio(day_log.get("steps", 0), float(profile["step_goal"])) * 0.2
+    score += whole_ratio(totals["protein_g"], float(profile["protein_goal"])) * 0.25
+    sleep_component = min(max((float(day_log.get("sleep_hours", 0)) / 8.0) * 100, 0), 100)
+    score += sleep_component * 0.2
+    meal_component = min(sum(1 for slot in MEAL_SLOTS if day_log["meals"][slot]) * 25, 100)
+    score += meal_component * 0.1
+    return int(round(min(score, 100)))
+
+
+def consistency_score(day_log: Dict[str, Any], profile: Dict[str, Any], totals: Dict[str, float]) -> int:
+    calorie_balance = 100 - min(abs(totals["calories_in"] - float(profile["calorie_goal"])) / max(float(profile["calorie_goal"]), 1) * 100, 100)
+    water_balance = whole_ratio(day_log.get("water_ml", 0), float(profile["water_goal"]))
+    protein_balance = whole_ratio(totals["protein_g"], float(profile["protein_goal"]))
+    steps_balance = whole_ratio(day_log.get("steps", 0), float(profile["step_goal"]))
+    return int(round((calorie_balance * 0.35) + (water_balance * 0.2) + (protein_balance * 0.25) + (steps_balance * 0.2)))
+
+
+def focus_message(day_log: Dict[str, Any], profile: Dict[str, Any], totals: Dict[str, float]) -> Tuple[str, str]:
+    gaps = [
+        ("Hydration needs attention", day_log.get("water_ml", 0) < 0.6 * float(profile["water_goal"]), "Push another 500-750 ml over the next few hours."),
+        ("Protein is lagging", totals["protein_g"] < 0.7 * float(profile["protein_goal"]), "Aim for a protein-forward meal or shake in your next slot."),
+        ("Recovery is low", float(day_log.get("sleep_hours", 0)) < 6.5, "Keep training light and prioritize an earlier bedtime tonight."),
+        ("Movement can be stronger", day_log.get("steps", 0) < 0.6 * float(profile["step_goal"]), "Add a 10-15 minute walk after your next meal."),
+    ]
+    for title, condition, note in gaps:
+        if condition:
+            return title, note
+    return "You are in a strong groove", "Stay steady, keep portions consistent, and finish the day with a calm dinner."
+
+
+def coach_insight(day_log: Dict[str, Any], profile: Dict[str, Any], totals: Dict[str, float]) -> str:
+    readiness = readiness_score(day_log, profile, totals)
+    meal_count = sum(1 for slot in MEAL_SLOTS if day_log["meals"][slot])
+    if readiness >= 80:
+        return "You are showing excellent consistency today. Keep dinner lighter than lunch and protect your sleep to turn this into a strong full-day win."
+    if totals["protein_g"] < 0.6 * float(profile["protein_goal"]):
+        return "Your calorie intake may be moving, but your protein is still behind. Anchor the next meal around eggs, paneer, chicken, curd, or whey."
+    if day_log.get("water_ml", 0) < 0.5 * float(profile["water_goal"]):
+        return "Hydration is the easiest lever to improve today. Sip steadily instead of catching up all at once, and your hunger control should improve too."
+    if meal_count <= 1 and datetime.now().hour >= 14:
+        return "Your meal rhythm is sparse right now. Even a simple balanced meal will help energy, focus, and evening craving control."
+    if float(day_log.get("sleep_hours", 0)) < 6:
+        return "Low sleep changes hunger and recovery more than people think. Treat today like a maintenance day and avoid chasing intensity."
+    return "This looks balanced. Keep momentum by finishing your final meal on time and avoiding random snack drift late in the evening."
+
+
+def nutrient_split(totals: Dict[str, float]) -> List[Dict[str, Any]]:
+    return [
+        {"label": "Protein", "value": totals["protein_g"], "unit": "g", "tone": "var(--accent-forest)"},
+        {"label": "Carbs", "value": totals["carbs_g"], "unit": "g", "tone": "var(--accent-gold)"},
+        {"label": "Fat", "value": totals["fat_g"], "unit": "g", "tone": "var(--accent-coral)"},
+    ]
+
+
+def render_premium_theme() -> None:
+    st.markdown(
+        """
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap');
+
+        :root {
+          --bg-main: #f4f7f6;
+          --bg-card: rgba(255, 255, 255, 0.96);
+          --bg-strong: #ffffff;
+          --ink: #1f2937;
+          --muted: #5f6c7b;
+          --stroke: rgba(31, 41, 55, 0.10);
+          --accent-forest: #2f6f5e;
+          --accent-gold: #b88a44;
+          --accent-coral: #bf6f5d;
+          --accent-mint: #e7f0ec;
+          --shadow: 0 14px 32px rgba(15, 23, 42, 0.06);
+          --radius-xl: 28px;
+          --radius-lg: 20px;
+        }
+
+        .stApp {
+          background:
+            radial-gradient(circle at top left, rgba(47, 111, 94, 0.06), transparent 24%),
+            radial-gradient(circle at top right, rgba(184, 138, 68, 0.06), transparent 22%),
+            linear-gradient(180deg, #f5f7f8 0%, #f7faf9 58%, #eff4f2 100%);
+          color: var(--ink);
+          font-family: "DM Sans", sans-serif;
+        }
+
+        h1, h2, h3, .premium-title {
+          font-family: "Fraunces", serif !important;
+          letter-spacing: -0.03em;
+          color: var(--ink);
+        }
+
+        p, label, .stCaption, .stMarkdown, .stText {
+          color: var(--ink) !important;
+        }
+
+        [data-testid="stHeader"] {
+          background: transparent;
+        }
+
+        [data-testid="stSidebar"] {
+          background: linear-gradient(180deg, #eef4f1 0%, #f5f8f7 100%);
+          border-right: 1px solid var(--stroke);
+        }
+
+        [data-testid="stSidebar"] * {
+          color: var(--ink) !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
+        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] *,
+        [data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+        [data-testid="stSidebar"] [data-testid="stCaptionContainer"] *,
+        [data-testid="stSidebar"] .stCaption {
+          color: var(--ink) !important;
+          opacity: 1 !important;
+        }
+
+        [data-testid="stSidebar"] .stNumberInput label,
+        [data-testid="stSidebar"] .stTextInput label,
+        [data-testid="stSidebar"] .stSelectbox label,
+        [data-testid="stSidebar"] .stDateInput label,
+        [data-testid="stSidebar"] .stCaption,
+        [data-testid="stSidebar"] p,
+        [data-testid="stSidebar"] h1,
+        [data-testid="stSidebar"] h2,
+        [data-testid="stSidebar"] h3 {
+          color: var(--ink) !important;
+        }
+
+        [data-testid="stMetric"] {
+          background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(250,252,251,0.98));
+          border: 1px solid rgba(59, 72, 63, 0.07);
+          border-radius: 22px;
+          padding: 18px 18px 16px 18px;
+          box-shadow: var(--shadow);
+        }
+
+        [data-testid="stMetricLabel"],
+        [data-testid="stMetricValue"],
+        [data-testid="stMetricDelta"] {
+          color: var(--ink) !important;
+        }
+
+        .stTabs [data-baseweb="tab-list"] {
+          gap: 10px;
+          background: rgba(255,255,255,0.76);
+          padding: 8px;
+          border-radius: 999px;
+          border: 1px solid var(--stroke);
+        }
+
+        .stTabs [data-baseweb="tab"] {
+          border-radius: 999px;
+          padding: 10px 18px;
+          font-weight: 600;
+          color: var(--muted);
+        }
+
+        .stTabs [aria-selected="true"] {
+          background: linear-gradient(135deg, #e9efe9, #f3f6f1) !important;
+          color: var(--ink) !important;
+          border: 1px solid rgba(103, 134, 114, 0.20);
+        }
+
+        .stButton > button, .stDownloadButton > button, .stFormSubmitButton > button {
+          border-radius: 999px;
+          border: 1px solid rgba(103, 134, 114, 0.16);
+          background: linear-gradient(135deg, var(--accent-forest), #3e8571);
+          color: #ffffff !important;
+          font-weight: 600;
+          padding: 0.65rem 1.1rem;
+          box-shadow: 0 10px 24px rgba(57, 67, 61, 0.08);
+        }
+
+        .stButton > button[kind="secondary"] {
+          background: rgba(255,255,255,0.82);
+          color: var(--ink) !important;
+        }
+
+        .stTextInput input,
+        .stTextArea textarea,
+        .stNumberInput input,
+        .stDateInput input,
+        .stSelectbox [data-baseweb="select"] > div,
+        .stMultiSelect [data-baseweb="select"] > div {
+          border-radius: 18px !important;
+          background: rgba(255,255,255,0.98) !important;
+          color: var(--ink) !important;
+          border: 1px solid rgba(59, 72, 63, 0.09) !important;
+        }
+
+        .stTextInput input,
+        .stTextArea textarea,
+        .stNumberInput input,
+        .stDateInput input,
+        .stDateInput input::placeholder,
+        .stTextInput input::placeholder,
+        .stTextArea textarea::placeholder,
+        .stNumberInput input::placeholder,
+        [data-baseweb="input"] input,
+        [data-baseweb="base-input"] input {
+          -webkit-text-fill-color: var(--ink) !important;
+        }
+
+        .stDateInput [data-baseweb="input"],
+        .stDateInput [data-baseweb="base-input"],
+        .stTextInput [data-baseweb="input"],
+        .stTextArea [data-baseweb="base-input"],
+        .stNumberInput [data-baseweb="input"],
+        [data-testid="stSidebar"] [data-baseweb="input"],
+        [data-testid="stSidebar"] [data-baseweb="base-input"],
+        [data-testid="stSidebar"] [data-baseweb="select"] > div {
+          background: #ffffff !important;
+          color: var(--ink) !important;
+          border-radius: 16px !important;
+        }
+
+        .stDateInput [data-baseweb="input"] input,
+        .stDateInput [data-baseweb="base-input"] input,
+        [data-testid="stSidebar"] [data-baseweb="input"] input,
+        [data-testid="stSidebar"] [data-baseweb="base-input"] input {
+          color: var(--ink) !important;
+          -webkit-text-fill-color: var(--ink) !important;
+          opacity: 1 !important;
+        }
+
+        .stTextArea textarea::placeholder,
+        .stTextInput input::placeholder,
+        .stNumberInput input::placeholder,
+        .stDateInput input::placeholder {
+          color: var(--muted) !important;
+          opacity: 1 !important;
+        }
+
+        .stTextArea label,
+        .stTextInput label,
+        .stNumberInput label,
+        .stDateInput label,
+        .stSelectbox label,
+        .stMultiSelect label {
+          color: var(--ink) !important;
+          font-weight: 600 !important;
+        }
+
+        .stDateInput button,
+        .stSelectbox svg,
+        .stNumberInput button svg,
+        .stDateInput svg,
+        [data-testid="stSidebar"] svg {
+          color: var(--ink) !important;
+          fill: var(--ink) !important;
+        }
+
+        textarea, input, [role="combobox"] {
+          color: var(--ink) !important;
+        }
+
+        [data-testid="stSidebar"] [role="combobox"],
+        [data-testid="stSidebar"] input,
+        [data-testid="stSidebar"] textarea {
+          color: var(--ink) !important;
+          -webkit-text-fill-color: var(--ink) !important;
+        }
+
+        .stNumberInput button,
+        .stDateInput button,
+        [data-baseweb="input"] button,
+        [data-baseweb="base-input"] button {
+          background: #ffffff !important;
+          color: var(--ink) !important;
+          border: 1px solid rgba(59, 72, 63, 0.10) !important;
+          border-radius: 12px !important;
+        }
+
+        .stNumberInput button span,
+        .stDateInput button span,
+        [data-baseweb="input"] button span,
+        [data-baseweb="base-input"] button span {
+          color: var(--ink) !important;
+        }
+
+        .account-badge {
+          background: rgba(255,255,255,0.92);
+          border: 1px solid rgba(31, 41, 55, 0.08);
+          border-radius: 16px;
+          padding: 12px 14px;
+          margin-bottom: 12px;
+          color: var(--ink) !important;
+          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
+        }
+
+        .account-badge .label {
+          display: block;
+          color: var(--muted) !important;
+          font-size: 0.76rem;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          font-weight: 700;
+          margin-bottom: 4px;
+        }
+
+        .account-badge .value {
+          color: var(--ink) !important;
+          font-weight: 700;
+          font-size: 0.98rem;
+        }
+
+        .premium-hero {
+          background:
+            linear-gradient(135deg, rgba(255,255,255,0.98), rgba(247,250,249,0.98)),
+            radial-gradient(circle at top right, rgba(184, 138, 68, 0.08), transparent 28%);
+          border-radius: 30px;
+          padding: 28px 30px;
+          color: var(--ink);
+          border: 1px solid rgba(59, 72, 63, 0.08);
+          box-shadow: var(--shadow);
+          margin-bottom: 16px;
+        }
+
+        .premium-kicker {
+          text-transform: uppercase;
+          letter-spacing: 0.14em;
+          font-size: 0.72rem;
+          opacity: 0.88;
+          font-weight: 600;
+          color: var(--muted);
+        }
+
+        .premium-hero h1 {
+          color: var(--ink);
+          margin: 0.35rem 0 0.4rem 0;
+          font-size: 2.05rem;
+          font-weight: 600;
+          line-height: 1.15;
+        }
+
+        .premium-hero p {
+          color: var(--muted);
+          margin: 0;
+          max-width: 700px;
+          font-size: 1rem;
+          line-height: 1.6;
+        }
+
+        .glass-card {
+          background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(250,252,251,0.96));
+          border: 1px solid rgba(59, 72, 63, 0.07);
+          border-radius: 26px;
+          padding: 20px 22px;
+          box-shadow: var(--shadow);
+          margin-bottom: 16px;
+        }
+
+        .coach-card {
+          background: linear-gradient(180deg, #fffdfa, #faf7f2);
+          border: 1px solid rgba(197, 162, 106, 0.18);
+          border-radius: 24px;
+          padding: 20px 22px;
+          box-shadow: var(--shadow);
+        }
+
+        .mini-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+          gap: 12px;
+          margin-top: 14px;
+        }
+
+        .mini-stat {
+          background: rgba(255,255,255,0.74);
+          border: 1px solid rgba(59, 72, 63, 0.05);
+          border-radius: 18px;
+          padding: 14px 16px;
+        }
+
+        .mini-label {
+          color: var(--muted);
+          font-size: 0.78rem;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          font-weight: 700;
+        }
+
+        .mini-value {
+          color: var(--ink);
+          font-size: 1.45rem;
+          font-weight: 600;
+          margin-top: 6px;
+        }
+
+        .pill-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+          margin-top: 10px;
+        }
+
+        .pill {
+          padding: 8px 12px;
+          border-radius: 999px;
+          background: rgba(233, 240, 234, 0.92);
+          color: var(--accent-forest);
+          font-weight: 600;
+          font-size: 0.85rem;
+        }
+
+        .progress-shell {
+          margin-top: 10px;
+          background: rgba(31, 41, 55, 0.08);
+          border-radius: 999px;
+          height: 10px;
+          overflow: hidden;
+        }
+
+        .progress-bar {
+          height: 10px;
+          border-radius: 999px;
+          background: linear-gradient(90deg, #d4b78c, #88a192);
+        }
+
+        .nutrient-row {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 12px;
+        }
+
+        .nutrient-card {
+          border-radius: 18px;
+          padding: 16px;
+          background: rgba(255,255,255,0.72);
+          border: 1px solid rgba(31, 51, 37, 0.06);
+        }
+
+        .table-wrap {
+          background: rgba(255,255,255,0.76);
+          border-radius: 22px;
+          padding: 10px;
+          border: 1px solid rgba(59, 72, 63, 0.07);
+        }
+
+        [data-testid="stSidebar"] .stButton > button,
+        [data-testid="stSidebar"] .stFormSubmitButton > button {
+          background: linear-gradient(135deg, var(--accent-forest), #3e8571);
+          color: #ffffff !important;
+        }
+
+        [data-testid="stSidebar"] input {
+          color: var(--ink) !important;
+          -webkit-text-fill-color: var(--ink) !important;
+        }
+
+        .stSelectbox label, .stNumberInput label, .stTextArea label, .stTextInput label, .stDateInput label {
+          color: var(--ink) !important;
+        }
+
+        .stSlider label,
+        .stSelectSlider label {
+          color: var(--ink) !important;
+        }
+
+        .stAlert {
+          color: var(--ink) !important;
+        }
+
+        @media (max-width: 768px) {
+          .premium-hero { padding: 22px 20px; }
+          .premium-hero h1 { font-size: 1.75rem; }
+          .nutrient-row { grid-template-columns: 1fr; }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 store = get_store()
+bootstrap_remembered_login()
 if st.session_state.pop("clear_device_cookie", False):
     clear_cookie(DEVICE_COOKIE_NAME)
 else:
@@ -641,18 +1184,23 @@ else:
     username = auth_username
     user = ensure_user(store, username)
     profile = user["profile"]
+    render_premium_theme()
 
     pending_device_cookie = st.session_state.pop("pending_device_cookie", None)
     if pending_device_cookie:
         set_cookie(DEVICE_COOKIE_NAME, pending_device_cookie)
 
-    display_name = profile.get("display_name") or username
-    st.title(f"Calorie Lens - {display_name}")
-    st.caption("Personal meal, water, exercise, sleep, and calorie tracking with separate accounts for each user.")
-
     with st.sidebar:
         st.header("Account")
-        st.caption(f"Logged in as `{username}`")
+        st.markdown(
+            f"""
+            <div class="account-badge">
+              <span class="label">Logged In As</span>
+              <span class="value">{username}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         if st.button("Log out", use_container_width=True):
             logout_user(store)
             st.rerun()
@@ -697,6 +1245,92 @@ else:
 
     summary = day_totals(log)
     meal_completion = sum(1 for slot in MEAL_SLOTS if log["meals"][slot])
+    streak = completion_streak(user)
+    readiness = readiness_score(log, profile, summary)
+    consistency = consistency_score(log, profile, summary)
+    focus_title, focus_note = focus_message(log, profile, summary)
+    coach_text = coach_insight(log, profile, summary)
+    exercise_sessions = len(log["exercises"])
+    total_duration = sum(int(ex.get("duration_min", 0)) for ex in log["exercises"])
+    avg_duration = round(total_duration / exercise_sessions, 1) if exercise_sessions else 0.0
+    calories_goal_delta = summary["calories_in"] - float(profile["calorie_goal"])
+
+    st.markdown(
+        f"""
+        <section class="premium-hero">
+          <div class="premium-kicker">Daily Coaching Studio</div>
+          <h1>Build a calm, steady, healthy day.</h1>
+          <p>
+            A softer health dashboard that keeps your food rhythm, hydration, recovery,
+            and movement in one clear place so progress feels grounded and easy to follow.
+          </p>
+          <div class="mini-grid">
+            <div class="mini-stat">
+              <div class="mini-label">Momentum Streak</div>
+              <div class="mini-value">{streak} day{"s" if streak != 1 else ""}</div>
+            </div>
+            <div class="mini-stat">
+              <div class="mini-label">Readiness</div>
+              <div class="mini-value">{readiness}/100</div>
+            </div>
+            <div class="mini-stat">
+              <div class="mini-label">Consistency</div>
+              <div class="mini-value">{consistency}/100</div>
+            </div>
+            <div class="mini-stat">
+              <div class="mini-label">Today's Focus</div>
+              <div class="mini-value" style="font-size:1.05rem; line-height:1.35;">{focus_title}</div>
+            </div>
+          </div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    top_left, top_right = st.columns([1.25, 1])
+    with top_left:
+        st.markdown(
+            f"""
+            <div class="coach-card">
+              <div class="premium-kicker" style="color: var(--accent-gold);">Coach Insight</div>
+              <h3 style="margin: 0.45rem 0 0.65rem 0;">{focus_title}</h3>
+              <p style="margin:0; color: var(--muted);">{coach_text}</p>
+              <div class="pill-row">
+                <div class="pill">Mood: {log.get("mood", "Steady")}</div>
+                <div class="pill">Energy: {log.get("energy", "Balanced")}</div>
+                <div class="pill">Net: {summary["net_calories"]:.0f} kcal</div>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with top_right:
+        st.markdown(
+            f"""
+            <div class="glass-card">
+              <div class="premium-kicker">Rhythm Overview</div>
+              <div class="mini-grid">
+                <div class="mini-stat">
+                  <div class="mini-label">Meals Logged</div>
+                  <div class="mini-value">{meal_completion}/4</div>
+                </div>
+                <div class="mini-stat">
+                  <div class="mini-label">Exercise</div>
+                  <div class="mini-value">{exercise_sessions}</div>
+                </div>
+                <div class="mini-stat">
+                  <div class="mini-label">Average Session</div>
+                  <div class="mini-value">{avg_duration:.0f} min</div>
+                </div>
+                <div class="mini-stat">
+                  <div class="mini-label">Calorie Gap</div>
+                  <div class="mini-value">{calories_goal_delta:+.0f}</div>
+                </div>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     m1, m2, m3, m4, m5, m6 = st.columns(6)
     m1.metric("Calories In", f"{summary['calories_in']:.0f} kcal", delta=f"{summary['calories_in'] - profile['calorie_goal']:.0f} vs goal")
@@ -709,81 +1343,169 @@ else:
     st.progress(min(summary["calories_in"] / max(profile["calorie_goal"], 1), 1.0), text="Calorie goal progress")
     st.progress(min(log["water_ml"] / max(profile["water_goal"], 1), 1.0), text="Water goal progress")
 
-    dashboard_tab, meals_tab, exercise_tab, history_tab = st.tabs(["Dashboard", "Meals", "Exercise", "History & Export"])
+    dashboard_tab, meals_tab, exercise_tab, history_tab = st.tabs(["Command Center", "Meals", "Movement", "History & Export"])
 
     with dashboard_tab:
-        st.subheader("Daily Fitness Check-In")
-        with st.form("daily_checkin_form"):
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                water_input = st.number_input(
-                    "Water intake (ml)", min_value=0, max_value=10000, step=100, value=int(log["water_ml"])
-                )
-            with c2:
-                sleep_input = st.number_input(
-                    "Sleep (hours)", min_value=0.0, max_value=24.0, step=0.5, value=float(log["sleep_hours"])
-                )
-            with c3:
-                steps_input = st.number_input("Steps", min_value=0, max_value=100000, step=100, value=int(log["steps"]))
-            with c4:
-                weight_input = st.number_input(
-                    "Weight (kg)",
-                    min_value=20.0,
-                    max_value=300.0,
-                    step=0.1,
-                    value=latest_known_weight(user, day_key),
-                )
+        left_col, right_col = st.columns([1.08, 0.92])
 
-            notes_input = st.text_area(
-                "Daily notes",
-                value=log.get("notes", ""),
-                placeholder="Energy levels, cravings, mood, digestion, training quality, anything useful for your own tracking.",
-                height=100,
-            )
-            save_daily_checkin = st.form_submit_button("Save daily check-in", use_container_width=True)
-            if save_daily_checkin:
-                log["water_ml"] = int(water_input)
-                log["sleep_hours"] = float(sleep_input)
-                log["steps"] = int(steps_input)
-                log["weight_kg"] = float(weight_input)
-                log["notes"] = notes_input
+        with left_col:
+            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+            st.subheader("Daily Check-In")
+            with st.form("daily_checkin_form"):
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    water_input = st.number_input(
+                        "Water intake (ml)", min_value=0, max_value=10000, step=100, value=int(log["water_ml"])
+                    )
+                with c2:
+                    sleep_input = st.number_input(
+                        "Sleep (hours)", min_value=0.0, max_value=24.0, step=0.5, value=float(log["sleep_hours"])
+                    )
+                with c3:
+                    steps_input = st.number_input("Steps", min_value=0, max_value=100000, step=100, value=int(log["steps"]))
+                with c4:
+                    weight_input = st.number_input(
+                        "Weight (kg)",
+                        min_value=20.0,
+                        max_value=300.0,
+                        step=0.1,
+                        value=latest_known_weight(user, day_key),
+                    )
+
+                c5, c6 = st.columns(2)
+                with c5:
+                    mood_input = st.select_slider(
+                        "Mood",
+                        options=["Low", "Steady", "Good", "Great"],
+                        value=log.get("mood", "Steady"),
+                    )
+                with c6:
+                    energy_input = st.select_slider(
+                        "Energy",
+                        options=["Flat", "Balanced", "Sharp", "High"],
+                        value=log.get("energy", "Balanced"),
+                    )
+
+                notes_input = st.text_area(
+                    "Coach notes",
+                    value=log.get("notes", ""),
+                    placeholder="Write anything useful: hunger, cravings, digestion, training quality, schedule pressure, mood shifts.",
+                    height=120,
+                )
+                save_daily_checkin = st.form_submit_button("Save daily check-in", use_container_width=True)
+                if save_daily_checkin:
+                    log["water_ml"] = int(water_input)
+                    log["sleep_hours"] = float(sleep_input)
+                    log["steps"] = int(steps_input)
+                    log["weight_kg"] = float(weight_input)
+                    log["mood"] = mood_input
+                    log["energy"] = energy_input
+                    log["notes"] = notes_input
+                    touch_log(log)
+                    save_store(store)
+                    st.success("Daily check-in saved.")
+
+            qw1, qw2, qw3, qw4 = st.columns(4)
+            if qw1.button("+250 ml water", use_container_width=True):
+                log["water_ml"] += 250
                 touch_log(log)
                 save_store(store)
-                st.success("Daily check-in saved.")
+                st.rerun()
+            if qw2.button("+500 ml water", use_container_width=True):
+                log["water_ml"] += 500
+                touch_log(log)
+                save_store(store)
+                st.rerun()
+            if qw3.button("+1000 steps", use_container_width=True):
+                log["steps"] += 1000
+                touch_log(log)
+                save_store(store)
+                st.rerun()
+            if qw4.button("Reset selected day", use_container_width=True):
+                user["days"][day_key] = default_day_log()
+                save_store(store)
+                st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
 
-        qw1, qw2, qw3, qw4 = st.columns(4)
-        if qw1.button("+250 ml water", use_container_width=True):
-            log["water_ml"] += 250
-            touch_log(log)
-            save_store(store)
-            st.rerun()
-        if qw2.button("+500 ml water", use_container_width=True):
-            log["water_ml"] += 500
-            touch_log(log)
-            save_store(store)
-            st.rerun()
-        if qw3.button("+1000 steps", use_container_width=True):
-            log["steps"] += 1000
-            touch_log(log)
-            save_store(store)
-            st.rerun()
-        if qw4.button("Reset selected day", use_container_width=True):
-            user["days"][day_key] = default_day_log()
-            save_store(store)
-            st.rerun()
+            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+            st.subheader("Meal Rhythm")
+            st.markdown('<div class="table-wrap">', unsafe_allow_html=True)
+            st.table(meal_slot_totals(log))
+            st.markdown("</div></div>", unsafe_allow_html=True)
 
-        st.markdown("### Meal breakdown")
-        st.table(meal_slot_totals(log))
+        with right_col:
+            st.markdown(
+                f"""
+                <div class="glass-card">
+                  <div class="premium-kicker">Performance Signals</div>
+                  <h3 style="margin: 0.45rem 0 0.4rem 0;">Small steady choices matter most.</h3>
+                  <p style="margin:0; color: var(--muted);">{focus_note}</p>
+                  <div style="margin-top:16px;">
+                    <div class="mini-label">Hydration</div>
+                    <div class="progress-shell"><div class="progress-bar" style="width:{whole_ratio(log['water_ml'], float(profile['water_goal']))}%;"></div></div>
+                    <div class="mini-label" style="margin-top:12px;">Protein</div>
+                    <div class="progress-shell"><div class="progress-bar" style="width:{whole_ratio(summary['protein_g'], float(profile['protein_goal']))}%;"></div></div>
+                    <div class="mini-label" style="margin-top:12px;">Steps</div>
+                    <div class="progress-shell"><div class="progress-bar" style="width:{whole_ratio(log['steps'], float(profile['step_goal']))}%;"></div></div>
+                    <div class="mini-label" style="margin-top:12px;">Sleep</div>
+                    <div class="progress-shell"><div class="progress-bar" style="width:{min(int((float(log['sleep_hours']) / 8.0) * 100), 100)}%;"></div></div>
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+            st.markdown('<div class="premium-kicker">Macro Balance</div>', unsafe_allow_html=True)
+            n1, n2, n3 = st.columns(3)
+            nutrient_items = nutrient_split(summary)
+            n1.metric(nutrient_items[0]["label"], f"{nutrient_items[0]['value']:.0f}{nutrient_items[0]['unit']}")
+            n2.metric(nutrient_items[1]["label"], f"{nutrient_items[1]['value']:.0f}{nutrient_items[1]['unit']}")
+            n3.metric(nutrient_items[2]["label"], f"{nutrient_items[2]['value']:.0f}{nutrient_items[2]['unit']}")
+            st.markdown("</div>", unsafe_allow_html=True)
+
+            st.markdown(
+                f"""
+                <div class="coach-card">
+                  <div class="premium-kicker" style="color: var(--accent-coral);">Coaching Cue</div>
+                  <h3 style="margin: 0.45rem 0 0.6rem 0;">Finish today with balance.</h3>
+                  <p style="margin:0; color: var(--muted);">{coach_text}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
     with meals_tab:
-        st.subheader("Log a Meal in Plain English")
-        st.caption("Example: `2 rotis, 1 cup dal, salad` or `1 banana and 1 scoop whey`")
+        st.markdown(
+            """
+            <div class="glass-card">
+              <div class="premium-kicker">Food Log</div>
+              <h3 style="margin: 0.45rem 0 0.45rem 0;">Write meals the way you actually think.</h3>
+              <p style="margin:0; color: var(--muted);">Use natural language, rough portions, or quick templates. The goal is frictionless consistency, not perfect nutrition math.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.session_state.setdefault("meal_text_input", "")
+        template_cols = st.columns(4)
+        templates = [
+            ("Indian Balanced", "2 rotis, 1 cup dal, salad, curd"),
+            ("High Protein", "3 eggs, 1 bowl curd, 1 scoop whey"),
+            ("Light Breakfast", "1 banana, oats with milk, 5 almonds"),
+            ("Post Workout", "grilled chicken, rice, curd"),
+        ]
+        for idx, (label, value) in enumerate(templates):
+            if template_cols[idx].button(label, use_container_width=True, key=f"meal-template-{idx}"):
+                st.session_state.meal_text_input = value
+                st.rerun()
 
         meal_slot = st.selectbox("Meal type", MEAL_SLOTS)
         meal_text = st.text_area(
             "What did you eat? Include quantity.",
             placeholder="Example: 2 egg omelette with 2 slices toast and 1 banana",
             height=110,
+            key="meal_text_input",
         )
 
         if st.button("Estimate and add meal", type="primary", use_container_width=True):
@@ -801,6 +1523,7 @@ else:
                 )
                 touch_log(log)
                 save_store(store)
+                st.session_state.meal_text_input = ""
                 st.success(f"Added to {meal_slot}.")
                 st.rerun()
 
@@ -838,7 +1561,22 @@ else:
                             st.rerun()
 
     with exercise_tab:
-        st.subheader("Exercise & Activity")
+        st.markdown(
+            f"""
+            <div class="glass-card">
+              <div class="premium-kicker">Movement Log</div>
+              <h3 style="margin: 0.45rem 0 0.45rem 0;">Train for momentum, not punishment.</h3>
+              <p style="margin:0; color: var(--muted);">You have logged {exercise_sessions} session{"s" if exercise_sessions != 1 else ""} today with {summary['calories_out']:.0f} kcal burned. Keep intensity aligned with recovery.</p>
+              <div class="mini-grid">
+                <div class="mini-stat"><div class="mini-label">Sessions</div><div class="mini-value">{exercise_sessions}</div></div>
+                <div class="mini-stat"><div class="mini-label">Burn</div><div class="mini-value">{summary['calories_out']:.0f}</div></div>
+                <div class="mini-stat"><div class="mini-label">Time</div><div class="mini-value">{total_duration}</div></div>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
         ex1, ex2, ex3, ex4 = st.columns(4)
         with ex1:
             exercise_name = st.text_input("Exercise name", placeholder="Brisk walking")
@@ -893,7 +1631,7 @@ else:
 
     with history_tab:
         st.subheader("Recent history")
-        st.table(history_rows(user, days=7))
+        st.dataframe(history_rows(user, days=7), use_container_width=True, hide_index=True)
 
         st.markdown("### Export current day")
         payload = make_export_payload(day_key, log)
