@@ -1488,6 +1488,16 @@ else:
         )
 
         st.session_state.setdefault("meal_text_input", "")
+        st.session_state.setdefault("meal_text_next_value", None)
+
+        pending_meal_text = st.session_state.pop("meal_text_next_value", None)
+        if pending_meal_text is not None:
+            st.session_state["meal_text_input"] = pending_meal_text
+
+        meal_flash_message = st.session_state.pop("meal_flash_message", None)
+        if meal_flash_message:
+            st.success(meal_flash_message)
+
         template_cols = st.columns(4)
         templates = [
             ("Indian Balanced", "2 rotis, 1 cup dal, salad, curd"),
@@ -1497,7 +1507,7 @@ else:
         ]
         for idx, (label, value) in enumerate(templates):
             if template_cols[idx].button(label, use_container_width=True, key=f"meal-template-{idx}"):
-                st.session_state.meal_text_input = value
+                st.session_state["meal_text_next_value"] = value
                 st.rerun()
 
         meal_slot = st.selectbox("Meal type", MEAL_SLOTS)
@@ -1509,22 +1519,23 @@ else:
         )
 
         if st.button("Estimate and add meal", type="primary", use_container_width=True):
-            if not meal_text.strip():
+            meal_text_clean = meal_text.strip()
+            if not meal_text_clean:
                 st.warning("Please enter your meal first.")
             else:
                 with st.spinner("Estimating calories and macros..."):
-                    result = estimate_meal_from_text(meal_text.strip())
+                    result = estimate_meal_from_text(meal_text_clean)
                 log["meals"][meal_slot].append(
                     {
                         "logged_at": datetime.now().strftime("%H:%M"),
-                        "input_text": meal_text.strip(),
+                        "input_text": meal_text_clean,
                         **result,
                     }
                 )
                 touch_log(log)
                 save_store(store)
-                st.session_state.meal_text_input = ""
-                st.success(f"Added to {meal_slot}.")
+                st.session_state["meal_text_next_value"] = ""
+                st.session_state["meal_flash_message"] = f"Added to {meal_slot}."
                 st.rerun()
 
         st.markdown("### Today's meals")
