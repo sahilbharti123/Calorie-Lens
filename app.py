@@ -9,7 +9,11 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import google.generativeai as genai
+try:
+    import google.generativeai as genai
+except ModuleNotFoundError:
+    genai = None
+
 import streamlit as st
 import streamlit.components.v1 as components
 from dotenv import load_dotenv
@@ -43,7 +47,8 @@ def read_secret(name: str, default: Optional[str] = None) -> Optional[str]:
 
 GOOGLE_API_KEY = read_secret("GOOGLE_API_KEY", os.getenv("GOOGLE_API_KEY"))
 TEXT_MODEL = read_secret("GEMINI_TEXT_MODEL", os.getenv("GEMINI_TEXT_MODEL", "gemini-2.0-flash"))
-AI_ENABLED = bool(GOOGLE_API_KEY)
+GENAI_IMPORT_AVAILABLE = genai is not None
+AI_ENABLED = bool(GOOGLE_API_KEY) and GENAI_IMPORT_AVAILABLE
 
 if AI_ENABLED:
     genai.configure(api_key=GOOGLE_API_KEY)
@@ -857,6 +862,43 @@ def render_premium_theme() -> None:
           border: 1px solid rgba(103, 134, 114, 0.20);
         }
 
+        [data-testid="stExpander"] {
+          border-radius: 20px;
+          overflow: hidden;
+          border: 1px solid rgba(59, 72, 63, 0.08);
+          background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(250,252,251,0.94));
+          box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+          margin-bottom: 12px;
+        }
+
+        [data-testid="stExpander"] details {
+          background: transparent !important;
+        }
+
+        [data-testid="stExpander"] summary {
+          background: rgba(244, 248, 246, 0.95) !important;
+          color: var(--ink) !important;
+          border-radius: 18px;
+        }
+
+        [data-testid="stExpander"] summary:hover {
+          background: rgba(235, 242, 238, 0.98) !important;
+        }
+
+        [data-testid="stExpander"] summary,
+        [data-testid="stExpander"] summary *,
+        [data-testid="stExpander"] details[open] summary,
+        [data-testid="stExpander"] details[open] summary * {
+          color: var(--ink) !important;
+          -webkit-text-fill-color: var(--ink) !important;
+        }
+
+        [data-testid="stExpander"] summary svg,
+        [data-testid="stExpander"] details[open] summary svg {
+          fill: var(--ink) !important;
+          color: var(--ink) !important;
+        }
+
         .stButton > button, .stDownloadButton > button, .stFormSubmitButton > button {
           border-radius: 999px;
           border: 1px solid rgba(103, 134, 114, 0.16);
@@ -1157,6 +1199,25 @@ def render_premium_theme() -> None:
           color: var(--ink) !important;
         }
 
+        code,
+        .stCode,
+        .stMarkdown code,
+        .stCaption code,
+        [data-testid="stCaptionContainer"] code {
+          color: var(--accent-forest) !important;
+          background: rgba(47, 111, 94, 0.10) !important;
+          border: 1px solid rgba(47, 111, 94, 0.12);
+          border-radius: 8px;
+          padding: 0.12rem 0.38rem;
+        }
+
+        pre code {
+          color: var(--ink) !important;
+          background: transparent !important;
+          border: none !important;
+          padding: 0 !important;
+        }
+
         @media (max-width: 768px) {
           .premium-hero { padding: 22px 20px; }
           .premium-hero h1 { font-size: 1.75rem; }
@@ -1235,6 +1296,8 @@ else:
         if AI_ENABLED:
             st.success("Gemini calorie estimation is enabled.")
             st.caption(f"Primary model preference: `{TEXT_MODEL}`")
+        elif GOOGLE_API_KEY and not GENAI_IMPORT_AVAILABLE:
+            st.warning("Google API key found, but `google-generativeai` is not installed. The app will use built-in calorie estimates.")
         else:
             st.warning("No Google API key found. The app will use built-in calorie estimates.")
         st.caption(f"User data is saved in `{DATA_FILE.relative_to(APP_DIR)}`")
