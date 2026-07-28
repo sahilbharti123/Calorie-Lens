@@ -29,6 +29,12 @@ class InvalidCredentialsError(ValueError):
     pass
 
 
+class AIBudgetExceededError(ValueError):
+    def __init__(self, usage: dict[str, Any]):
+        super().__init__("Today's AI allowance is used. Local tracking still works.")
+        self.usage = usage
+
+
 class SyncConflictError(ValueError):
     def __init__(self, payload: dict[str, Any], version: int, updated_at: str):
         super().__init__("The cloud copy changed on another device.")
@@ -151,7 +157,30 @@ class AccountStore:
                     version INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS ai_usage (
+                    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    usage_date TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    requests INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (user_id, usage_date, kind)
+                );
+                CREATE TABLE IF NOT EXISTS ai_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+                    encrypted_response BLOB NOT NULL,
+                    expires_at TEXT NOT NULL
+                );
                 """
+            )
+            cache_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(ai_cache)").fetchall()
+            }
+            if "user_id" not in cache_columns:
+                connection.execute("ALTER TABLE ai_cache ADD COLUMN user_id TEXT")
+                connection.execute("DELETE FROM ai_cache WHERE user_id IS NULL")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS ai_cache_user_id ON ai_cache(user_id)"
             )
 
     def _encrypt(self, user_id: str, payload: dict[str, Any]) -> bytes:
@@ -334,6 +363,7 @@ class AccountStore:
 
     def delete_user(self, user_id: str) -> None:
         with self._connect() as connection:
+            connection.execute("DELETE FROM ai_cache WHERE user_id = ?", (user_id,))
             connection.execute("DELETE FROM users WHERE id = ?", (user_id,))
 
     def read_vault(self, user_id: str) -> dict[str, Any]:
@@ -387,3 +417,117 @@ class AccountStore:
             "version": version,
             "updatedAt": updated_at,
         }
+
+    def read_ai_cache(
+        self,
+        user_id: str,
+        cache_key: str,
+    ) -> dict[str, Any] | None:
+        now = _iso()
+        with self._connect() as connection:
+            connection.execute("DELETE FROM ai_cache WHERE expires_at <= ?", (now,))
+            row = connection.execute(
+                """
+                SELECT encrypted_response
+                FROM ai_cache
+                WHERE cache_key = ? AND user_id = ?
+                """,
+                (cache_key, user_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._decrypt(f"ai-cache:{cache_key}", row["encrypted_response"])
+
+    def write_ai_cache(
+        self,
+        user_id: str,
+        cache_key: str,
+        response: dict[str, Any],
+        ttl: timedelta,
+    ) -> None:
+        expires_at = _iso(_utc_now() + ttl)
+        encrypted = self._encrypt(f"ai-cache:{cache_key}", response)
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO ai_cache (
+                    cache_key, user_id, encrypted_response, expires_at
+                )
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(cache_key) DO UPDATE SET
+                    user_id = excluded.user_id,
+                    encrypted_response = excluded.encrypted_response,
+                    expires_at = excluded.expires_at
+                """,
+                (cache_key, user_id, encrypted, expires_at),
+            )
+
+    def ai_usage_summary(
+        self,
+        user_id: str,
+        daily_limit: int,
+        kind_limits: dict[str, int],
+    ) -> dict[str, Any]:
+        usage_date = _utc_now().date().isoformat()
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT kind, requests
+                FROM ai_usage
+                WHERE user_id = ? AND usage_date = ?
+                """,
+                (user_id, usage_date),
+            ).fetchall()
+        by_kind = {row["kind"]: row["requests"] for row in rows}
+        total = sum(by_kind.values())
+        return {
+            "date": usage_date,
+            "used": total,
+            "limit": daily_limit,
+            "remaining": max(0, daily_limit - total),
+            "kinds": {
+                kind: {
+                    "used": by_kind.get(kind, 0),
+                    "limit": limit,
+                    "remaining": max(0, limit - by_kind.get(kind, 0)),
+                }
+                for kind, limit in kind_limits.items()
+            },
+        }
+
+    def consume_ai_request(
+        self,
+        user_id: str,
+        kind: str,
+        daily_limit: int,
+        kind_limits: dict[str, int],
+    ) -> dict[str, Any]:
+        usage_date = _utc_now().date().isoformat()
+        kind_limit = kind_limits[kind]
+        with self._connect() as connection:
+            # Serialize the read/check/increment so simultaneous requests cannot
+            # both observe the same remaining allowance.
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                """
+                SELECT kind, requests
+                FROM ai_usage
+                WHERE user_id = ? AND usage_date = ?
+                """,
+                (user_id, usage_date),
+            ).fetchall()
+            by_kind = {row["kind"]: row["requests"] for row in rows}
+            total = sum(by_kind.values())
+            if total >= daily_limit or by_kind.get(kind, 0) >= kind_limit:
+                usage = self.ai_usage_summary(user_id, daily_limit, kind_limits)
+                raise AIBudgetExceededError(usage)
+            connection.execute(
+                """
+                INSERT INTO ai_usage (user_id, usage_date, kind, requests)
+                VALUES (?, ?, ?, 1)
+                ON CONFLICT(user_id, usage_date, kind) DO UPDATE SET
+                    requests = requests + 1
+                """,
+                (user_id, usage_date, kind),
+            )
+        return self.ai_usage_summary(user_id, daily_limit, kind_limits)

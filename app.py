@@ -58,9 +58,15 @@ def read_secret(name: str, default: Optional[str] = None) -> Optional[str]:
 
 
 GOOGLE_API_KEY = read_secret("GOOGLE_API_KEY", os.getenv("GOOGLE_API_KEY"))
-TEXT_MODEL = read_secret("GEMINI_TEXT_MODEL", os.getenv("GEMINI_TEXT_MODEL", "gemini-3.6-flash"))
+TEXT_MODEL = read_secret("GEMINI_TEXT_MODEL", os.getenv("GEMINI_TEXT_MODEL", "gemini-3.1-flash-lite"))
+ENABLE_WEB_AI = str(
+    read_secret(
+        "CALORIE_LENS_ENABLE_WEB_AI",
+        os.getenv("CALORIE_LENS_ENABLE_WEB_AI", "false"),
+    )
+).lower() == "true"
 GENAI_IMPORT_AVAILABLE = genai is not None
-AI_ENABLED = bool(GOOGLE_API_KEY) and GENAI_IMPORT_AVAILABLE
+AI_ENABLED = bool(GOOGLE_API_KEY) and GENAI_IMPORT_AVAILABLE and ENABLE_WEB_AI
 GENAI_CLIENT = genai.Client(api_key=GOOGLE_API_KEY) if AI_ENABLED else None
 
 CALORIE_PROMPT = """You are the nutrition engine inside a personal fitness tracker.
@@ -522,11 +528,7 @@ def normalize_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def candidate_models() -> List[str]:
-    raw = [
-        TEXT_MODEL,
-        "gemini-3.6-flash",
-        "gemini-3.5-flash-lite",
-    ]
+    raw = [TEXT_MODEL]
     unique: List[str] = []
     for model_name in raw:
         if model_name and model_name not in unique:
@@ -547,6 +549,7 @@ def try_ai_estimate(user_text: str) -> Tuple[Optional[Dict[str, Any]], str]:
                 config=genai_types.GenerateContentConfig(
                     response_mime_type="application/json",
                     response_json_schema=CALORIE_SCHEMA,
+                    max_output_tokens=512,
                 ),
             )
             payload = normalize_payload(_safe_json_loads(getattr(response, "text", "") or ""))
@@ -640,6 +643,8 @@ def estimate_meal_locally(user_text: str, reason: str) -> Dict[str, Any]:
 
 
 def estimate_meal_from_text(user_text: str) -> Dict[str, Any]:
+    if all(find_food_match(part) for part in split_meal_text(user_text)):
+        return estimate_meal_locally(user_text, "")
     ai_payload, ai_error = try_ai_estimate(user_text)
     if ai_payload:
         return ai_payload
@@ -863,6 +868,11 @@ def parse_fitness_command(
     audio_bytes: Optional[bytes] = None,
     audio_mime_type: str = "audio/wav",
 ) -> Tuple[Optional[Dict[str, Any]], str]:
+    if not audio_bytes:
+        local_payload = normalize_command_payload(parse_command_locally(command_text))
+        if local_payload["operations"]:
+            local_payload["model_used"] = "offline-parser"
+            return local_payload, ""
     if not AI_ENABLED:
         if audio_bytes:
             return None, "Voice logging needs a Gemini API key. Typed quick logging still works offline."
@@ -891,6 +901,7 @@ def parse_fitness_command(
                 config=genai_types.GenerateContentConfig(
                     response_mime_type="application/json",
                     response_json_schema=VOICE_COMMAND_SCHEMA,
+                    max_output_tokens=512,
                 ),
             )
             payload = normalize_command_payload(

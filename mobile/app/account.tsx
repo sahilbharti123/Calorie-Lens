@@ -19,6 +19,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Glyph, type GlyphName } from '@/src/components/glyph';
+import { apiRequest } from '@/src/lib/api-client';
 import { readRecoveryCode } from '@/src/lib/session';
 import { mergeAppData, normalizeData, useApp } from '@/src/store/app-store';
 import { useAuth } from '@/src/store/auth-store';
@@ -29,6 +30,13 @@ type BackupFile = {
   format: 'calorie-lens-backup-v1';
   exportedAt: string;
   payload: AppData;
+};
+
+type AIUsage = {
+  used: number;
+  limit: number;
+  remaining: number;
+  kinds: Record<string, { used: number; limit: number; remaining: number }>;
 };
 
 function commaList(value: string) {
@@ -69,10 +77,21 @@ export default function AccountScreen() {
   const [newPassword, setNewPassword] = useState('');
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
+  const [aiUsage, setAIUsage] = useState<AIUsage | null>(null);
 
   useEffect(() => {
     void readRecoveryCode(session?.user.id).then((value) => setRecoveryCode(value ?? ''));
   }, [session?.user.id]);
+
+  useEffect(() => {
+    if (!session) {
+      setAIUsage(null);
+      return;
+    }
+    void apiRequest<AIUsage>('/v1/ai/usage', {}, session)
+      .then(setAIUsage)
+      .catch(() => setAIUsage(null));
+  }, [session]);
 
   const syncLabel = useMemo(() => {
     if (!session) return 'Encrypted on this device';
@@ -244,6 +263,18 @@ export default function AccountScreen() {
             ) : null}
           </View>
 
+          {session && aiUsage ? (
+            <View style={styles.aiCard}>
+              <View style={styles.syncIcon}><Glyph name="spark" color={palette.forest} size={19} /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.cardTitle}>AI budget · {aiUsage.used}/{aiUsage.limit} today</Text>
+                <Text style={styles.cardBody}>
+                  Local logging is unlimited · voice {aiUsage.kinds.audio?.used ?? 0}/{aiUsage.kinds.audio?.limit ?? 0} · online coach {aiUsage.kinds.coach?.used ?? 0}/{aiUsage.kinds.coach?.limit ?? 0}
+                </Text>
+              </View>
+            </View>
+          ) : null}
+
           <SectionLabel text="FITNESS PROFILE" />
           <ActionRow
             icon="chart"
@@ -385,6 +416,7 @@ const styles = StyleSheet.create({
   syncDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: palette.limeDark },
   syncDotError: { backgroundColor: palette.coral },
   syncCard: { flexDirection: 'row', gap: 11, alignItems: 'center', backgroundColor: palette.softLime, borderRadius: radius.md, padding: 14, marginBottom: 20 },
+  aiCard: { flexDirection: 'row', gap: 11, alignItems: 'center', backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, padding: 14, marginTop: -10, marginBottom: 20 },
   syncIcon: { width: 38, height: 38, borderRadius: 12, backgroundColor: palette.lime, alignItems: 'center', justifyContent: 'center' },
   cardTitle: { color: palette.ink, fontFamily: type.demi, fontSize: 13 },
   cardBody: { color: palette.muted, fontFamily: type.regular, fontSize: 10, lineHeight: 15, marginTop: 2 },

@@ -343,9 +343,23 @@ export async function parseFitnessCommand(
   context: EstimationContext,
   clarification?: ClarificationContext,
 ) {
-  if (!process.env.EXPO_PUBLIC_API_URL) return parseCommandLocally(text, preferredSlot, context);
+  const combined = clarification?.previousTranscript
+    ? `${clarification.previousTranscript}. ${text}`
+    : text;
+  const local = parseCommandLocally(combined, preferredSlot, context);
+  const fragments = combined
+    .split(/\b(?:and|plus|aur|with)\b|,/i)
+    .map((fragment) => fragment.trim())
+    .filter(Boolean);
+  const locallyCovered = fragments.every((fragment) => {
+    const fragmentResult = parseCommandLocally(fragment, preferredSlot, context);
+    return Boolean(fragmentResult.operations.length || fragmentResult.clarification);
+  });
+  if (local.clarification || (local.operations.length && locallyCovered)) return local;
+  if (!process.env.EXPO_PUBLIC_API_URL) return local;
   try {
     const session = await readSession();
+    if (!session) return local;
     const response = await apiRequest<ParsedCommand>('/v1/parse-command', {
       method: 'POST',
       body: JSON.stringify({
@@ -356,10 +370,7 @@ export async function parseFitnessCommand(
     }, session);
     return { ...response, source: 'ai' } as ParsedCommand;
   } catch {
-    const combined = clarification?.previousTranscript
-      ? `${clarification.previousTranscript}. ${text}`
-      : text;
-    return parseCommandLocally(combined, preferredSlot, context);
+    return local;
   }
 }
 

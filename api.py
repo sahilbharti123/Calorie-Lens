@@ -4,9 +4,10 @@ Run locally with:
     uvicorn api:app --reload --host 0.0.0.0 --port 8000
 """
 
+import hashlib
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from dotenv import load_dotenv
@@ -15,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from account_store import (
+    AIBudgetExceededError,
     AccountExistsError,
     AccountStore,
     InvalidCredentialsError,
@@ -33,9 +35,15 @@ except ModuleNotFoundError:
 load_dotenv()
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-MODEL_NAME = os.getenv("GEMINI_TEXT_MODEL", "gemini-3.6-flash")
+MODEL_NAME = os.getenv("GEMINI_TEXT_MODEL", "gemini-3.1-flash-lite")
 CLIENT = genai.Client(api_key=GOOGLE_API_KEY) if genai and GOOGLE_API_KEY else None
 STORE = AccountStore()
+AI_DAILY_LIMIT = max(1, int(os.getenv("CALORIE_LENS_AI_DAILY_LIMIT", "8")))
+AI_KIND_LIMITS = {
+    "text": max(1, int(os.getenv("CALORIE_LENS_AI_TEXT_DAILY_LIMIT", "4"))),
+    "audio": max(1, int(os.getenv("CALORIE_LENS_AI_AUDIO_DAILY_LIMIT", "4"))),
+    "coach": max(1, int(os.getenv("CALORIE_LENS_AI_COACH_DAILY_LIMIT", "2"))),
+}
 
 app = FastAPI(title="Calorie Lens API", version="3.0.0")
 origins = [
@@ -80,20 +88,20 @@ class SyncRequest(BaseModel):
 
 
 class CoachRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=2000)
+    message: str = Field(min_length=1, max_length=800)
     today: Optional[dict[str, Any]] = None
     memory: Optional[dict[str, Any]] = None
     recent_messages: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
 
 
 class TextCommand(BaseModel):
-    text: str = Field(min_length=1, max_length=2000)
+    text: str = Field(min_length=1, max_length=600)
     preferred_slot: Optional[str] = None
     weight_kg: Optional[float] = Field(default=None, ge=20, le=400)
     bowl_ml: Optional[float] = Field(default=None, ge=50, le=1000)
     cup_ml: float = Field(default=200, ge=50, le=1000)
-    previous_transcript: Optional[str] = Field(default=None, max_length=2000)
-    clarification_question: Optional[str] = Field(default=None, max_length=1000)
+    previous_transcript: Optional[str] = Field(default=None, max_length=600)
+    clarification_question: Optional[str] = Field(default=None, max_length=300)
 
 
 COMMAND_SCHEMA = {
@@ -262,6 +270,71 @@ def _vault_memory(user: Optional[dict[str, Any]]) -> dict[str, Any]:
     return memory if isinstance(memory, dict) else {}
 
 
+def _cache_key(kind: str, user_id: str, payload: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        {
+            "kind": kind,
+            "model": MODEL_NAME,
+            "user": user_id,
+            "payload": payload,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _compact_json(value: Any, max_chars: int) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )[:max_chars]
+
+
+def _charge_ai(user_id: str, kind: str) -> dict[str, Any]:
+    try:
+        return STORE.consume_ai_request(
+            user_id,
+            kind,
+            AI_DAILY_LIMIT,
+            AI_KIND_LIMITS,
+        )
+    except AIBudgetExceededError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "message": str(exc),
+                "usage": exc.usage,
+            },
+        ) from exc
+
+
+def _cached_result(user_id: str, cache_key: str) -> Optional[dict[str, Any]]:
+    cached = STORE.read_ai_cache(user_id, cache_key)
+    if not cached:
+        return None
+    return {
+        **cached,
+        "cost": {"cached": True, "model": MODEL_NAME},
+    }
+
+
+def _save_cached_result(
+    user_id: str,
+    cache_key: str,
+    result: dict[str, Any],
+    *,
+    days: int,
+) -> dict[str, Any]:
+    STORE.write_ai_cache(user_id, cache_key, result, timedelta(days=days))
+    return {
+        **result,
+        "cost": {"cached": False, "model": MODEL_NAME},
+    }
+
+
 @app.post("/v1/auth/signup", status_code=201)
 def signup(request: SignupRequest) -> dict[str, Any]:
     try:
@@ -421,6 +494,7 @@ def _generate(
             config=genai_types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_json_schema=COMMAND_SCHEMA,
+                max_output_tokens=512,
             ),
         )
         payload = json.loads(getattr(response, "text", "") or "{}")
@@ -456,15 +530,38 @@ def health() -> dict[str, Any]:
         "accounts_enabled": True,
         "encrypted_storage": True,
         "model": MODEL_NAME,
+        "ai_daily_limit": AI_DAILY_LIMIT,
     }
+
+
+@app.get("/v1/ai/usage")
+def ai_usage(user: dict[str, Any] = Depends(_current_user)) -> dict[str, Any]:
+    return STORE.ai_usage_summary(
+        user["id"],
+        AI_DAILY_LIMIT,
+        AI_KIND_LIMITS,
+    )
 
 
 @app.post("/v1/parse-command")
 def parse_command(
     command: TextCommand,
-    user: Optional[dict[str, Any]] = Depends(_optional_user),
+    user: dict[str, Any] = Depends(_current_user),
 ) -> dict[str, Any]:
-    return _generate(
+    memory = _vault_memory(user)
+    cache_key = _cache_key(
+        "text",
+        user["id"],
+        {
+            **command.model_dump(),
+            "memory": memory,
+        },
+    )
+    cached = _cached_result(user["id"], cache_key)
+    if cached:
+        return cached
+    _charge_ai(user["id"], "text")
+    result = _generate(
         command.text,
         command.preferred_slot,
         profile={
@@ -472,10 +569,11 @@ def parse_command(
             "bowlMl": command.bowl_ml,
             "cupMl": command.cup_ml,
         },
-        coach_memory=_vault_memory(user),
+        coach_memory=memory,
         previous_transcript=command.previous_transcript,
         clarification_question=command.clarification_question,
     )
+    return _save_cached_result(user["id"], cache_key, result, days=30)
 
 
 @app.post("/v1/parse-command/audio")
@@ -487,51 +585,95 @@ async def parse_audio_command(
     cup_ml: float = Form(default=200),
     previous_transcript: Optional[str] = Form(default=None),
     clarification_question: Optional[str] = Form(default=None),
-    user: Optional[dict[str, Any]] = Depends(_optional_user),
+    user: dict[str, Any] = Depends(_current_user),
 ) -> dict[str, Any]:
     content = await audio.read()
     if not content:
         raise HTTPException(status_code=400, detail="The recording was empty.")
-    if len(content) > 12 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="The recording is too large.")
-    return _generate(
+    if len(content) > 2 * 1024 * 1024:
+        raise HTTPException(
+            status_code=413,
+            detail="Keep voice commands short (maximum recording size is 2 MB).",
+        )
+    memory = _vault_memory(user)
+    cache_key = _cache_key(
+        "audio",
+        user["id"],
+        {
+            "audioSha256": hashlib.sha256(content).hexdigest(),
+            "preferredSlot": preferred_slot,
+            "weightKg": weight_kg,
+            "bowlMl": bowl_ml,
+            "cupMl": cup_ml,
+            "previousTranscript": previous_transcript,
+            "clarificationQuestion": clarification_question,
+            "memory": memory,
+        },
+    )
+    cached = _cached_result(user["id"], cache_key)
+    if cached:
+        return cached
+    _charge_ai(user["id"], "audio")
+    result = _generate(
         "",
         preferred_slot,
         audio_bytes=content,
         audio_mime_type=audio.content_type or "audio/mp4",
         profile={"weightKg": weight_kg, "bowlMl": bowl_ml, "cupMl": cup_ml},
-        coach_memory=_vault_memory(user),
+        coach_memory=memory,
         previous_transcript=previous_transcript,
         clarification_question=clarification_question,
     )
+    return _save_cached_result(user["id"], cache_key, result, days=30)
 
 
 @app.post("/v1/coach")
 def coach(
     request: CoachRequest,
     user: dict[str, Any] = Depends(_current_user),
-) -> dict[str, str]:
+) -> dict[str, Any]:
     _require_ai()
+    if len(_compact_json(request.model_dump(), 12_001)) > 12_000:
+        raise HTTPException(status_code=413, detail="The coach context is too large.")
     memory = {**_vault_memory(user), **(request.memory or {})}
-    recent_messages = request.recent_messages[-12:]
+    recent_messages = request.recent_messages[-6:]
+    cache_key = _cache_key(
+        "coach",
+        user["id"],
+        {
+            **request.model_dump(),
+            "memory": memory,
+            "recent_messages": recent_messages,
+        },
+    )
+    cached = _cached_result(user["id"], cache_key)
+    if cached:
+        return cached
+    usage = _charge_ai(user["id"], "coach")
     context = (
         f"{COACH_PROMPT}\n"
         f"User: {user['displayName']}.\n"
-        f"Saved long-term memory: {json.dumps(memory, ensure_ascii=False)}.\n"
+        f"Saved long-term memory: {_compact_json(memory, 2_000)}.\n"
         f"Today's tracking snapshot: "
-        f"{json.dumps(request.today or {}, ensure_ascii=False)}.\n"
+        f"{_compact_json(request.today or {}, 4_000)}.\n"
         f"Recent conversation: "
-        f"{json.dumps(recent_messages, ensure_ascii=False)}.\n"
+        f"{_compact_json(recent_messages, 3_000)}.\n"
         f"New message: {request.message}"
     )
     try:
         response = CLIENT.models.generate_content(
             model=MODEL_NAME,
             contents=[context],
+            config=genai_types.GenerateContentConfig(max_output_tokens=180),
         )
         reply = (getattr(response, "text", "") or "").strip()
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Coach request failed: {exc}") from exc
     if not reply:
         raise HTTPException(status_code=502, detail="The coach did not return a response.")
-    return {"reply": reply}
+    return _save_cached_result(
+        user["id"],
+        cache_key,
+        {"reply": reply, "usage": usage},
+        days=1,
+    )

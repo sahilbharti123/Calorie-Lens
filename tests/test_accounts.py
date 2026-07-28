@@ -1,11 +1,13 @@
 import sqlite3
 import tempfile
 import unittest
+from datetime import timedelta
 from pathlib import Path
 
 import account_store
 import api
 from account_store import (
+    AIBudgetExceededError,
     AccountStore,
     InvalidCredentialsError,
     SyncConflictError,
@@ -82,6 +84,41 @@ class AccountStoreTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.store.read_vault(user["id"])
 
+    def test_ai_cache_is_encrypted_and_daily_limits_are_enforced(self):
+        user, _ = self.store.create_user(
+            "budget@example.com",
+            "correct-horse-battery",
+            "Budget",
+        )
+        cache_key = "known-request"
+        response = {"reply": "private coaching answer"}
+        self.store.write_ai_cache(
+            user["id"],
+            cache_key,
+            response,
+            timedelta(days=1),
+        )
+        self.assertEqual(
+            self.store.read_ai_cache(user["id"], cache_key),
+            response,
+        )
+
+        with sqlite3.connect(self.store.db_path) as connection:
+            encrypted = connection.execute(
+                "SELECT encrypted_response FROM ai_cache WHERE cache_key = ?",
+                (cache_key,),
+            ).fetchone()[0]
+        self.assertNotIn(b"private coaching answer", encrypted)
+
+        limits = {"text": 1, "audio": 1, "coach": 1}
+        usage = self.store.consume_ai_request(user["id"], "text", 2, limits)
+        self.assertEqual(usage["used"], 1)
+        with self.assertRaises(AIBudgetExceededError):
+            self.store.consume_ai_request(user["id"], "text", 2, limits)
+
+        self.store.delete_user(user["id"])
+        self.assertIsNone(self.store.read_ai_cache(user["id"], cache_key))
+
 
 class AccountApiTests(unittest.TestCase):
     def setUp(self):
@@ -118,6 +155,14 @@ class AccountApiTests(unittest.TestCase):
         me = self.client.get("/v1/auth/me", headers=headers)
         self.assertEqual(me.status_code, 200)
         self.assertEqual(me.json()["user"]["displayName"], "Test User")
+
+        usage = self.client.get("/v1/ai/usage", headers=headers)
+        self.assertEqual(usage.status_code, 200)
+        self.assertEqual(usage.json()["used"], 0)
+        self.assertEqual(
+            self.client.get("/v1/ai/usage").status_code,
+            401,
+        )
 
         first = self.client.put(
             "/v1/sync",

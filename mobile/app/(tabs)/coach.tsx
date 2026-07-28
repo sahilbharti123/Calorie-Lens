@@ -50,33 +50,53 @@ export default function CoachScreen() {
   async function send() {
     const value = text.trim();
     if (!value || busy) return;
+    const forceAI = /^ai\s*:/i.test(value);
+    const question = value.replace(/^ai\s*:\s*/i, '').trim() || value;
     setText('');
     setBusy(true);
     setError('');
     const userMessage = addCoachMessage({ role: 'user', text: value });
     try {
       let reply: string;
-      if (session) {
-        const recent = [...messages, userMessage].slice(-12).map(({ role, text: body }) => ({
+      if (session && forceAI) {
+        const recent = [...messages, userMessage].slice(-6).map(({ role, text: body }) => ({
           role,
           text: body,
         }));
         const response = await apiRequest<{ reply: string }>('/v1/coach', {
           method: 'POST',
           body: JSON.stringify({
-            message: value,
-            today: { ...today, goals: data.goals, totals },
+            message: question,
+            today: {
+              date: today.date,
+              totals,
+              goals: data.goals,
+              waterMl: today.waterMl,
+              steps: today.steps,
+              sleepHours: today.sleepHours,
+              meals: today.meals.slice(-12).map((meal) => ({
+                slot: meal.slot,
+                name: meal.name,
+                calories: meal.calories,
+                protein: meal.protein,
+              })),
+              workouts: today.workouts.slice(-6).map((workout) => ({
+                name: workout.name,
+                durationMin: workout.durationMin,
+                calories: workout.calories,
+              })),
+            },
             memory: data.coachMemory,
             recent_messages: recent,
           }),
         }, session);
         reply = response.reply;
       } else {
-        reply = offlineReply(value, totals.calories, totals.protein, data.goals.calories);
+        reply = offlineReply(question, totals.calories, totals.protein, data.goals.calories);
       }
       addCoachMessage({ role: 'coach', text: reply });
     } catch (reason) {
-      const fallback = offlineReply(value, totals.calories, totals.protein, data.goals.calories);
+      const fallback = offlineReply(question, totals.calories, totals.protein, data.goals.calories);
       addCoachMessage({ role: 'coach', text: fallback });
       setError(`${reason instanceof Error ? reason.message : 'Coach service is unavailable.'} Showing an offline suggestion.`);
     } finally {
@@ -129,7 +149,7 @@ export default function CoachScreen() {
               <View style={styles.welcomeIcon}><Glyph name="spark" color={palette.forest} size={24} /></View>
               <Text style={styles.welcomeTitle}>Ask about your day.</Text>
               <Text style={styles.welcomeBody}>
-                I can use your logged meals, activity, goals and saved preferences to suggest a realistic next step.
+                Everyday guidance runs privately on-device. Start a message with “AI:” only when you want a deeper online answer.
               </Text>
               <View style={styles.prompts}>
                 {['What should I eat for dinner?', 'Plan a quick workout', 'How is my day going?'].map((prompt) => (
@@ -166,7 +186,7 @@ export default function CoachScreen() {
             multiline
             onChangeText={setText}
             onSubmitEditing={() => void send()}
-            placeholder="Ask your coach…"
+            placeholder="Ask locally, or start with AI: …"
             placeholderTextColor="#8A938B"
             returnKeyType="send"
             style={styles.input}

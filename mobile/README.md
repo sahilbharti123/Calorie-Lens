@@ -20,6 +20,7 @@ React Native.
 - Device-encrypted offline storage plus encrypted cross-device cloud sync
 - Portable backup export and restore
 - A personal AI coach with editable long-term memory and offline fallback
+- Local-first typed logging and coaching with explicit `AI:` opt-in
 - One shared design system and codebase for both platforms
 
 ## Local setup
@@ -47,6 +48,11 @@ automatically synchronized when the API is reachable.
 The AI service extracts facts from speech; it does not supply calories. Food
 and exercise numbers are calculated after transcription by the deterministic
 reference engine.
+
+To keep costs near zero, typed updates use the on-device parser whenever it can
+fully understand the command. Normal coach messages are answered on-device;
+start one with `AI:` to opt into the online coach. Voice transcription is
+online, cached on the server, and protected by a daily account limit.
 
 ## Accuracy setup
 

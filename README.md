@@ -13,7 +13,7 @@ codebase for both platforms.
 - Accepts natural English, Hindi, or Hinglish updates such as
   `Lunch was 2 rotis and dal, plus 500 ml water`
 - Records the same mixed update by voice
-- Uses Gemini to extract foods, quantities, and activities from speech without letting the model invent calories
+- Uses the on-device parser first and only calls Gemini for voice or an unrecognized typed command
 - Calculates known foods from reviewed USDA FoodData Central records
 - Calculates active workout energy from body weight, duration, intensity, and 2024 Compendium MET values
 - Shows a range, confidence, source, and calculation basis before saving
@@ -33,6 +33,9 @@ codebase for both platforms.
 The quick logger accepts text without an API key. Voice transcription and
 multi-part command understanding use Gemini audio input and therefore require
 `GOOGLE_API_KEY`.
+
+Everyday coach prompts also stay on-device. Prefix a coach message with `AI:`
+to deliberately request a deeper online answer.
 
 Examples:
 
@@ -94,7 +97,12 @@ Create a `.env` file or Streamlit secret:
 
 ```bash
 GOOGLE_API_KEY=your_google_ai_key
-GEMINI_TEXT_MODEL=gemini-3.6-flash
+GEMINI_TEXT_MODEL=gemini-3.1-flash-lite
+CALORIE_LENS_AI_DAILY_LIMIT=8
+CALORIE_LENS_AI_TEXT_DAILY_LIMIT=4
+CALORIE_LENS_AI_AUDIO_DAILY_LIMIT=4
+CALORIE_LENS_AI_COACH_DAILY_LIMIT=2
+CALORIE_LENS_ENABLE_WEB_AI=false
 CALORIE_LENS_DB_PATH=data/calorie_lens.db
 # Set this to a stable URL-safe base64 32-byte key in production:
 CALORIE_LENS_MASTER_KEY=
@@ -103,6 +111,15 @@ CALORIE_LENS_MASTER_KEY=
 `GOOGLE_API_KEY` is optional for typed logging. Voice transcription requires
 the API. The offline path uses the same conservative reference rules for its
 reviewed food and activity catalog.
+
+AI results are encrypted and cached, repeated identical requests are free of
+additional model calls, prompts and outputs are capped, and authenticated
+per-account daily limits prevent an open-ended bill. The limits reset each UTC
+day and can be lowered with the environment variables above.
+
+The public Streamlit companion keeps AI disabled even when a key exists. Set
+`CALORIE_LENS_ENABLE_WEB_AI=true` only if you deliberately want model-backed
+fallbacks there; known foods and typed fitness commands are local-first.
 
 The API creates a development encryption key in `data/` when no master key is
 configured. In production, mount the database on persistent storage and set a
