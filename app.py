@@ -1,5 +1,6 @@
 import csv
 import hashlib
+import html
 import io
 import json
 import os
@@ -10,18 +11,29 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types as genai_types
 except ModuleNotFoundError:
     genai = None
+    genai_types = None
 
 import streamlit as st
 import streamlit.components.v1 as components
 from dotenv import load_dotenv
+from health_integrations import (
+    merge_apple_health_snapshot,
+    parse_apple_health_export,
+)
 from streamlit.errors import StreamlitSecretNotFoundError
 
 
 load_dotenv()
-st.set_page_config(page_title="Calorie Lens", page_icon="🥗", layout="wide")
+st.set_page_config(
+    page_title="Calorie Lens — daily fitness",
+    page_icon="◉",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
 APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = APP_DIR / "data"
@@ -46,43 +58,102 @@ def read_secret(name: str, default: Optional[str] = None) -> Optional[str]:
 
 
 GOOGLE_API_KEY = read_secret("GOOGLE_API_KEY", os.getenv("GOOGLE_API_KEY"))
-TEXT_MODEL = read_secret("GEMINI_TEXT_MODEL", os.getenv("GEMINI_TEXT_MODEL", "gemini-2.0-flash"))
+TEXT_MODEL = read_secret("GEMINI_TEXT_MODEL", os.getenv("GEMINI_TEXT_MODEL", "gemini-3.6-flash"))
 GENAI_IMPORT_AVAILABLE = genai is not None
 AI_ENABLED = bool(GOOGLE_API_KEY) and GENAI_IMPORT_AVAILABLE
+GENAI_CLIENT = genai.Client(api_key=GOOGLE_API_KEY) if AI_ENABLED else None
 
-if AI_ENABLED:
-    genai.configure(api_key=GOOGLE_API_KEY)
-
-CALORIE_PROMPT = """You are a nutrition logging assistant for a personal fitness tracker.
+CALORIE_PROMPT = """You are the nutrition engine inside a personal fitness tracker.
 The user gives one meal in natural language, often Indian food, with quantities.
 Estimate calories and macros using practical real-world references.
-Return STRICT JSON only with this exact shape:
-{
-  "items": [
-    {
-      "name": "string",
-      "quantity_text": "string",
-      "calories_kcal": number,
-      "protein_g": number,
-      "carbs_g": number,
-      "fat_g": number
-    }
-  ],
-  "meal_total": {
-    "calories_kcal": number,
-    "protein_g": number,
-    "carbs_g": number,
-    "fat_g": number
-  },
-  "confidence": number,
-  "notes": "short string"
-}
 Rules:
-- Never include markdown or extra commentary.
 - Be conservative when uncertain.
 - Respect the user's quantity text.
 - If a quantity is unclear, make one practical assumption and mention it in notes.
+- confidence must be between 0 and 1.
 """
+
+CALORIE_SCHEMA = {
+    "type": "object",
+    "required": ["items", "meal_total", "confidence", "notes"],
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "name",
+                    "quantity_text",
+                    "calories_kcal",
+                    "protein_g",
+                    "carbs_g",
+                    "fat_g",
+                ],
+                "properties": {
+                    "name": {"type": "string"},
+                    "quantity_text": {"type": "string"},
+                    "calories_kcal": {"type": "number"},
+                    "protein_g": {"type": "number"},
+                    "carbs_g": {"type": "number"},
+                    "fat_g": {"type": "number"},
+                },
+            },
+        },
+        "meal_total": {
+            "type": "object",
+            "required": ["calories_kcal", "protein_g", "carbs_g", "fat_g"],
+            "properties": {
+                "calories_kcal": {"type": "number"},
+                "protein_g": {"type": "number"},
+                "carbs_g": {"type": "number"},
+                "fat_g": {"type": "number"},
+            },
+        },
+        "confidence": {"type": "number"},
+        "notes": {"type": "string"},
+    },
+}
+
+VOICE_COMMAND_PROMPT = """You turn a short spoken or typed fitness update into log operations.
+The user may mix English, Hindi, or Hinglish and may mention several things at once.
+Interpret "a glass" of water as 250 ml and "a bottle" as 750 ml unless specified.
+Use local time to infer the meal slot only when the user does not name it:
+before 11 breakfast, 11-16 lunch, 16-19 evening snack, after 19 dinner.
+For exercise, estimate calories conservatively when the user does not provide them.
+Use action "add" for water and exercise. Use "set" for steps, sleep, and weight
+unless the user clearly says to add an amount.
+Keep the transcript faithful and the confirmation concise.
+"""
+
+VOICE_COMMAND_SCHEMA = {
+    "type": "object",
+    "required": ["transcript", "operations", "confirmation"],
+    "properties": {
+        "transcript": {"type": "string"},
+        "confirmation": {"type": "string"},
+        "operations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["type", "action"],
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": ["meal", "water", "exercise", "steps", "sleep", "weight"],
+                    },
+                    "action": {"type": "string", "enum": ["add", "set"]},
+                    "meal_slot": {"type": "string"},
+                    "description": {"type": "string"},
+                    "amount": {"type": "number"},
+                    "unit": {"type": "string"},
+                    "duration_min": {"type": "number"},
+                    "calories_burned": {"type": "number"},
+                    "intensity": {"type": "string"},
+                },
+            },
+        },
+    },
+}
 
 FOOD_DB = [
     {"name": "Roti", "aliases": ["roti", "chapati", "phulka"], "calories": 120, "protein": 3.5, "carbs": 18, "fat": 3},
@@ -172,6 +243,7 @@ def default_user(username: str) -> Dict[str, Any]:
         "password_hash": "",
         "salt": "",
         "remember_tokens": [],
+        "health_imports": [],
         "profile": profile,
         "days": {},
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -217,6 +289,7 @@ def ensure_user(store: Dict[str, Any], username: str) -> Dict[str, Any]:
         store["users"][username] = default_user(username)
     user = store["users"][username]
     user.setdefault("remember_tokens", [])
+    user.setdefault("health_imports", [])
     user.setdefault("profile", DEFAULT_PROFILE.copy())
     user.setdefault("days", {})
     user["profile"].setdefault("display_name", username)
@@ -366,7 +439,7 @@ def render_auth_screen(store: Dict[str, Any]) -> None:
             login_username = normalize_username(st.text_input("Username"))
             login_password = st.text_input("Password", type="password")
             login_remember = st.checkbox("Stay logged in on this device", value=True)
-            login_submit = st.form_submit_button("Login", use_container_width=True)
+            login_submit = st.form_submit_button("Login", width="stretch")
             if login_submit:
                 user = store["users"].get(login_username)
                 if not user:
@@ -386,7 +459,7 @@ def render_auth_screen(store: Dict[str, Any]) -> None:
             import_legacy = False
             if store.get("legacy_data") and user_count == 0:
                 import_legacy = st.checkbox("Import existing tracker data into this first account", value=True)
-            signup_submit = st.form_submit_button("Create account", use_container_width=True)
+            signup_submit = st.form_submit_button("Create account", width="stretch")
 
             if signup_submit:
                 signup_username = normalize_username(signup_username_raw)
@@ -451,12 +524,8 @@ def normalize_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 def candidate_models() -> List[str]:
     raw = [
         TEXT_MODEL,
-        "gemini-2.0-flash",
-        "models/gemini-2.0-flash",
-        "gemini-1.5-flash",
-        "models/gemini-1.5-flash",
-        "gemini-1.5-pro",
-        "models/gemini-1.5-pro",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
     ]
     unique: List[str] = []
     for model_name in raw:
@@ -472,8 +541,14 @@ def try_ai_estimate(user_text: str) -> Tuple[Optional[Dict[str, Any]], str]:
     last_error = "Gemini estimate unavailable."
     for model_name in candidate_models():
         try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content([CALORIE_PROMPT, f"Meal text: {user_text}"])
+            response = GENAI_CLIENT.models.generate_content(
+                model=model_name,
+                contents=f"{CALORIE_PROMPT}\nMeal text: {user_text}",
+                config=genai_types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_json_schema=CALORIE_SCHEMA,
+                ),
+            )
             payload = normalize_payload(_safe_json_loads(getattr(response, "text", "") or ""))
             if payload["items"] or payload["meal_total"]["calories_kcal"]:
                 payload["source"] = "Gemini"
@@ -569,6 +644,329 @@ def estimate_meal_from_text(user_text: str) -> Dict[str, Any]:
     if ai_payload:
         return ai_payload
     return estimate_meal_locally(user_text, ai_error)
+
+
+def current_meal_slot() -> str:
+    hour = datetime.now().hour
+    if hour < 11:
+        return "Breakfast"
+    if hour < 16:
+        return "Lunch"
+    if hour < 19:
+        return "Evening Snack"
+    return "Dinner"
+
+
+def normalize_meal_slot(value: str) -> str:
+    lookup = {
+        "breakfast": "Breakfast",
+        "morning": "Breakfast",
+        "lunch": "Lunch",
+        "afternoon": "Lunch",
+        "snack": "Evening Snack",
+        "evening snack": "Evening Snack",
+        "evening": "Evening Snack",
+        "dinner": "Dinner",
+        "night": "Dinner",
+    }
+    return lookup.get((value or "").strip().lower(), current_meal_slot())
+
+
+def normalize_command_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    operations: List[Dict[str, Any]] = []
+    for raw_operation in payload.get("operations", []):
+        operation = dict(raw_operation) if isinstance(raw_operation, dict) else {}
+        operation_type = str(operation.get("type", "")).lower()
+        if operation_type not in {"meal", "water", "exercise", "steps", "sleep", "weight"}:
+            continue
+        operation["type"] = operation_type
+        operation["action"] = "add" if operation.get("action") == "add" else "set"
+        if operation_type == "meal":
+            operation["meal_slot"] = normalize_meal_slot(str(operation.get("meal_slot", "")))
+        operations.append(operation)
+    return {
+        "transcript": str(payload.get("transcript", "")).strip(),
+        "confirmation": str(payload.get("confirmation", "")).strip(),
+        "operations": operations,
+    }
+
+
+def parse_command_locally(command_text: str) -> Dict[str, Any]:
+    """Best-effort text parser used when Gemini is not configured."""
+
+    text = command_text.strip()
+    lowered = text.lower()
+    operations: List[Dict[str, Any]] = []
+
+    def has_term(term: str) -> bool:
+        return bool(re.search(rf"\b{re.escape(term)}\b", lowered))
+
+    if any(word in lowered for word in ["water", "paani", "pani", "hydration"]):
+        water_match = re.search(r"(\d+(?:\.\d+)?)\s*(ml|l|litres?|liters?)\b", lowered)
+        glass_match = re.search(r"(\d+(?:\.\d+)?)\s*(glasses?|bottles?)", lowered)
+        if water_match:
+            amount = float(water_match.group(1))
+            if water_match.group(2).startswith("l") and water_match.group(2) != "ml":
+                amount *= 1000
+            operations.append({"type": "water", "action": "add", "amount": amount, "unit": "ml"})
+        elif glass_match:
+            count = float(glass_match.group(1))
+            vessel = glass_match.group(2)
+            operations.append(
+                {
+                    "type": "water",
+                    "action": "add",
+                    "amount": count * (750 if "bottle" in vessel else 250),
+                    "unit": "ml",
+                }
+            )
+
+    steps_match = re.search(r"(\d[\d,]*)\s*steps?\b", lowered)
+    if steps_match:
+        operations.append(
+            {
+                "type": "steps",
+                "action": "set",
+                "amount": float(steps_match.group(1).replace(",", "")),
+                "unit": "steps",
+            }
+        )
+
+    sleep_match = re.search(r"(?:slept|sleep)\D{0,12}(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours?)", lowered)
+    if sleep_match:
+        operations.append(
+            {
+                "type": "sleep",
+                "action": "set",
+                "amount": float(sleep_match.group(1)),
+                "unit": "hours",
+            }
+        )
+
+    weight_match = re.search(r"(?:weight|weigh)\D{0,12}(\d+(?:\.\d+)?)\s*(kg|kgs|lb|lbs)?", lowered)
+    if weight_match:
+        weight = float(weight_match.group(1))
+        if (weight_match.group(2) or "").startswith("lb"):
+            weight *= 0.45359237
+        operations.append(
+            {"type": "weight", "action": "set", "amount": round(weight, 2), "unit": "kg"}
+        )
+
+    exercise_words = [
+        "workout",
+        "exercise",
+        "walked",
+        "walking",
+        "ran",
+        "running",
+        "gym",
+        "yoga",
+        "cycling",
+        "strength",
+    ]
+    duration_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:min|mins|minutes?)", lowered)
+    burn_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:kcal|calories)", lowered)
+    explicit_workout = any(
+        has_term(word)
+        for word in ["workout", "exercise", "gym", "yoga", "cycling", "strength", "running", "ran"]
+    )
+    steps_only_walk = bool(steps_match) and not duration_match and not burn_match and not explicit_workout
+    if any(has_term(word) for word in exercise_words) and not steps_only_walk:
+        duration = float(duration_match.group(1)) if duration_match else 30
+        operations.append(
+            {
+                "type": "exercise",
+                "action": "add",
+                "description": text,
+                "duration_min": duration,
+                "calories_burned": float(burn_match.group(1)) if burn_match else duration * 5,
+                "intensity": "Moderate",
+            }
+        )
+
+    meal_terms = ["ate", "had", "eaten", "khaya", "khayi", "breakfast", "lunch", "snack", "dinner"]
+    non_food_terms = [
+        "water",
+        "paani",
+        "pani",
+        "steps",
+        "walked",
+        "sleep",
+        "slept",
+        "weight",
+        "weigh",
+        "workout",
+        "exercise",
+        "gym",
+        "running",
+        "cycling",
+        "yoga",
+    ]
+    command_clauses = [
+        clause.strip()
+        for clause in re.split(r"\s*(?:,|;|\band\b|\bthen\b)\s*", text, flags=re.IGNORECASE)
+        if clause.strip()
+    ]
+    meal_clauses = [
+        clause
+        for clause in command_clauses
+        if not any(term in clause.lower() for term in non_food_terms)
+    ]
+    looks_like_food = any(find_food_match(clause) for clause in meal_clauses)
+    if any(word in lowered for word in meal_terms) or not operations or looks_like_food:
+        slot = next(
+            (
+                normalize_meal_slot(name)
+                for name in ["breakfast", "lunch", "evening snack", "snack", "dinner"]
+                if name in lowered
+            ),
+            current_meal_slot(),
+        )
+        description = ", ".join(meal_clauses) if meal_clauses else text
+        description = re.sub(
+            r"^(?:i\s+)?(?:ate|had|eaten|khaya|khayi)\s+",
+            "",
+            description,
+            flags=re.IGNORECASE,
+        )
+        description = re.sub(
+            r"^(?:my\s+)?(?:breakfast|lunch|evening snack|snack|dinner)\s+(?:was|is)\s+",
+            "",
+            description,
+            flags=re.IGNORECASE,
+        )
+        description = re.sub(
+            r"\s+(?:for|in)\s+(?:breakfast|lunch|evening snack|snack|dinner)\s*$",
+            "",
+            description,
+            flags=re.IGNORECASE,
+        )
+        if description:
+            operations.append(
+                {
+                    "type": "meal",
+                    "action": "add",
+                    "meal_slot": slot,
+                    "description": description,
+                }
+            )
+
+    return {
+        "transcript": text,
+        "operations": operations,
+        "confirmation": "I understood your update.",
+    }
+
+
+def parse_fitness_command(
+    command_text: str = "",
+    audio_bytes: Optional[bytes] = None,
+    audio_mime_type: str = "audio/wav",
+) -> Tuple[Optional[Dict[str, Any]], str]:
+    if not AI_ENABLED:
+        if audio_bytes:
+            return None, "Voice logging needs a Gemini API key. Typed quick logging still works offline."
+        return normalize_command_payload(parse_command_locally(command_text)), ""
+
+    content: List[Any] = [
+        (
+            f"{VOICE_COMMAND_PROMPT}\nCurrent local hour: {datetime.now().hour}."
+            f"\nTyped context: {command_text or 'None'}"
+        )
+    ]
+    if audio_bytes:
+        content.append(
+            genai_types.Part.from_bytes(
+                data=audio_bytes,
+                mime_type=audio_mime_type or "audio/wav",
+            )
+        )
+
+    last_error = "The command could not be understood."
+    for model_name in candidate_models():
+        try:
+            response = GENAI_CLIENT.models.generate_content(
+                model=model_name,
+                contents=content,
+                config=genai_types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_json_schema=VOICE_COMMAND_SCHEMA,
+                ),
+            )
+            payload = normalize_command_payload(
+                _safe_json_loads(getattr(response, "text", "") or "")
+            )
+            if payload["operations"]:
+                payload["model_used"] = model_name
+                return payload, ""
+            last_error = "I heard the command, but could not find anything to log."
+        except Exception as exc:
+            last_error = f"{model_name}: {exc}"
+    return None, last_error
+
+
+def apply_fitness_command(day_log: Dict[str, Any], payload: Dict[str, Any]) -> List[str]:
+    applied: List[str] = []
+    for operation in payload.get("operations", []):
+        operation_type = operation["type"]
+        action = operation.get("action", "set")
+        amount = float(operation.get("amount", 0) or 0)
+
+        if operation_type == "meal":
+            description = str(operation.get("description", "")).strip()
+            if not description:
+                continue
+            meal_slot = normalize_meal_slot(str(operation.get("meal_slot", "")))
+            result = estimate_meal_from_text(description)
+            day_log["meals"][meal_slot].append(
+                {
+                    "logged_at": datetime.now().strftime("%H:%M"),
+                    "input_text": description,
+                    "logged_via": "Quick command",
+                    **result,
+                }
+            )
+            applied.append(f"{meal_slot.lower()}: {description}")
+        elif operation_type == "water":
+            value = max(int(round(amount)), 0)
+            day_log["water_ml"] = (
+                day_log.get("water_ml", 0) + value if action == "add" else value
+            )
+            applied.append(f"water: {value} ml")
+        elif operation_type == "steps":
+            value = max(int(round(amount)), 0)
+            day_log["steps"] = day_log.get("steps", 0) + value if action == "add" else value
+            applied.append(f"steps: {value:,}")
+        elif operation_type == "sleep":
+            value = max(round(amount, 2), 0)
+            day_log["sleep_hours"] = (
+                day_log.get("sleep_hours", 0) + value if action == "add" else value
+            )
+            applied.append(f"sleep: {value:g} hours")
+        elif operation_type == "weight":
+            value = max(round(amount, 2), 0)
+            day_log["weight_kg"] = value
+            applied.append(f"weight: {value:g} kg")
+        elif operation_type == "exercise":
+            description = str(operation.get("description", "")).strip() or "Workout"
+            duration = max(int(round(float(operation.get("duration_min", 0) or 0))), 0)
+            burned = max(int(round(float(operation.get("calories_burned", 0) or 0))), 0)
+            day_log["exercises"].append(
+                {
+                    "name": description,
+                    "duration_min": duration,
+                    "calories_burned": burned,
+                    "intensity": str(operation.get("intensity", "Moderate")).title(),
+                    "notes": "Logged by quick command",
+                    "logged_at": datetime.now().strftime("%H:%M"),
+                    "source": "Quick command",
+                }
+            )
+            applied.append(f"exercise: {description} ({duration} min)")
+
+    if applied:
+        touch_log(day_log)
+    return applied
 
 
 def day_totals(day_log: Dict[str, Any]) -> Dict[str, float]:
@@ -756,37 +1154,43 @@ def render_premium_theme() -> None:
     st.markdown(
         """
         <style>
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap');
 
         :root {
-          --bg-main: #f4f7f6;
+          --bg-main: #f5f7f2;
           --bg-card: rgba(255, 255, 255, 0.96);
           --bg-strong: #ffffff;
-          --ink: #1f2937;
-          --muted: #5f6c7b;
-          --stroke: rgba(31, 41, 55, 0.10);
-          --accent-forest: #2f6f5e;
-          --accent-gold: #b88a44;
-          --accent-coral: #bf6f5d;
-          --accent-mint: #e7f0ec;
-          --shadow: 0 14px 32px rgba(15, 23, 42, 0.06);
+          --ink: #152019;
+          --muted: #667068;
+          --stroke: rgba(21, 32, 25, 0.09);
+          --accent-forest: #203d2c;
+          --accent-lime: #b8ef5a;
+          --accent-gold: #ab7c35;
+          --accent-coral: #c96f5d;
+          --accent-mint: #e6f0e2;
+          --shadow: 0 18px 50px rgba(38, 55, 44, 0.07);
           --radius-xl: 28px;
           --radius-lg: 20px;
         }
 
         .stApp {
           background:
-            radial-gradient(circle at top left, rgba(47, 111, 94, 0.06), transparent 24%),
-            radial-gradient(circle at top right, rgba(184, 138, 68, 0.06), transparent 22%),
-            linear-gradient(180deg, #f5f7f8 0%, #f7faf9 58%, #eff4f2 100%);
+            radial-gradient(circle at 10% 0%, rgba(184, 239, 90, 0.12), transparent 28rem),
+            linear-gradient(180deg, #f7f8f4 0%, #f2f5ef 100%);
           color: var(--ink);
-          font-family: "DM Sans", sans-serif;
+          font-family: "Outfit", sans-serif;
         }
 
         h1, h2, h3, .premium-title {
-          font-family: "Fraunces", serif !important;
-          letter-spacing: -0.03em;
+          font-family: "Outfit", sans-serif !important;
+          letter-spacing: -0.035em;
           color: var(--ink);
+        }
+
+        [data-testid="stMainBlockContainer"] {
+          max-width: 1180px;
+          padding-top: 2.25rem;
+          padding-bottom: 7rem;
         }
 
         p, label, .stCaption, .stMarkdown, .stText {
@@ -842,24 +1246,32 @@ def render_premium_theme() -> None:
         }
 
         .stTabs [data-baseweb="tab-list"] {
-          gap: 10px;
-          background: rgba(255,255,255,0.76);
-          padding: 8px;
-          border-radius: 999px;
+          gap: 4px;
+          background: rgba(255,255,255,0.82);
+          padding: 6px;
+          border-radius: 18px;
           border: 1px solid var(--stroke);
+          position: sticky;
+          top: 0.5rem;
+          z-index: 3;
+          backdrop-filter: blur(18px);
         }
 
         .stTabs [data-baseweb="tab"] {
-          border-radius: 999px;
-          padding: 10px 18px;
+          border-radius: 13px;
+          padding: 10px 16px;
           font-weight: 600;
           color: var(--muted);
         }
 
         .stTabs [aria-selected="true"] {
-          background: linear-gradient(135deg, #e9efe9, #f3f6f1) !important;
+          background: var(--ink) !important;
           color: var(--ink) !important;
-          border: 1px solid rgba(103, 134, 114, 0.20);
+          border: none;
+        }
+
+        .stTabs [aria-selected="true"] p {
+          color: #ffffff !important;
         }
 
         [data-testid="stExpander"] {
@@ -900,17 +1312,38 @@ def render_premium_theme() -> None:
         }
 
         .stButton > button, .stDownloadButton > button, .stFormSubmitButton > button {
-          border-radius: 999px;
-          border: 1px solid rgba(103, 134, 114, 0.16);
-          background: linear-gradient(135deg, var(--accent-forest), #3e8571);
+          border-radius: 14px;
+          border: 1px solid rgba(21, 32, 25, 0.12);
+          background: var(--ink);
           color: #ffffff !important;
           font-weight: 600;
           padding: 0.65rem 1.1rem;
-          box-shadow: 0 10px 24px rgba(57, 67, 61, 0.08);
+          box-shadow: 0 10px 24px rgba(21, 32, 25, 0.10);
+          transition: transform 180ms ease, background 180ms ease, box-shadow 180ms ease;
+        }
+
+        .stButton > button p,
+        .stDownloadButton > button p,
+        .stFormSubmitButton > button p {
+          color: #ffffff !important;
+        }
+
+        .stButton > button:hover, .stDownloadButton > button:hover, .stFormSubmitButton > button:hover {
+          background: #26372b;
+          transform: translateY(-1px);
+          box-shadow: 0 14px 30px rgba(21, 32, 25, 0.14);
+        }
+
+        .stButton > button:active, .stDownloadButton > button:active, .stFormSubmitButton > button:active {
+          transform: scale(0.985);
         }
 
         .stButton > button[kind="secondary"] {
           background: rgba(255,255,255,0.82);
+          color: var(--ink) !important;
+        }
+
+        .stButton > button[kind="secondary"] p {
           color: var(--ink) !important;
         }
 
@@ -1044,14 +1477,15 @@ def render_premium_theme() -> None:
 
         .premium-hero {
           background:
-            linear-gradient(135deg, rgba(255,255,255,0.98), rgba(247,250,249,0.98)),
-            radial-gradient(circle at top right, rgba(184, 138, 68, 0.08), transparent 28%);
+            radial-gradient(circle at 86% 12%, rgba(184, 239, 90, 0.38), transparent 16rem),
+            linear-gradient(135deg, #17231b, #24382a);
           border-radius: 30px;
-          padding: 28px 30px;
-          color: var(--ink);
-          border: 1px solid rgba(59, 72, 63, 0.08);
+          padding: 30px 32px 32px;
+          color: #ffffff;
+          border: 1px solid rgba(255,255,255,0.08);
           box-shadow: var(--shadow);
           margin-bottom: 16px;
+          overflow: hidden;
         }
 
         .premium-kicker {
@@ -1064,19 +1498,66 @@ def render_premium_theme() -> None:
         }
 
         .premium-hero h1 {
-          color: var(--ink);
+          color: #ffffff;
           margin: 0.35rem 0 0.4rem 0;
-          font-size: 2.05rem;
+          font-size: clamp(2rem, 5vw, 3.55rem);
           font-weight: 600;
-          line-height: 1.15;
+          line-height: 1.02;
+          max-width: 760px;
+          text-wrap: balance;
         }
 
         .premium-hero p {
-          color: var(--muted);
+          color: rgba(255,255,255,0.72) !important;
           margin: 0;
           max-width: 700px;
           font-size: 1rem;
           line-height: 1.6;
+        }
+
+        .hero-kicker {
+          color: var(--accent-lime);
+          font-weight: 600;
+          letter-spacing: 0.04em;
+          margin-bottom: 0.35rem;
+        }
+
+        .hero-balance {
+          margin-top: 1.45rem;
+          display: flex;
+          gap: 1rem;
+          align-items: baseline;
+          flex-wrap: wrap;
+        }
+
+        .hero-balance strong {
+          color: #ffffff;
+          font-size: 2.2rem;
+          letter-spacing: -0.04em;
+          font-variant-numeric: tabular-nums;
+        }
+
+        .hero-balance span {
+          color: rgba(255,255,255,0.64);
+        }
+
+        .command-card {
+          background: var(--accent-lime);
+          border-radius: 26px;
+          padding: 20px 22px 8px;
+          margin: 16px 0;
+          color: var(--ink);
+          box-shadow: 0 18px 42px rgba(101, 138, 42, 0.12);
+        }
+
+        .command-card h3 {
+          margin: 0 0 0.2rem;
+          font-size: 1.25rem;
+        }
+
+        .command-card p {
+          color: rgba(21,32,25,0.70) !important;
+          margin: 0 0 0.75rem;
         }
 
         .glass-card {
@@ -1219,9 +1700,29 @@ def render_premium_theme() -> None:
         }
 
         @media (max-width: 768px) {
-          .premium-hero { padding: 22px 20px; }
-          .premium-hero h1 { font-size: 1.75rem; }
+          [data-testid="stMainBlockContainer"] {
+            padding: 1rem 1rem 5.5rem;
+          }
+          .premium-hero { padding: 20px 21px 22px; border-radius: 24px; }
+          .premium-hero h1 { font-size: 2.08rem; }
+          .premium-hero p { font-size: 0.92rem; line-height: 1.45; }
+          .hero-balance { margin-top: 0.85rem; gap: 0.45rem; }
+          .hero-balance strong { font-size: 1.85rem; }
           .nutrient-row { grid-template-columns: 1fr; }
+          .command-card { border-radius: 21px; padding: 15px 18px 5px; margin-block: 12px; }
+          .command-card h3 { font-size: 1.1rem; }
+          .command-card p { font-size: 0.86rem; }
+          .stTabs [data-baseweb="tab-list"] {
+            overflow-x: auto;
+            justify-content: flex-start;
+          }
+          .stTabs [data-baseweb="tab"] {
+            flex: 0 0 auto;
+            padding-inline: 13px;
+          }
+          [data-testid="stMetric"] {
+            padding: 14px 15px;
+          }
         }
         </style>
         """,
@@ -1229,6 +1730,7 @@ def render_premium_theme() -> None:
     )
 
 
+render_premium_theme()
 store = get_store()
 bootstrap_remembered_login()
 if st.session_state.pop("clear_device_cookie", False):
@@ -1245,7 +1747,6 @@ else:
     username = auth_username
     user = ensure_user(store, username)
     profile = user["profile"]
-    render_premium_theme()
 
     pending_device_cookie = st.session_state.pop("pending_device_cookie", None)
     if pending_device_cookie:
@@ -1262,7 +1763,7 @@ else:
             """,
             unsafe_allow_html=True,
         )
-        if st.button("Log out", use_container_width=True):
+        if st.button("Log out", width="stretch"):
             logout_user(store)
             st.rerun()
 
@@ -1282,7 +1783,7 @@ else:
             step_goal_input = st.number_input(
                 "Step goal", min_value=1000, max_value=50000, value=int(profile["step_goal"]), step=500
             )
-            save_profile = st.form_submit_button("Save goals", use_container_width=True)
+            save_profile = st.form_submit_button("Save goals", width="stretch")
             if save_profile:
                 profile["display_name"] = display_name_input.strip() or username
                 profile["calorie_goal"] = int(calorie_goal_input)
@@ -1294,15 +1795,21 @@ else:
 
         st.markdown("---")
         if AI_ENABLED:
-            st.success("Gemini calorie estimation is enabled.")
+            st.success("AI food + voice logging is ready.")
             st.caption(f"Primary model preference: `{TEXT_MODEL}`")
         elif GOOGLE_API_KEY and not GENAI_IMPORT_AVAILABLE:
-            st.warning("Google API key found, but `google-generativeai` is not installed. The app will use built-in calorie estimates.")
+            st.warning(
+                "Google API key found, but `google-genai` is not installed. "
+                "Typed logging will use local estimates."
+            )
         else:
-            st.warning("No Google API key found. The app will use built-in calorie estimates.")
-        st.caption(f"User data is saved in `{DATA_FILE.relative_to(APP_DIR)}`")
+            st.info("Add a Gemini API key to enable voice. Typed logging works offline.")
 
-    selected_date = st.date_input("Tracking date", value=date.today())
+    selected_date = st.date_input(
+        "Tracking date",
+        value=date.today(),
+        label_visibility="collapsed",
+    )
     day_key = selected_date.isoformat()
     log = ensure_day(user, day_key)
 
@@ -1317,38 +1824,121 @@ else:
     total_duration = sum(int(ex.get("duration_min", 0)) for ex in log["exercises"])
     avg_duration = round(total_duration / exercise_sessions, 1) if exercise_sessions else 0.0
     calories_goal_delta = summary["calories_in"] - float(profile["calorie_goal"])
+    calories_remaining = max(
+        int(round(float(profile["calorie_goal"]) - summary["net_calories"])),
+        0,
+    )
+    display_name = html.escape(profile.get("display_name", username).strip() or username)
+    greeting = (
+        "Good morning"
+        if datetime.now().hour < 12
+        else "Good afternoon"
+        if datetime.now().hour < 17
+        else "Good evening"
+    )
 
     st.markdown(
         f"""
         <section class="premium-hero">
-          <div class="premium-kicker">Daily Coaching Studio</div>
-          <h1>Build a calm, steady, healthy day.</h1>
+          <div class="hero-kicker">calorie lens / {selected_date.strftime("%a, %d %b")}</div>
+          <h1>{greeting}, {display_name}.</h1>
           <p>
-            A softer health dashboard that keeps your food rhythm, hydration, recovery,
-            and movement in one clear place so progress feels grounded and easy to follow.
+            One place for food, hydration, recovery and training. Log naturally,
+            then get back to your day.
           </p>
-          <div class="mini-grid">
-            <div class="mini-stat">
-              <div class="mini-label">Momentum Streak</div>
-              <div class="mini-value">{streak} day{"s" if streak != 1 else ""}</div>
-            </div>
-            <div class="mini-stat">
-              <div class="mini-label">Readiness</div>
-              <div class="mini-value">{readiness}/100</div>
-            </div>
-            <div class="mini-stat">
-              <div class="mini-label">Consistency</div>
-              <div class="mini-value">{consistency}/100</div>
-            </div>
-            <div class="mini-stat">
-              <div class="mini-label">Today's Focus</div>
-              <div class="mini-value" style="font-size:1.05rem; line-height:1.35;">{focus_title}</div>
-            </div>
+          <div class="hero-balance">
+            <strong>{calories_remaining:,}</strong>
+            <span>kcal remaining · {streak} day streak · readiness {readiness}</span>
           </div>
         </section>
         """,
         unsafe_allow_html=True,
     )
+
+    st.markdown(
+        """
+        <section class="command-card">
+          <h3>Say it once. Consider it logged.</h3>
+          <p>“Lunch was two rotis and dal, drank 500 ml water, and walked 3,000 steps.”</p>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    quick_flash = st.session_state.pop("quick_log_flash", None)
+    if quick_flash:
+        st.success(quick_flash)
+
+    st.session_state.setdefault("quick_log_version", 0)
+    quick_version = st.session_state["quick_log_version"]
+    command_col, voice_col = st.columns([1.35, 0.65])
+    with command_col:
+        quick_command_text = st.text_input(
+            "Quick log",
+            placeholder="Type anything you ate, drank, or did…",
+            label_visibility="collapsed",
+            key=f"quick_command_text_{quick_version}",
+        )
+    with voice_col:
+        quick_audio = st.audio_input(
+            "Voice log",
+            label_visibility="collapsed",
+            key=f"quick_command_audio_{quick_version}",
+        )
+
+    quick_action, water_action, steps_action = st.columns([1.45, 0.75, 0.8])
+    with quick_action:
+        log_quick_command = st.button(
+            "Log this update",
+            type="primary",
+            width="stretch",
+            key=f"apply_quick_command_{quick_version}",
+        )
+    with water_action:
+        if st.button("+250 ml", width="stretch", key="home_quick_water"):
+            log["water_ml"] += 250
+            touch_log(log)
+            save_store(store)
+            st.session_state["quick_log_flash"] = "Added 250 ml water."
+            st.rerun()
+    with steps_action:
+        if st.button("+1,000 steps", width="stretch", key="home_quick_steps"):
+            log["steps"] += 1000
+            touch_log(log)
+            save_store(store)
+            st.session_state["quick_log_flash"] = "Added 1,000 steps."
+            st.rerun()
+
+    if log_quick_command:
+        audio_bytes = quick_audio.getvalue() if quick_audio else None
+        audio_type = getattr(quick_audio, "type", "audio/wav") if quick_audio else "audio/wav"
+        if not quick_command_text.strip() and not audio_bytes:
+            st.warning("Type an update or record a voice command first.")
+        else:
+            with st.spinner("Listening and logging…"):
+                command_payload, command_error = parse_fitness_command(
+                    command_text=quick_command_text.strip(),
+                    audio_bytes=audio_bytes,
+                    audio_mime_type=audio_type,
+                )
+                if command_payload:
+                    applied_items = apply_fitness_command(log, command_payload)
+                else:
+                    applied_items = []
+
+            if not command_payload or not applied_items:
+                st.error(command_error or "I could not find anything to log in that update.")
+            else:
+                save_store(store)
+                transcript = command_payload.get("transcript", "").strip()
+                confirmation = command_payload.get("confirmation", "").strip()
+                detail = "; ".join(applied_items)
+                st.session_state["quick_log_flash"] = (
+                    f"{confirmation or 'Logged.'} {detail}"
+                    + (f' · Heard: “{transcript}”' if transcript and quick_audio else "")
+                )
+                st.session_state["quick_log_version"] += 1
+                st.rerun()
 
     top_left, top_right = st.columns([1.25, 1])
     with top_left:
@@ -1395,18 +1985,40 @@ else:
             unsafe_allow_html=True,
         )
 
-    m1, m2, m3, m4, m5, m6 = st.columns(6)
-    m1.metric("Calories In", f"{summary['calories_in']:.0f} kcal", delta=f"{summary['calories_in'] - profile['calorie_goal']:.0f} vs goal")
-    m2.metric("Protein", f"{summary['protein_g']:.0f} g", delta=f"{summary['protein_g'] - profile['protein_goal']:.0f} vs goal")
-    m3.metric("Calories Out", f"{summary['calories_out']:.0f} kcal")
-    m4.metric("Water", f"{log['water_ml']} ml", delta=f"{log['water_ml'] - profile['water_goal']:.0f} vs goal")
-    m5.metric("Steps", f"{log['steps']}", delta=f"{log['steps'] - profile['step_goal']:.0f} vs goal")
-    m6.metric("Meals Logged", f"{meal_completion}/4", delta=f"{4 - meal_completion} left")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric(
+        "Calories",
+        f"{summary['calories_in']:.0f}",
+        delta=f"{calories_remaining} remaining",
+        delta_color="off",
+    )
+    m2.metric(
+        "Protein",
+        f"{summary['protein_g']:.0f} g",
+        delta=f"{max(int(profile['protein_goal'] - summary['protein_g']), 0)} g remaining",
+        delta_color="off",
+    )
+    m3.metric(
+        "Water",
+        f"{log['water_ml'] / 1000:.1f} L",
+        delta=f"{whole_ratio(log['water_ml'], profile['water_goal'])}% of goal",
+        delta_color="off",
+    )
+    m4.metric(
+        "Steps",
+        f"{log['steps']:,}",
+        delta=f"{whole_ratio(log['steps'], profile['step_goal'])}% of goal",
+        delta_color="off",
+    )
 
-    st.progress(min(summary["calories_in"] / max(profile["calorie_goal"], 1), 1.0), text="Calorie goal progress")
-    st.progress(min(log["water_ml"] / max(profile["water_goal"], 1), 1.0), text="Water goal progress")
+    st.progress(
+        min(summary["calories_in"] / max(profile["calorie_goal"], 1), 1.0),
+        text=f"Daily calorie budget · {summary['calories_in']:.0f} of {profile['calorie_goal']} kcal",
+    )
 
-    dashboard_tab, meals_tab, exercise_tab, history_tab = st.tabs(["Command Center", "Meals", "Movement", "History & Export"])
+    dashboard_tab, meals_tab, exercise_tab, history_tab, health_tab = st.tabs(
+        ["Today", "Food", "Workout", "Progress", "Apple Health"]
+    )
 
     with dashboard_tab:
         left_col, right_col = st.columns([1.08, 0.92])
@@ -1455,7 +2067,7 @@ else:
                     placeholder="Write anything useful: hunger, cravings, digestion, training quality, schedule pressure, mood shifts.",
                     height=120,
                 )
-                save_daily_checkin = st.form_submit_button("Save daily check-in", use_container_width=True)
+                save_daily_checkin = st.form_submit_button("Save daily check-in", width="stretch")
                 if save_daily_checkin:
                     log["water_ml"] = int(water_input)
                     log["sleep_hours"] = float(sleep_input)
@@ -1469,22 +2081,22 @@ else:
                     st.success("Daily check-in saved.")
 
             qw1, qw2, qw3, qw4 = st.columns(4)
-            if qw1.button("+250 ml water", use_container_width=True):
+            if qw1.button("+250 ml water", width="stretch"):
                 log["water_ml"] += 250
                 touch_log(log)
                 save_store(store)
                 st.rerun()
-            if qw2.button("+500 ml water", use_container_width=True):
+            if qw2.button("+500 ml water", width="stretch"):
                 log["water_ml"] += 500
                 touch_log(log)
                 save_store(store)
                 st.rerun()
-            if qw3.button("+1000 steps", use_container_width=True):
+            if qw3.button("+1000 steps", width="stretch"):
                 log["steps"] += 1000
                 touch_log(log)
                 save_store(store)
                 st.rerun()
-            if qw4.button("Reset selected day", use_container_width=True):
+            if qw4.button("Reset selected day", width="stretch"):
                 user["days"][day_key] = default_day_log()
                 save_store(store)
                 st.rerun()
@@ -1569,7 +2181,7 @@ else:
             ("Post Workout", "grilled chicken, rice, curd"),
         ]
         for idx, (label, value) in enumerate(templates):
-            if template_cols[idx].button(label, use_container_width=True, key=f"meal-template-{idx}"):
+            if template_cols[idx].button(label, width="stretch", key=f"meal-template-{idx}"):
                 st.session_state["meal_text_next_value"] = value
                 st.rerun()
 
@@ -1581,7 +2193,7 @@ else:
             key="meal_text_input",
         )
 
-        if st.button("Estimate and add meal", type="primary", use_container_width=True):
+        if st.button("Estimate and add meal", type="primary", width="stretch"):
             meal_text_clean = meal_text.strip()
             if not meal_text_clean:
                 st.warning("Please enter your meal first.")
@@ -1628,7 +2240,7 @@ else:
                         if entry.get("items"):
                             st.table(entry["items"])
                     with col_b:
-                        if st.button("Delete", key=f"delete-meal-{slot}-{idx}", use_container_width=True):
+                        if st.button("Delete", key=f"delete-meal-{slot}-{idx}", width="stretch"):
                             log["meals"][slot].pop(idx)
                             touch_log(log)
                             save_store(store)
@@ -1663,7 +2275,7 @@ else:
 
         exercise_note = st.text_input("Exercise note", placeholder="Felt easy, outdoor walk, upper body session, etc.")
 
-        if st.button("Add exercise", use_container_width=True):
+        if st.button("Add exercise", width="stretch"):
             if exercise_name.strip():
                 log["exercises"].append(
                     {
@@ -1695,7 +2307,7 @@ else:
                         st.caption(entry["notes"])
                     st.caption(f"Logged at {entry.get('logged_at', '--')}")
                 with col_b:
-                    if st.button("Delete", key=f"delete-ex-{idx}", use_container_width=True):
+                    if st.button("Delete", key=f"delete-ex-{idx}", width="stretch"):
                         log["exercises"].pop(idx)
                         touch_log(log)
                         save_store(store)
@@ -1705,7 +2317,7 @@ else:
 
     with history_tab:
         st.subheader("Recent history")
-        st.dataframe(history_rows(user, days=7), use_container_width=True, hide_index=True)
+        st.dataframe(history_rows(user, days=7), width="stretch", hide_index=True)
 
         st.markdown("### Export current day")
         payload = make_export_payload(day_key, log)
@@ -1747,6 +2359,106 @@ else:
             mime="text/csv",
         )
 
-    st.info(
-        "Each user now has a separate account and private tracking data. Passwords are hashed, and you can stay logged in on the current device."
+    with health_tab:
+        latest_import = user.get("health_imports", [])[-1] if user.get("health_imports") else None
+        connection_copy = (
+            f"Last snapshot: {latest_import['imported_at'][:10]} · "
+            f"{latest_import['record_count']:,} records"
+            if latest_import
+            else "No Apple Health snapshot imported yet"
+        )
+        st.markdown(
+            f"""
+            <div class="glass-card">
+              <div class="premium-kicker">Apple Health + Apple Watch</div>
+              <h3 style="margin:0.45rem 0;">Bring your device data into the same day.</h3>
+              <p style="margin:0; color:var(--muted);">
+                Import Apple’s Health export to add Watch-recorded steps, workouts,
+                sleep, weight and logged water. {connection_copy}.
+              </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        health_left, health_right = st.columns([1.05, 0.95])
+        with health_left:
+            st.subheader("Import a Health snapshot")
+            st.caption(
+                "On iPhone: Health → your profile → Export All Health Data. "
+                "Upload the resulting export.zip or export.xml here."
+            )
+            health_file = st.file_uploader(
+                "Apple Health export",
+                type=["zip", "xml"],
+                accept_multiple_files=False,
+                help="The file is parsed only for supported fitness records.",
+            )
+            if health_file:
+                st.caption(
+                    f"Ready: {health_file.name} · {health_file.size / (1024 * 1024):.1f} MB"
+                )
+                if st.button(
+                    "Import Apple Health data",
+                    type="primary",
+                    width="stretch",
+                ):
+                    try:
+                        with st.spinner("Reading your Health export…"):
+                            snapshot = parse_apple_health_export(
+                                health_file.getvalue(),
+                                health_file.name,
+                            )
+                            import_result = merge_apple_health_snapshot(
+                                user,
+                                snapshot,
+                                health_file.name,
+                            )
+                            save_store(store)
+                        st.success(
+                            f"Updated {import_result['changed_days']} days and added "
+                            f"{import_result['added_workouts']} Apple Watch workouts."
+                        )
+                        st.rerun()
+                    except (ValueError, OSError) as exc:
+                        st.error(str(exc))
+
+        with health_right:
+            st.subheader("Connection status")
+            status_rows = [
+                {
+                    "Source": "Apple Health export",
+                    "Status": "Ready" if latest_import else "Available",
+                },
+                {
+                    "Source": "Apple Watch data",
+                    "Status": "Included in export",
+                },
+                {
+                    "Source": "Live background sync",
+                    "Status": "Needs iOS companion",
+                },
+            ]
+            st.dataframe(status_rows, width="stretch", hide_index=True)
+            st.info(
+                "HealthKit only grants data access to authorized Apple-platform apps. "
+                "This web version supports private snapshot imports now; live sync is "
+                "the next native iPhone/Watch layer."
+            )
+
+        if user.get("health_imports"):
+            with st.expander("Import history"):
+                history = [
+                    {
+                        "Imported": item.get("imported_at", "").replace("T", " "),
+                        "File": item.get("filename", ""),
+                        "Days": item.get("days", 0),
+                        "Records": item.get("record_count", 0),
+                    }
+                    for item in reversed(user["health_imports"])
+                ]
+                st.dataframe(history, width="stretch", hide_index=True)
+
+    st.caption(
+        "Calorie and exercise values are estimates for personal tracking, not medical advice."
     )
