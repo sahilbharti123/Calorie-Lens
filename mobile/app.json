@@ -1,0 +1,78 @@
+{
+  "expo": {
+    "name": "Calorie Lens",
+    "slug": "calorie-lens",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "calorielens",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.sahilbharti.calorielens"
+    },
+    "android": {
+      "package": "com.sahilbharti.calorielens",
+      "permissions": [
+        "android.permission.health.READ_STEPS",
+        "android.permission.health.READ_ACTIVE_CALORIES_BURNED",
+        "android.permission.health.READ_WEIGHT",
+        "android.permission.health.READ_SLEEP"
+      ],
+      "adaptiveIcon": {
+        "backgroundColor": "#152019",
+        "foregroundImage": "./assets/images/icon.png"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/icon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/icon.png",
+          "imageWidth": 180,
+          "resizeMode": "contain",
+          "backgroundColor": "#152019",
+          "dark": {
+            "backgroundColor": "#152019"
+          }
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Calorie Lens uses the microphone only when you choose voice logging."
+        }
+      ],
+      "expo-sqlite",
+      [
+        "@kingstinct/react-native-healthkit",
+        {
+          "NSHealthShareUsageDescription": "Calorie Lens reads steps, activity, sleep, and weight to keep your fitness dashboard current.",
+          "NSHealthUpdateUsageDescription": "Calorie Lens can save fitness information that you explicitly confirm.",
+          "background": true
+        }
+      ],
+      "expo-health-connect",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 26
+          }
+        }
+      ],
+      "expo-asset"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}

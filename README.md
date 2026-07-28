@@ -1,7 +1,11 @@
 # Calorie Lens
 
-A light, mobile-first personal fitness tracker built with Streamlit. Try it here:
+A light personal fitness tracker with native iOS and Android apps plus a
+Streamlit web companion. Try the web version here:
 https://calorie-lens-count.streamlit.app/
+
+The native app lives in [`mobile/`](mobile/) and uses one React Native/Expo
+codebase for both platforms.
 
 ## What it does
 
@@ -46,6 +50,20 @@ integration boundary.
 pip install -r requirements.txt
 streamlit run app.py
 ```
+
+For the native app and its AI/voice service:
+
+```bash
+uvicorn api:app --reload --host 0.0.0.0 --port 8000
+cd mobile
+cp .env.example .env
+npm install
+npm run ios
+# or: npm run android
+```
+
+See [`mobile/README.md`](mobile/README.md) for HealthKit, Apple Watch, Health
+Connect, development-build, and EAS setup.
 
 ## Environment
 
