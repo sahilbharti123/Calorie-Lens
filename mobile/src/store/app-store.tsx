@@ -2,15 +2,37 @@ import Storage from 'expo-sqlite/kv-store';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 import { dateKey } from '@/src/lib/date';
-import type { AppData, DayLog, Goals, HealthSnapshot, LogOperation, MealItem, WeightPoint, Workout } from '@/src/types';
+import type {
+  AppData,
+  DayLog,
+  EstimationProfile,
+  Goals,
+  HealthSnapshot,
+  LogOperation,
+  MealItem,
+  WeightPoint,
+  Workout,
+} from '@/src/types';
 
 const STORAGE_KEY = 'calorie-lens.app-data.v1';
 
 const initialData: AppData = {
   goals: { calories: 2200, protein: 120, waterMl: 3000, steps: 8000 },
+  estimation: { cupMl: 200 },
   days: {},
   weights: [],
 };
+
+function normalizeData(saved: Partial<AppData>): AppData {
+  return {
+    ...initialData,
+    ...saved,
+    goals: { ...initialData.goals, ...saved.goals },
+    estimation: { ...initialData.estimation, ...saved.estimation },
+    days: saved.days ?? {},
+    weights: saved.weights ?? [],
+  };
+}
 
 function emptyDay(date = dateKey()): DayLog {
   return {
@@ -38,6 +60,7 @@ type AppContextValue = {
   removeWorkout: (id: string) => void;
   applyHealthSnapshot: (snapshot: HealthSnapshot) => void;
   updateGoals: (goals: Partial<Goals>) => void;
+  updateEstimationProfile: (profile: Partial<EstimationProfile>, weightKg?: number) => void;
 };
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -49,7 +72,7 @@ export function AppProvider({ children }: React.PropsWithChildren) {
   useEffect(() => {
     Storage.getItem(STORAGE_KEY)
       .then((saved) => {
-        if (saved) setData(JSON.parse(saved));
+        if (saved) setData(normalizeData(JSON.parse(saved)));
       })
       .finally(() => setHydrated(true));
   }, []);
@@ -98,6 +121,13 @@ export function AppProvider({ children }: React.PropsWithChildren) {
             name: operation.name,
             durationMin: operation.durationMin,
             calories: operation.calories,
+            calorieLow: operation.calorieLow,
+            calorieHigh: operation.calorieHigh,
+            confidence: operation.confidence,
+            basis: operation.basis,
+            sourceLabel: operation.sourceLabel,
+            sourceId: operation.sourceId,
+            met: operation.met,
             intensity: operation.intensity,
             loggedAt: new Date().toISOString(),
           };
@@ -154,6 +184,19 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     setData((current) => ({ ...current, goals: { ...current.goals, ...goals } }));
   }, []);
 
+  const updateEstimationProfile = useCallback((profile: Partial<EstimationProfile>, weightKg?: number) => {
+    setData((current) => ({
+      ...current,
+      estimation: { ...current.estimation, ...profile },
+      weights: weightKg
+        ? [
+            ...current.weights.filter((point) => point.date !== dateKey()),
+            { date: dateKey(), kg: weightKg },
+          ].slice(-90)
+        : current.weights,
+    }));
+  }, []);
+
   const today = data.days[dateKey()] ?? emptyDay();
   const value = useMemo(() => ({
     data,
@@ -165,7 +208,19 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     removeWorkout,
     applyHealthSnapshot,
     updateGoals,
-  }), [data, today, hydrated, applyOperations, addWater, removeMeal, removeWorkout, applyHealthSnapshot, updateGoals]);
+    updateEstimationProfile,
+  }), [
+    data,
+    today,
+    hydrated,
+    applyOperations,
+    addWater,
+    removeMeal,
+    removeWorkout,
+    applyHealthSnapshot,
+    updateGoals,
+    updateEstimationProfile,
+  ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

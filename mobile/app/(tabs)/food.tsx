@@ -24,7 +24,7 @@ export default function FoodScreen() {
           <View style={styles.energyLine}>
             <View>
               <Text style={styles.energyLabel}>TODAY</Text>
-              <Text style={styles.energyValue}>{Math.round(totals.calories)} <Text style={styles.energyUnit}>kcal</Text></Text>
+              <Text style={styles.energyValue}>~{Math.round(totals.calories)} <Text style={styles.energyUnit}>kcal midpoint</Text></Text>
             </View>
             <Text style={styles.remaining}>{Math.max(0, data.goals.calories - totals.calories)} left</Text>
           </View>
@@ -50,7 +50,7 @@ export default function FoodScreen() {
                   <Text style={styles.slotTitle}>{slotLabels[slot]}</Text>
                   <Text style={styles.slotMeta}>
                     {meals.length
-                      ? `${Math.round(meals.reduce((sum, meal) => sum + meal.calories, 0))} kcal`
+                      ? mealRange(meals)
                       : 'Nothing logged'}
                   </Text>
                 </View>
@@ -63,7 +63,11 @@ export default function FoodScreen() {
                     <Text style={styles.mealName}>{meal.name}</Text>
                     <Text style={styles.mealQuantity}>{meal.quantity} · {meal.protein} g protein</Text>
                   </View>
-                  <Text style={styles.mealKcal}>{meal.calories} kcal</Text>
+                  <Text style={styles.mealKcal}>
+                    {meal.calorieLow != null && meal.calorieHigh != null
+                      ? `${meal.calorieLow}–${meal.calorieHigh}`
+                      : meal.calories} kcal
+                  </Text>
                   <Pressable
                     accessibilityLabel={`Delete ${meal.name}`}
                     hitSlop={10}
@@ -98,6 +102,12 @@ function Macro({ label, value, target }: { label: string; value: number; target:
       </View>
     </View>
   );
+}
+
+function mealRange(meals: { calories: number; calorieLow?: number; calorieHigh?: number }[]) {
+  const low = meals.reduce((sum, meal) => sum + (meal.calorieLow ?? meal.calories), 0);
+  const high = meals.reduce((sum, meal) => sum + (meal.calorieHigh ?? meal.calories), 0);
+  return `${Math.round(low)}–${Math.round(high)} kcal`;
 }
 
 const styles = StyleSheet.create({

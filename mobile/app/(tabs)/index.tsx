@@ -42,7 +42,7 @@ export default function TodayScreen() {
           </View>
           <ProgressBar value={totals.calories / data.goals.calories} />
           <View style={styles.heroMeta}>
-            <Text style={styles.heroMetaText}>{Math.round(totals.calories)} eaten</Text>
+            <Text style={styles.heroMetaText}>~{Math.round(totals.calories)} eaten</Text>
             <Text style={styles.heroMetaText}>{data.goals.calories} target</Text>
           </View>
         </View>
@@ -74,7 +74,7 @@ export default function TodayScreen() {
                     {meals.length ? meals.map((meal) => meal.name).join(', ') : 'Tap to log'}
                   </Text>
                 </View>
-                <Text style={styles.mealCalories}>{calories ? `${Math.round(calories)} kcal` : 'Add'}</Text>
+                <Text style={styles.mealCalories}>{calories ? `~${Math.round(calories)} kcal` : 'Add'}</Text>
                 <Glyph name="chevron" color={palette.muted} size={16} />
               </Pressable>
             );

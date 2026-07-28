@@ -1,0 +1,21 @@
+[
+  {
+    "name": "100 g cooked kidney beans",
+    "input": {"food": "kidney beans", "amount": 100, "unit": "g"},
+    "expected_kcal": 127,
+    "source": "USDA FDC 175194"
+  },
+  {
+    "name": "two standard whole-wheat rotis",
+    "input": {"food": "roti", "amount": 2, "unit": "piece"},
+    "expected_kcal": 239,
+    "expected_range_kcal": [191, 287],
+    "source": "USDA FDC 174075; 40 g app standard"
+  },
+  {
+    "name": "30 minute hard walk at 70 kg",
+    "input": {"activity": "walking", "minutes": 30, "intensity": "hard", "weight_kg": 70},
+    "expected_active_kcal": 140,
+    "source": "2024 Adult Compendium; net MET formula"
+  }
+]

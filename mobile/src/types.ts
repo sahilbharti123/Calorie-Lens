@@ -1,4 +1,10 @@
 export type MealSlot = 'breakfast' | 'lunch' | 'snack' | 'dinner';
+export type EstimateConfidence = 'high' | 'medium' | 'low';
+export type EstimationContext = {
+  weightKg?: number;
+  bowlMl?: number;
+  cupMl: number;
+};
 
 export type MealItem = {
   id: string;
@@ -8,9 +14,16 @@ export type MealItem = {
   protein: number;
   carbs: number;
   fat: number;
+  calorieLow?: number;
+  calorieHigh?: number;
+  confidence?: EstimateConfidence;
+  basis?: string;
+  sourceLabel?: string;
+  sourceId?: string;
+  assumptions?: string[];
   slot: MealSlot;
   loggedAt: string;
-  source: 'ai' | 'local' | 'manual';
+  source: 'usda' | 'label' | 'ai' | 'local' | 'manual';
 };
 
 export type Workout = {
@@ -18,6 +31,13 @@ export type Workout = {
   name: string;
   durationMin: number;
   calories: number;
+  calorieLow?: number;
+  calorieHigh?: number;
+  confidence?: EstimateConfidence;
+  basis?: string;
+  sourceLabel?: string;
+  sourceId?: string;
+  met?: number;
   intensity: 'light' | 'moderate' | 'hard';
   loggedAt: string;
 };
@@ -34,9 +54,11 @@ export type DayLog = {
 
 export type Goals = { calories: number; protein: number; waterMl: number; steps: number };
 export type WeightPoint = { date: string; kg: number };
+export type EstimationProfile = { bowlMl?: number; cupMl: number };
 
 export type AppData = {
   goals: Goals;
+  estimation: EstimationProfile;
   days: Record<string, DayLog>;
   weights: WeightPoint[];
   lastHealthSync?: string;
@@ -57,6 +79,13 @@ export type LogOperation =
       name: string;
       durationMin: number;
       calories: number;
+      calorieLow?: number;
+      calorieHigh?: number;
+      confidence?: EstimateConfidence;
+      basis?: string;
+      sourceLabel?: string;
+      sourceId?: string;
+      met?: number;
       intensity: Workout['intensity'];
     }
   | { type: 'steps'; action: 'add' | 'set'; amount: number }
@@ -68,6 +97,14 @@ export type ParsedCommand = {
   confirmation: string;
   operations: LogOperation[];
   source: 'ai' | 'local';
+  clarification?: {
+    question: string;
+    suggestions: string[];
+  };
+  profileUpdates?: {
+    weightKg?: number;
+    bowlMl?: number;
+  };
 };
 
 export type HealthSnapshot = {

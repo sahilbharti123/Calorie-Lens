@@ -1,4 +1,10 @@
-import type { LogOperation, MealItem, MealSlot, ParsedCommand } from '@/src/types';
+import type {
+  EstimationContext,
+  LogOperation,
+  MealItem,
+  MealSlot,
+  ParsedCommand,
+} from '@/src/types';
 
 type FoodReference = {
   name: string;
@@ -7,53 +13,77 @@ type FoodReference = {
   protein: number;
   carbs: number;
   fat: number;
-  quantity: string;
+  fdcId: number;
+  pieceG?: number;
+  pieceVariance?: number;
+  density?: number;
+  densityVariance?: number;
 };
 
-const foodReferences: FoodReference[] = [
-  { name: 'Roti', aliases: ['roti', 'chapati', 'phulka'], calories: 120, protein: 3.5, carbs: 18, fat: 3, quantity: '1 piece' },
-  { name: 'Cooked rice', aliases: ['rice', 'plain rice'], calories: 205, protein: 4.3, carbs: 45, fat: 0.4, quantity: '1 cup' },
-  { name: 'Dal', aliases: ['dal', 'dhal', 'lentils'], calories: 180, protein: 9, carbs: 24, fat: 4, quantity: '1 bowl' },
-  { name: 'Paneer', aliases: ['paneer', 'paneer bhurji'], calories: 265, protein: 18, carbs: 6, fat: 20, quantity: '100 g' },
-  { name: 'Chicken curry', aliases: ['chicken curry', 'butter chicken'], calories: 260, protein: 24, carbs: 8, fat: 14, quantity: '1 bowl' },
-  { name: 'Chicken breast', aliases: ['chicken breast', 'grilled chicken'], calories: 165, protein: 31, carbs: 0, fat: 3.6, quantity: '100 g' },
-  { name: 'Egg', aliases: ['egg', 'boiled egg'], calories: 78, protein: 6.3, carbs: 0.6, fat: 5.3, quantity: '1 egg' },
-  { name: 'Omelette', aliases: ['omelette', 'omelet'], calories: 154, protein: 11, carbs: 2, fat: 11, quantity: '2 eggs' },
-  { name: 'Idli', aliases: ['idli', 'idlis'], calories: 58, protein: 2, carbs: 12, fat: 0.4, quantity: '1 piece' },
-  { name: 'Dosa', aliases: ['dosa', 'masala dosa'], calories: 170, protein: 4, carbs: 25, fat: 5, quantity: '1 medium' },
-  { name: 'Poha', aliases: ['poha'], calories: 210, protein: 5, carbs: 34, fat: 6, quantity: '1 bowl' },
-  { name: 'Upma', aliases: ['upma'], calories: 220, protein: 5, carbs: 32, fat: 8, quantity: '1 bowl' },
-  { name: 'Bread', aliases: ['bread', 'toast'], calories: 80, protein: 3, carbs: 15, fat: 1, quantity: '1 slice' },
-  { name: 'Peanut butter', aliases: ['peanut butter'], calories: 95, protein: 4, carbs: 3, fat: 8, quantity: '1 tbsp' },
-  { name: 'Banana', aliases: ['banana'], calories: 105, protein: 1.3, carbs: 27, fat: 0.4, quantity: '1 medium' },
-  { name: 'Apple', aliases: ['apple'], calories: 95, protein: 0.5, carbs: 25, fat: 0.3, quantity: '1 medium' },
-  { name: 'Curd', aliases: ['curd', 'yogurt', 'dahi'], calories: 98, protein: 5, carbs: 7, fat: 5, quantity: '1 cup' },
-  { name: 'Milk', aliases: ['milk'], calories: 120, protein: 6, carbs: 12, fat: 5, quantity: '250 ml' },
-  { name: 'Chai', aliases: ['tea', 'chai'], calories: 70, protein: 2, carbs: 9, fat: 3, quantity: '1 cup' },
-  { name: 'Coffee', aliases: ['coffee'], calories: 60, protein: 2, carbs: 7, fat: 2, quantity: '1 cup' },
-  { name: 'Samosa', aliases: ['samosa'], calories: 250, protein: 4, carbs: 30, fat: 12, quantity: '1 piece' },
-  { name: 'Salad', aliases: ['salad'], calories: 50, protein: 2, carbs: 10, fat: 0.5, quantity: '1 bowl' },
-  { name: 'Protein shake', aliases: ['protein shake', 'whey shake', 'whey'], calories: 130, protein: 24, carbs: 4, fat: 2, quantity: '1 scoop' },
+const foods: FoodReference[] = [
+  { name: 'Cooked kidney beans', aliases: ['kidney beans', 'kidney bean', 'rajma'], calories: 127, protein: 8.67, carbs: 22.8, fat: 0.5, fdcId: 175194, density: 0.75, densityVariance: 0.18 },
+  { name: 'Cooked lentils', aliases: ['lentils', 'lentil', 'dhal', 'dal'], calories: 116, protein: 9.02, carbs: 20.1, fat: 0.38, fdcId: 172421, density: 0.75, densityVariance: 0.18 },
+  { name: 'Cooked white rice', aliases: ['white rice', 'plain rice', 'cooked rice', 'rice'], calories: 130, protein: 2.69, carbs: 28.2, fat: 0.28, fdcId: 168878, density: 0.79, densityVariance: 0.12 },
+  { name: 'Whole-wheat roti', aliases: ['chapati', 'chappati', 'phulka', 'roti'], calories: 299, protein: 7.85, carbs: 46.1, fat: 9.2, fdcId: 174075, pieceG: 40, pieceVariance: 0.2 },
+  { name: 'Roasted chicken breast', aliases: ['chicken breast', 'grilled chicken', 'roasted chicken'], calories: 165, protein: 31, carbs: 0, fat: 3.57, fdcId: 171477 },
+  { name: 'Boiled egg', aliases: ['hard boiled egg', 'boiled egg', 'egg'], calories: 155, protein: 12.6, carbs: 1.12, fat: 10.6, fdcId: 173424, pieceG: 50, pieceVariance: 0.12 },
+  { name: 'Whole milk', aliases: ['whole milk', 'full fat milk', 'milk'], calories: 60, protein: 3.27, carbs: 4.63, fat: 3.2, fdcId: 746782, density: 1.03, densityVariance: 0.03 },
+  { name: 'Plain whole-milk yogurt', aliases: ['plain yogurt', 'yogurt', 'curd', 'dahi'], calories: 61, protein: 3.47, carbs: 4.66, fat: 3.25, fdcId: 171284, density: 1.03, densityVariance: 0.06 },
+  { name: 'Banana', aliases: ['banana', 'kela'], calories: 89, protein: 1.09, carbs: 22.8, fat: 0.33, fdcId: 173944, pieceG: 118, pieceVariance: 0.18 },
+  { name: 'Whole-wheat bread', aliases: ['whole wheat bread', 'brown bread', 'bread', 'toast'], calories: 252, protein: 12.4, carbs: 42.7, fat: 3.5, fdcId: 172688, pieceG: 28, pieceVariance: 0.18 },
+  { name: 'Smooth peanut butter', aliases: ['peanut butter'], calories: 598, protein: 22.2, carbs: 22.3, fat: 51.4, fdcId: 172470, density: 1.07, densityVariance: 0.08 },
+  { name: 'Idli', aliases: ['idli'], calories: 128, protein: 6.36, carbs: 24.98, fat: 0.35, fdcId: 2708346, pieceG: 50, pieceVariance: 0.22 },
+  { name: 'Plain dosa', aliases: ['plain dosa', 'dosa'], calories: 210, protein: 5.7, carbs: 37.04, fat: 4.05, fdcId: 2708347, pieceG: 100, pieceVariance: 0.3 },
 ];
 
 const numberWords: Record<string, number> = {
-  a: 1,
-  an: 1,
-  one: 1,
-  two: 2,
-  three: 3,
-  four: 4,
-  five: 5,
-  half: 0.5,
+  a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, half: 0.5,
 };
 
-function quantityMultiplier(text: string, reference: FoodReference) {
-  const alias = reference.aliases.find((candidate) => text.includes(candidate));
-  if (!alias) return 1;
-  const before = text.slice(0, text.indexOf(alias)).trim().split(/\s+/).at(-1) ?? '';
-  const numeric = Number.parseFloat(before);
-  if (Number.isFinite(numeric)) return numeric;
-  return numberWords[before] ?? 1;
+type Quantity = { amount: number; unit: string };
+
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function numberValue(value?: string) {
+  if (!value) return 0;
+  return numberWords[value] ?? Number.parseFloat(value);
+}
+
+function quantityNear(text: string, alias: string, reference: FoodReference): Quantity {
+  const units = 'kg|g|grams?|ml|l|litres?|liters?|bowls?|cups?|pieces?|tbsp|tsp';
+  const number = '\\d+(?:\\.\\d+)?|a|an|one|two|three|four|five|half';
+  const explicitVolume = text.match(
+    new RegExp(`(\\d+(?:\\.\\d+)?)\\s*ml\\s*(?:bowl(?:\\s+of)?\\s*)?${escapeRegex(alias)}s?\\b`),
+  );
+  if (explicitVolume) return { amount: numberValue(explicitVolume[1]), unit: 'ml' };
+  const before = text.match(new RegExp(`(${number})\\s*(${units})?\\s*${escapeRegex(alias)}s?\\b`));
+  const after = text.match(new RegExp(`${escapeRegex(alias)}s?\\s*(${number})\\s*(${units})\\b`));
+  const match = before ?? after;
+  if (!match) return { amount: 0, unit: 'unknown' };
+  const unit = (match[2] ?? (reference.pieceG ? 'piece' : 'unknown'))
+    .replace(/s$/, '')
+    .replace(/^gram$/, 'g')
+    .replace(/^litre$|^liter$/, 'l');
+  return { amount: numberValue(match[1]), unit };
+}
+
+function firstNumber(text: string, pattern: RegExp) {
+  const match = text.match(pattern);
+  if (!match) return 0;
+  const raw = match.slice(1).find(Boolean)?.replaceAll(',', '');
+  return raw ? Number.parseFloat(raw) : 0;
+}
+
+function clarification(transcript: string, question: string, suggestions: string[]): ParsedCommand {
+  return {
+    transcript,
+    confirmation: 'One detail will improve this estimate',
+    operations: [],
+    source: 'local',
+    clarification: { question, suggestions },
+  };
 }
 
 export function inferMealSlot(text = ''): MealSlot {
@@ -69,141 +99,287 @@ export function inferMealSlot(text = ''): MealSlot {
   return 'dinner';
 }
 
-export function estimateMealLocally(text: string) {
-  const lowered = text.toLowerCase();
-  const matches = foodReferences.filter((food) => food.aliases.some((alias) => lowered.includes(alias)));
-  const selected: FoodReference[] = matches.length ? matches : [{
-    name: text.trim() || 'Meal',
-    aliases: [],
-    calories: 300,
-    protein: 12,
-    carbs: 35,
-    fat: 12,
-    quantity: 'estimated serving',
-  }];
-
-  return selected.map((food): Omit<MealItem, 'id' | 'slot' | 'loggedAt'> => {
-    const multiplier = quantityMultiplier(lowered, food);
+function gramsFor(
+  quantity: Quantity,
+  food: FoodReference,
+  context: EstimationContext,
+): { grams: number; low: number; high: number; label: string } | { question: string; suggestions: string[] } {
+  const amount = quantity.amount;
+  const unit = quantity.unit;
+  if (!amount) {
     return {
-      name: food.name,
-      quantity: multiplier === 1 ? food.quantity : `${multiplier} × ${food.quantity}`,
-      calories: Math.round(food.calories * multiplier),
-      protein: Math.round(food.protein * multiplier * 10) / 10,
-      carbs: Math.round(food.carbs * multiplier * 10) / 10,
-      fat: Math.round(food.fat * multiplier * 10) / 10,
-      source: 'local',
+      question: `How much ${food.name.toLowerCase()} did you have?`,
+      suggestions: ['100 g', '1 piece', '1 bowl', '1 cup'],
     };
-  });
+  }
+  if (unit === 'kg') return { grams: amount * 1000, low: amount * 980, high: amount * 1020, label: `${amount} kg` };
+  if (unit === 'g') return { grams: amount, low: amount * 0.98, high: amount * 1.02, label: `${amount} g` };
+  if (unit === 'piece') {
+    if (!food.pieceG) return { question: `About how many grams was each ${food.name.toLowerCase()}?`, suggestions: ['30 g', '50 g', '75 g', '100 g'] };
+    const grams = amount * food.pieceG;
+    const variance = food.pieceVariance ?? 0.12;
+    return { grams, low: grams * (1 - variance), high: grams * (1 + variance), label: `${amount} × ${food.pieceG} g standard piece` };
+  }
+  let volumeMl = 0;
+  let label = '';
+  if (unit === 'bowl') {
+    if (!context.bowlMl) return { question: 'About how large is your usual bowl?', suggestions: ['150 ml', '200 ml', '250 ml', '300 ml'] };
+    volumeMl = amount * context.bowlMl;
+    label = `${amount} × ${context.bowlMl} ml bowl`;
+  } else if (unit === 'cup') {
+    volumeMl = amount * context.cupMl;
+    label = `${amount} × ${context.cupMl} ml cup`;
+  } else if (unit === 'ml') {
+    volumeMl = amount;
+    label = `${amount} ml`;
+  } else if (unit === 'l') {
+    volumeMl = amount * 1000;
+    label = `${amount} l`;
+  } else if (unit === 'tbsp' || unit === 'tsp') {
+    volumeMl = amount * (unit === 'tbsp' ? 15 : 5);
+    label = `${amount} ${unit}`;
+  }
+  if (!volumeMl || !food.density) {
+    return { question: `Can you give the grams for ${food.name.toLowerCase()}?`, suggestions: ['50 g', '100 g', '150 g', '200 g'] };
+  }
+  const grams = volumeMl * food.density;
+  const variance = food.densityVariance ?? 0.12;
+  return { grams, low: grams * (1 - variance), high: grams * (1 + variance), label };
 }
 
-function firstNumber(text: string, pattern: RegExp) {
-  const match = text.match(pattern);
-  if (!match) return 0;
-  const raw = match.slice(1).find(Boolean)?.replaceAll(',', '');
-  return raw ? Number.parseFloat(raw) : 0;
+function estimateFood(
+  food: FoodReference,
+  quantity: Quantity,
+  text: string,
+  context: EstimationContext,
+): Omit<MealItem, 'id' | 'slot' | 'loggedAt'> | { question: string; suggestions: string[] } {
+  const measured = gramsFor(quantity, food, context);
+  if ('question' in measured) return measured;
+  const scale = measured.grams / 100;
+  let calories = food.calories * scale;
+  let low = food.calories * measured.low / 100;
+  let high = food.calories * measured.high / 100;
+  let fat = food.fat * scale;
+  const assumptions: string[] = [];
+  if ((/rajma|dal|curry/.test(text)) && !/plain|boiled|dry/.test(text)) {
+    const oilKcal = 4.6 * 8.84;
+    calories += oilKcal;
+    low += oilKcal * 0.5;
+    high += oilKcal * 2;
+    fat += 4.6;
+    assumptions.push('home curry range assumes ½–2 tsp oil in this portion');
+  }
+  const exactGrams = quantity.unit === 'g' || quantity.unit === 'kg';
+  const confidence = measured.label.includes('bowl') || assumptions.length ? 'low' : exactGrams ? 'high' : 'medium';
+  return {
+    name: food.name,
+    quantity: measured.label,
+    calories: Math.round(calories),
+    calorieLow: Math.round(low),
+    calorieHigh: Math.round(high),
+    protein: Math.round(food.protein * scale * 10) / 10,
+    carbs: Math.round(food.carbs * scale * 10) / 10,
+    fat: Math.round(fat * 10) / 10,
+    source: 'usda',
+    sourceLabel: 'USDA FoodData Central',
+    sourceId: `FDC ${food.fdcId}`,
+    confidence,
+    basis: `${measured.label} · ${food.calories} kcal/100 g${assumptions[0] ? ` · ${assumptions[0]}` : ''}`,
+    assumptions,
+  };
 }
 
-export function parseCommandLocally(text: string, preferredSlot?: MealSlot): ParsedCommand {
+type Activity = { name: string; aliases: RegExp; mets: [number, number, number]; sourceId: string };
+const activities: Activity[] = [
+  { name: 'Walking', aliases: /walk/, mets: [2.8, 3.8, 4.8], sourceId: 'walking' },
+  { name: 'Running', aliases: /run|jog/, mets: [6.5, 8.5, 11], sourceId: 'running' },
+  { name: 'Cycling', aliases: /cycl|bike/, mets: [4.3, 7, 9], sourceId: 'bicycling' },
+  { name: 'Strength training', aliases: /strength|weight|lifting|gym/, mets: [3.5, 5, 6], sourceId: 'conditioning-exercise' },
+  { name: 'HIIT', aliases: /hiit|high intensity interval/, mets: [7, 9, 11], sourceId: 'conditioning-exercise' },
+  { name: 'Yoga', aliases: /yoga|vinyasa|hatha/, mets: [2.3, 2.7, 4], sourceId: 'conditioning-exercise' },
+];
+
+function estimateWorkout(text: string, context: EstimationContext): LogOperation | ParsedCommand | null {
+  const activity = activities.find((candidate) => candidate.aliases.test(text));
+  if (!activity) return null;
+  const duration = firstNumber(text, /(\d+(?:\.\d+)?)\s*(?:min|minute)/);
+  if (!duration) return clarification(text, `How many minutes did you do ${activity.name.toLowerCase()}?`, ['15 min', '30 min', '45 min', '60 min']);
+  if (!context.weightKg) return clarification(text, 'What is your current body weight? I need it to estimate active calories.', ['60 kg', '70 kg', '80 kg', '90 kg']);
+  const hasIntensity = /hard|intense|vigorous|brisk|moderate|easy|light/.test(text);
+  if (!hasIntensity) return clarification(text, `How hard was the ${activity.name.toLowerCase()}?`, ['Light', 'Moderate', 'Hard', 'Give speed']);
+  const intensityIndex = /hard|intense|vigorous|brisk/.test(text) ? 2 : /easy|light/.test(text) ? 0 : 1;
+  const intensity = (['light', 'moderate', 'hard'] as const)[intensityIndex];
+  const met = activity.mets[intensityIndex];
+  const metLow = intensityIndex ? activity.mets[intensityIndex - 1] : met * 0.9;
+  const metHigh = intensityIndex < 2 ? activity.mets[intensityIndex + 1] : met * 1.1;
+  const activeKcal = (value: number) => Math.max(0, value - 1) * 3.5 * context.weightKg! / 200 * duration;
+  return {
+    type: 'workout',
+    action: 'add',
+    name: activity.name,
+    durationMin: duration,
+    calories: Math.round(activeKcal(met)),
+    calorieLow: Math.round(activeKcal(metLow)),
+    calorieHigh: Math.round(activeKcal(metHigh)),
+    intensity,
+    met,
+    sourceLabel: '2024 Adult Compendium of Physical Activities',
+    sourceId: activity.sourceId,
+    confidence: 'low',
+    basis: `${met} MET · ${context.weightKg} kg · ${duration} min · resting energy excluded`,
+  };
+}
+
+export function parseCommandLocally(
+  text: string,
+  preferredSlot: MealSlot | undefined,
+  context: EstimationContext,
+): ParsedCommand {
   const lowered = text.toLowerCase().trim();
   const operations: LogOperation[] = [];
   const water = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*(?:ml|millilit)/);
   const waterLitres = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*(?:l|litre|liter)\b/);
   const glasses = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*glass/);
   if (/water|paani|pani|glass/.test(lowered)) {
-    operations.push({
-      type: 'water',
-      action: 'add',
-      amount: water || waterLitres * 1000 || glasses * 250 || 250,
-    });
+    operations.push({ type: 'water', action: 'add', amount: water || waterLitres * 1000 || glasses * 250 || 250 });
   }
-
   const steps = firstNumber(lowered, /(\d[\d,]*)\s*steps?/);
   if (steps) operations.push({ type: 'steps', action: 'set', amount: steps });
-
   const sleep = firstNumber(lowered, /(?:slept|sleep).{0,12}(\d+(?:\.\d+)?)|(\d+(?:\.\d+)?)\s*(?:hours?|hrs?).{0,12}sleep/);
   if (/sleep|slept/.test(lowered) && sleep) operations.push({ type: 'sleep', action: 'set', amount: sleep });
-
   const weight = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*kg/);
-  if (/weight|weigh/.test(lowered) && weight) operations.push({ type: 'weight', action: 'set', amount: weight });
-
-  const duration = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*(?:min|minute)/);
-  const workoutMatch = lowered.match(/(?:did|workout|trained|exercise|walked|ran|cycled)\s+(.+?)(?:\s+for\s+\d+|\s+\d+\s*(?:min|minute)|$)/);
-  if (workoutMatch || /workout|gym|walk|run|cycling|yoga|strength/.test(lowered)) {
-    const name = workoutMatch?.[1]?.trim()
-      || (lowered.includes('walk') ? 'Walk' : lowered.includes('run') ? 'Run' : 'Workout');
-    const minutes = duration || 30;
-    operations.push({
-      type: 'workout',
-      action: 'add',
-      name: name.charAt(0).toUpperCase() + name.slice(1),
-      durationMin: minutes,
-      calories: Math.round(minutes * 6),
-      intensity: /hard|intense|hiit/.test(lowered) ? 'hard' : /easy|light/.test(lowered) ? 'light' : 'moderate',
-    });
+  const hasWorkoutLanguage = activities.some((activity) => activity.aliases.test(lowered));
+  if ((/weight|weigh/.test(lowered) || (hasWorkoutLanguage && !context.weightKg)) && weight) {
+    operations.push({ type: 'weight', action: 'set', amount: weight });
   }
 
-  const looksLikeMeal = /ate|had|breakfast|lunch|dinner|snack|khaya|khayi/.test(lowered)
-    || foodReferences.some((food) => food.aliases.some((alias) => lowered.includes(alias)));
+  const effectiveContext = { ...context, weightKg: (context.weightKg ?? weight) || undefined };
+  const workout = estimateWorkout(lowered, effectiveContext);
+  if (workout && !('type' in workout)) return workout;
+  if (workout) operations.push(workout);
+
+  const matches = foods
+    .map((food) => ({ food, alias: food.aliases.find((alias) => new RegExp(`\\b${escapeRegex(alias)}s?\\b`).test(lowered)) }))
+    .filter((match): match is { food: FoodReference; alias: string } => Boolean(match.alias));
+  const looksLikeMeal = /ate|had|breakfast|lunch|dinner|snack|khaya|khayi/.test(lowered) || matches.length > 0;
   if (looksLikeMeal) {
-    const slot = preferredSlot ?? inferMealSlot(lowered);
-    operations.push({
-      type: 'meal',
-      action: 'add',
-      slot,
-      description: text.trim(),
-      items: estimateMealLocally(text),
-    });
+    if (!matches.length) {
+      const declaredCalories = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*(?:kcal|calories?)/);
+      if (declaredCalories) {
+        operations.push({
+          type: 'meal',
+          action: 'add',
+          slot: preferredSlot ?? inferMealSlot(lowered),
+          description: text.trim(),
+          items: [{
+            name: text.replace(/\d+(?:\.\d+)?\s*(?:kcal|calories?)/i, '').trim() || 'Packaged food',
+            quantity: 'amount described by user',
+            calories: Math.round(declaredCalories),
+            calorieLow: Math.round(declaredCalories * 0.95),
+            calorieHigh: Math.round(declaredCalories * 1.05),
+            protein: 0,
+            carbs: 0,
+            fat: 0,
+            source: 'label',
+            sourceLabel: 'Food label supplied by user',
+            sourceId: 'declared serving',
+            confidence: 'medium',
+            basis: `${declaredCalories} kcal declared for the amount consumed`,
+            assumptions: ['label rounding and serving accuracy still apply'],
+          }],
+        });
+      } else {
+      return clarification(text, 'I do not have a verified reference for that food yet. Can you give its label calories or main ingredients?', ['Read label calories', 'List ingredients', 'Use a different food name']);
+      }
+    }
+    const items: Omit<MealItem, 'id' | 'slot' | 'loggedAt'>[] = [];
+    for (const { food, alias } of matches) {
+      const estimate = estimateFood(food, quantityNear(lowered, alias, food), lowered, context);
+      if ('question' in estimate) return clarification(text, estimate.question, estimate.suggestions);
+      items.push(estimate);
+    }
+    if (items.length) {
+      operations.push({
+        type: 'meal',
+        action: 'add',
+        slot: preferredSlot ?? inferMealSlot(lowered),
+        description: text.trim(),
+        items,
+      });
+    }
   }
-
-  if (!operations.length) {
-    const slot = preferredSlot ?? inferMealSlot(lowered);
-    operations.push({
-      type: 'meal',
-      action: 'add',
-      slot,
-      description: text.trim(),
-      items: estimateMealLocally(text),
-    });
-  }
-
+  if (!operations.length) return clarification(text, 'What would you like me to log?', ['A meal', 'Water', 'A workout', 'Weight']);
   return {
     transcript: text.trim(),
-    confirmation: operations.length === 1 ? '1 update ready to review' : `${operations.length} updates ready to review`,
+    confirmation: operations.length === 1 ? '1 evidence-backed update ready' : `${operations.length} evidence-backed updates ready`,
     operations,
     source: 'local',
   };
 }
 
-export async function parseFitnessCommand(text: string, preferredSlot?: MealSlot) {
-  const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
-  if (!apiUrl) return parseCommandLocally(text, preferredSlot);
+type ClarificationContext = {
+  previousTranscript?: string;
+  clarificationQuestion?: string;
+};
 
+function requestPayload(
+  context: EstimationContext,
+  clarification?: ClarificationContext,
+) {
+  return {
+    weight_kg: context.weightKg,
+    bowl_ml: context.bowlMl,
+    cup_ml: context.cupMl,
+    previous_transcript: clarification?.previousTranscript,
+    clarification_question: clarification?.clarificationQuestion,
+  };
+}
+
+export async function parseFitnessCommand(
+  text: string,
+  preferredSlot: MealSlot | undefined,
+  context: EstimationContext,
+  clarification?: ClarificationContext,
+) {
+  const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
+  if (!apiUrl) return parseCommandLocally(text, preferredSlot, context);
   try {
     const response = await fetch(`${apiUrl}/v1/parse-command`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, preferred_slot: preferredSlot }),
+      body: JSON.stringify({
+        text,
+        preferred_slot: preferredSlot,
+        ...requestPayload(context, clarification),
+      }),
     });
     if (!response.ok) throw new Error(`Request failed with ${response.status}`);
     return { ...(await response.json()), source: 'ai' } as ParsedCommand;
   } catch {
-    return parseCommandLocally(text, preferredSlot);
+    const combined = clarification?.previousTranscript
+      ? `${clarification.previousTranscript}. ${text}`
+      : text;
+    return parseCommandLocally(combined, preferredSlot, context);
   }
 }
 
-export async function parseVoiceCommand(audioUri: string, preferredSlot?: MealSlot) {
+export async function parseVoiceCommand(
+  audioUri: string,
+  preferredSlot: MealSlot | undefined,
+  context: EstimationContext,
+  clarification?: ClarificationContext,
+) {
   const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
-  if (!apiUrl) {
-    throw new Error('Set EXPO_PUBLIC_API_URL to enable voice transcription. Typed logging already works offline.');
-  }
+  if (!apiUrl) throw new Error('Set EXPO_PUBLIC_API_URL to enable voice transcription.');
   const body = new FormData();
-  body.append('audio', {
-    uri: audioUri,
-    name: 'quick-log.m4a',
-    type: 'audio/mp4',
-  } as unknown as Blob);
+  body.append('audio', { uri: audioUri, name: 'quick-log.m4a', type: 'audio/mp4' } as unknown as Blob);
   if (preferredSlot) body.append('preferred_slot', preferredSlot);
+  if (context.weightKg) body.append('weight_kg', String(context.weightKg));
+  if (context.bowlMl) body.append('bowl_ml', String(context.bowlMl));
+  body.append('cup_ml', String(context.cupMl));
+  if (clarification?.previousTranscript) body.append('previous_transcript', clarification.previousTranscript);
+  if (clarification?.clarificationQuestion) body.append('clarification_question', clarification.clarificationQuestion);
   const response = await fetch(`${apiUrl}/v1/parse-command/audio`, { method: 'POST', body });
-  if (!response.ok) throw new Error('Voice could not be understood. Please try again or type the update.');
+  if (!response.ok) throw new Error('Voice could not be understood. Please try again.');
   return { ...(await response.json()), source: 'ai' } as ParsedCommand;
 }

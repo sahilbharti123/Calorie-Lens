@@ -23,7 +23,7 @@ export default function TrainScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.heroLabel}>TODAY’S TRAINING</Text>
             <Text style={styles.heroValue}>{totals.minutes || 0} <Text style={styles.heroUnit}>minutes</Text></Text>
-            <Text style={styles.heroMeta}>{totals.calories} active kcal logged</Text>
+            <Text style={styles.heroMeta}>~{totals.calories} active kcal midpoint</Text>
           </View>
           <Pressable
             onPress={() => router.push({ pathname: '/quick-log', params: { prefill: '30 min strength workout' } })}
@@ -32,7 +32,7 @@ export default function TrainScreen() {
           </Pressable>
         </View>
 
-        <VoiceBar label="Say “45 minutes leg workout”" />
+        <VoiceBar label="Say “45 min hard strength workout”" />
 
         <View style={styles.recovery}>
           <Text style={styles.recoveryEyebrow}>RECOVERY CUE</Text>
@@ -54,7 +54,9 @@ export default function TrainScreen() {
                 <View style={styles.workoutIndex}><Text style={styles.workoutIndexText}>{String(index + 1).padStart(2, '0')}</Text></View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.workoutName}>{workout.name}</Text>
-                  <Text style={styles.workoutMeta}>{workout.durationMin} min · {workout.intensity} · {workout.calories} kcal</Text>
+                  <Text style={styles.workoutMeta}>
+                    {workout.durationMin} min · {workout.intensity} · {workout.calorieLow ?? workout.calories}–{workout.calorieHigh ?? workout.calories} active kcal
+                  </Text>
                 </View>
                 <Pressable hitSlop={10} onPress={() => removeWorkout(workout.id)}>
                   <Glyph name="trash" color={palette.muted} size={18} />
@@ -72,7 +74,7 @@ export default function TrainScreen() {
 
         <Text style={styles.templatesLabel}>QUICK STARTS</Text>
         <View style={styles.templates}>
-          {['45 min strength workout', '30 min brisk walk', '20 min yoga'].map((template) => (
+          {['45 min hard strength workout', '30 min brisk walk', '20 min light yoga'].map((template) => (
             <Pressable
               key={template}
               onPress={() => router.push({ pathname: '/quick-log', params: { prefill: template } })}

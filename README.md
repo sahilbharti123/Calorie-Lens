@@ -13,8 +13,11 @@ codebase for both platforms.
 - Accepts natural English, Hindi, or Hinglish updates such as
   `Lunch was 2 rotis and dal, plus 500 ml water`
 - Records the same mixed update by voice
-- Estimates meal calories and macros with Gemini 3.6 Flash when available
-- Falls back to a built-in estimator if the Gemini model is missing or the API is unavailable
+- Uses Gemini to extract foods, quantities, and activities from speech without letting the model invent calories
+- Calculates known foods from reviewed USDA FoodData Central records
+- Calculates active workout energy from body weight, duration, intensity, and 2024 Compendium MET values
+- Shows a range, confidence, source, and calculation basis before saving
+- Asks a short follow-up instead of guessing when a portion or workout detail is missing
 - Tracks water, steps, sleep, weight, exercise, and daily notes
 - Imports Apple Health XML/ZIP snapshots, including Apple Watch steps and workouts
 - Saves your data locally in `data/fitness_logs.json`
@@ -28,10 +31,10 @@ multi-part command understanding use Gemini audio input and therefore require
 
 Examples:
 
-- `I ate 3 eggs and toast for breakfast`
+- `I ate 3 boiled eggs and 2 slices toast for breakfast`
 - `Drank two glasses of water and slept 7.5 hours`
-- `Did 45 minutes of strength training, around 280 calories`
-- `Lunch was rajma chawal, walked 4,000 steps`
+- `Did 45 minutes of hard strength training`
+- `Lunch was one 200 ml bowl rajma and 150 grams cooked rice`
 
 ## Apple Health and Apple Watch
 
@@ -74,9 +77,15 @@ GOOGLE_API_KEY=your_google_ai_key
 GEMINI_TEXT_MODEL=gemini-3.6-flash
 ```
 
-`GOOGLE_API_KEY` is optional now. Without it, the app still works using the built-in estimator.
+`GOOGLE_API_KEY` is optional for typed logging. Voice transcription requires
+the API. The offline path uses the same conservative reference rules for its
+reviewed food and activity catalog.
 
 ## Notes
 
 - Nutrition values are estimates, not medical advice.
-- The built-in fallback is best for common foods and rough self-tracking.
+- Exact intake cannot be inferred from a phrase such as “one bowl rajma”
+  without bowl capacity and recipe information. The app makes those
+  assumptions visible.
+- See [`ACCURACY.md`](ACCURACY.md) for sources, formulas, benchmark cases, and
+  known limits.

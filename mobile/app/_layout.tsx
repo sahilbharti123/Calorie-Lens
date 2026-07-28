@@ -32,7 +32,7 @@ export default function RootLayout() {
           name="settings"
           options={{
             presentation: 'modal',
-            title: 'Your goals',
+            title: 'Profile & goals',
             headerTitleStyle: { fontFamily: type.demi },
           }}
         />
