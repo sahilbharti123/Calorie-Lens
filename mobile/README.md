@@ -16,6 +16,10 @@ React Native.
 - SQLite-backed local persistence
 - Native Apple Health/Apple Watch sync on iOS
 - Native Health Connect sync on Android
+- Secure account signup, login, password recovery, and deletion
+- Device-encrypted offline storage plus encrypted cross-device cloud sync
+- Portable backup export and restore
+- A personal AI coach with editable long-term memory and offline fallback
 - One shared design system and codebase for both platforms
 
 ## Local setup
@@ -34,6 +38,11 @@ GOOGLE_API_KEY=your_key uvicorn api:app --reload --host 0.0.0.0 --port 8000
 
 Set `EXPO_PUBLIC_API_URL` in `.env` to the API address reachable by the device.
 For a physical phone, use your computer's LAN IP rather than `localhost`.
+
+Account sessions and recovery codes use iOS Keychain or Android Keystore via
+Expo SecureStore. Fitness records are encrypted before being written to the
+local SQLite key-value store. When signed in, changes are queued offline and
+automatically synchronized when the API is reachable.
 
 The AI service extracts facts from speech; it does not supply calories. Food
 and exercise numbers are calculated after transcription by the deterministic

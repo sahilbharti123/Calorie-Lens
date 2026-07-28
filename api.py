@@ -10,10 +10,16 @@ from datetime import datetime
 from typing import Any, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from account_store import (
+    AccountExistsError,
+    AccountStore,
+    InvalidCredentialsError,
+    SyncConflictError,
+)
 from calorie_engine import estimate_command
 
 try:
@@ -29,8 +35,9 @@ load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 MODEL_NAME = os.getenv("GEMINI_TEXT_MODEL", "gemini-3.6-flash")
 CLIENT = genai.Client(api_key=GOOGLE_API_KEY) if genai and GOOGLE_API_KEY else None
+STORE = AccountStore()
 
-app = FastAPI(title="Calorie Lens AI", version="2.0.0")
+app = FastAPI(title="Calorie Lens API", version="3.0.0")
 origins = [
     origin.strip()
     for origin in os.getenv("CALORIE_LENS_ALLOWED_ORIGINS", "*").split(",")
@@ -40,9 +47,43 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=origins != ["*"],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
+
+
+class SignupRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    password: str = Field(min_length=10, max_length=128)
+    display_name: str = Field(min_length=1, max_length=80)
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class RecoveryRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    recovery_code: str = Field(min_length=15, max_length=100)
+    new_password: str = Field(min_length=10, max_length=128)
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=10, max_length=128)
+
+
+class SyncRequest(BaseModel):
+    payload: dict[str, Any]
+    base_version: Optional[int] = Field(default=None, ge=0)
+
+
+class CoachRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+    today: Optional[dict[str, Any]] = None
+    memory: Optional[dict[str, Any]] = None
+    recent_messages: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
 
 
 class TextCommand(BaseModel):
@@ -154,6 +195,188 @@ Rules:
 - Do not give medical advice.
 """
 
+COACH_PROMPT = """You are Calorie Lens, a supportive personal fitness coach.
+Use the user's saved preferences, limitations, goals, and recent tracking data.
+Be concise, practical, and non-judgmental. Never diagnose, prescribe, or claim
+medical certainty. Encourage professional care for symptoms, eating-disorder
+concerns, injuries, pregnancy, or other high-risk situations. Do not invent
+logged facts. Calorie and exercise values are estimates."""
+
+
+def _bearer_token(authorization: Optional[str]) -> Optional[str]:
+    if not authorization:
+        return None
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return None
+    return token
+
+
+def _optional_user(
+    authorization: Optional[str] = Header(default=None),
+) -> Optional[dict[str, Any]]:
+    token = _bearer_token(authorization)
+    return STORE.user_for_token(token) if token else None
+
+
+def _current_user(
+    authorization: Optional[str] = Header(default=None),
+) -> dict[str, Any]:
+    user = _optional_user(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Sign in to continue.")
+    return user
+
+
+def _required_token(authorization: Optional[str]) -> str:
+    token = _bearer_token(authorization)
+    if not token or not STORE.user_for_token(token):
+        raise HTTPException(status_code=401, detail="Sign in to continue.")
+    return token
+
+
+def _session_payload(
+    user: dict[str, Any],
+    *,
+    recovery_code: Optional[str] = None,
+) -> dict[str, Any]:
+    token, expires_at = STORE.create_session(user["id"])
+    payload: dict[str, Any] = {
+        "token": token,
+        "expiresAt": expires_at,
+        "user": user,
+    }
+    if recovery_code:
+        payload["recoveryCode"] = recovery_code
+    return payload
+
+
+def _vault_memory(user: Optional[dict[str, Any]]) -> dict[str, Any]:
+    if not user:
+        return {}
+    try:
+        vault = STORE.read_vault(user["id"])["payload"]
+    except (KeyError, ValueError):
+        return {}
+    memory = vault.get("coachMemory")
+    return memory if isinstance(memory, dict) else {}
+
+
+@app.post("/v1/auth/signup", status_code=201)
+def signup(request: SignupRequest) -> dict[str, Any]:
+    try:
+        user, recovery_code = STORE.create_user(
+            request.email, request.password, request.display_name
+        )
+    except AccountExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _session_payload(user, recovery_code=recovery_code)
+
+
+@app.post("/v1/auth/login")
+def login(request: LoginRequest) -> dict[str, Any]:
+    try:
+        user = STORE.authenticate(request.email, request.password)
+    except InvalidCredentialsError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    return _session_payload(user)
+
+
+@app.post("/v1/auth/recover")
+def recover_account(request: RecoveryRequest) -> dict[str, Any]:
+    try:
+        user_id, recovery_code = STORE.recover(
+            request.email, request.recovery_code, request.new_password
+        )
+    except InvalidCredentialsError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "userId": user_id,
+        "recoveryCode": recovery_code,
+    }
+
+
+@app.get("/v1/auth/me")
+def auth_me(user: dict[str, Any] = Depends(_current_user)) -> dict[str, Any]:
+    return {"user": user}
+
+
+@app.post("/v1/auth/logout")
+def logout(
+    authorization: Optional[str] = Header(default=None),
+) -> dict[str, bool]:
+    token = _required_token(authorization)
+    STORE.logout(token)
+    return {"ok": True}
+
+
+@app.post("/v1/auth/change-password")
+def change_password(
+    request: PasswordChangeRequest,
+    user: dict[str, Any] = Depends(_current_user),
+) -> dict[str, bool]:
+    try:
+        STORE.change_password(
+            user["id"], request.current_password, request.new_password
+        )
+    except InvalidCredentialsError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@app.delete("/v1/account")
+def delete_account(
+    user: dict[str, Any] = Depends(_current_user),
+) -> dict[str, bool]:
+    STORE.delete_user(user["id"])
+    return {"ok": True}
+
+
+@app.get("/v1/sync")
+def read_sync(user: dict[str, Any] = Depends(_current_user)) -> dict[str, Any]:
+    return STORE.read_vault(user["id"])
+
+
+@app.put("/v1/sync")
+def write_sync(
+    request: SyncRequest,
+    user: dict[str, Any] = Depends(_current_user),
+) -> dict[str, Any]:
+    try:
+        return STORE.save_vault(
+            user["id"], request.payload, request.base_version
+        )
+    except SyncConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": str(exc),
+                "payload": exc.payload,
+                "version": exc.version,
+                "updatedAt": exc.updated_at,
+            },
+        ) from exc
+
+
+@app.get("/v1/backup")
+def export_backup(user: dict[str, Any] = Depends(_current_user)) -> dict[str, Any]:
+    vault = STORE.read_vault(user["id"])
+    return {
+        "format": "calorie-lens-backup-v1",
+        "exportedAt": datetime.now().astimezone().isoformat(),
+        "payload": vault["payload"],
+        "version": vault["version"],
+    }
+
+
+@app.post("/v1/backup/restore")
+def restore_backup(
+    request: SyncRequest,
+    user: dict[str, Any] = Depends(_current_user),
+) -> dict[str, Any]:
+    return STORE.save_vault(user["id"], request.payload)
+
 
 def _require_ai() -> None:
     if CLIENT is None or genai_types is None:
@@ -169,6 +392,7 @@ def _generate(
     audio_bytes: Optional[bytes] = None,
     audio_mime_type: str = "audio/mp4",
     profile: Optional[dict[str, Any]] = None,
+    coach_memory: Optional[dict[str, Any]] = None,
     previous_transcript: Optional[str] = None,
     clarification_question: Optional[str] = None,
 ) -> dict[str, Any]:
@@ -179,6 +403,8 @@ def _generate(
         f"\nPrevious update: {previous_transcript or 'none'}."
         f"\nQuestion awaiting an answer: {clarification_question or 'none'}."
         f"\nTyped update: {typed_text or 'none'}."
+        f"\nSaved user preferences and limitations: "
+        f"{json.dumps(coach_memory or {}, ensure_ascii=False)}."
         "\nWhen a previous update and question are present, merge the new answer into "
         "the original facts and return the complete combined intent."
     )
@@ -224,11 +450,20 @@ def _generate(
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"ok": True, "ai_enabled": CLIENT is not None, "model": MODEL_NAME}
+    return {
+        "ok": True,
+        "ai_enabled": CLIENT is not None,
+        "accounts_enabled": True,
+        "encrypted_storage": True,
+        "model": MODEL_NAME,
+    }
 
 
 @app.post("/v1/parse-command")
-def parse_command(command: TextCommand) -> dict[str, Any]:
+def parse_command(
+    command: TextCommand,
+    user: Optional[dict[str, Any]] = Depends(_optional_user),
+) -> dict[str, Any]:
     return _generate(
         command.text,
         command.preferred_slot,
@@ -237,6 +472,7 @@ def parse_command(command: TextCommand) -> dict[str, Any]:
             "bowlMl": command.bowl_ml,
             "cupMl": command.cup_ml,
         },
+        coach_memory=_vault_memory(user),
         previous_transcript=command.previous_transcript,
         clarification_question=command.clarification_question,
     )
@@ -251,6 +487,7 @@ async def parse_audio_command(
     cup_ml: float = Form(default=200),
     previous_transcript: Optional[str] = Form(default=None),
     clarification_question: Optional[str] = Form(default=None),
+    user: Optional[dict[str, Any]] = Depends(_optional_user),
 ) -> dict[str, Any]:
     content = await audio.read()
     if not content:
@@ -263,6 +500,38 @@ async def parse_audio_command(
         audio_bytes=content,
         audio_mime_type=audio.content_type or "audio/mp4",
         profile={"weightKg": weight_kg, "bowlMl": bowl_ml, "cupMl": cup_ml},
+        coach_memory=_vault_memory(user),
         previous_transcript=previous_transcript,
         clarification_question=clarification_question,
     )
+
+
+@app.post("/v1/coach")
+def coach(
+    request: CoachRequest,
+    user: dict[str, Any] = Depends(_current_user),
+) -> dict[str, str]:
+    _require_ai()
+    memory = {**_vault_memory(user), **(request.memory or {})}
+    recent_messages = request.recent_messages[-12:]
+    context = (
+        f"{COACH_PROMPT}\n"
+        f"User: {user['displayName']}.\n"
+        f"Saved long-term memory: {json.dumps(memory, ensure_ascii=False)}.\n"
+        f"Today's tracking snapshot: "
+        f"{json.dumps(request.today or {}, ensure_ascii=False)}.\n"
+        f"Recent conversation: "
+        f"{json.dumps(recent_messages, ensure_ascii=False)}.\n"
+        f"New message: {request.message}"
+    )
+    try:
+        response = CLIENT.models.generate_content(
+            model=MODEL_NAME,
+            contents=[context],
+        )
+        reply = (getattr(response, "text", "") or "").strip()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Coach request failed: {exc}") from exc
+    if not reply:
+        raise HTTPException(status_code=502, detail="The coach did not return a response.")
+    return {"reply": reply}

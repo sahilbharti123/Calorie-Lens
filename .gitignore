@@ -26,3 +26,7 @@ venv/
 # Local app data
 .codex/
 data/fitness_logs.json
+data/calorie_lens.db
+data/calorie_lens.db-shm
+data/calorie_lens.db-wal
+data/calorie_lens.master.key

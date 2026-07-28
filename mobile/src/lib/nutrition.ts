@@ -5,6 +5,8 @@ import type {
   MealSlot,
   ParsedCommand,
 } from '@/src/types';
+import { apiRequest } from '@/src/lib/api-client';
+import { readSession } from '@/src/lib/session';
 
 type FoodReference = {
   name: string;
@@ -341,20 +343,18 @@ export async function parseFitnessCommand(
   context: EstimationContext,
   clarification?: ClarificationContext,
 ) {
-  const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
-  if (!apiUrl) return parseCommandLocally(text, preferredSlot, context);
+  if (!process.env.EXPO_PUBLIC_API_URL) return parseCommandLocally(text, preferredSlot, context);
   try {
-    const response = await fetch(`${apiUrl}/v1/parse-command`, {
+    const session = await readSession();
+    const response = await apiRequest<ParsedCommand>('/v1/parse-command', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text,
         preferred_slot: preferredSlot,
         ...requestPayload(context, clarification),
       }),
-    });
-    if (!response.ok) throw new Error(`Request failed with ${response.status}`);
-    return { ...(await response.json()), source: 'ai' } as ParsedCommand;
+    }, session);
+    return { ...response, source: 'ai' } as ParsedCommand;
   } catch {
     const combined = clarification?.previousTranscript
       ? `${clarification.previousTranscript}. ${text}`
@@ -369,8 +369,7 @@ export async function parseVoiceCommand(
   context: EstimationContext,
   clarification?: ClarificationContext,
 ) {
-  const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
-  if (!apiUrl) throw new Error('Set EXPO_PUBLIC_API_URL to enable voice transcription.');
+  if (!process.env.EXPO_PUBLIC_API_URL) throw new Error('Set EXPO_PUBLIC_API_URL to enable voice transcription.');
   const body = new FormData();
   body.append('audio', { uri: audioUri, name: 'quick-log.m4a', type: 'audio/mp4' } as unknown as Blob);
   if (preferredSlot) body.append('preferred_slot', preferredSlot);
@@ -379,7 +378,11 @@ export async function parseVoiceCommand(
   body.append('cup_ml', String(context.cupMl));
   if (clarification?.previousTranscript) body.append('previous_transcript', clarification.previousTranscript);
   if (clarification?.clarificationQuestion) body.append('clarification_question', clarification.clarificationQuestion);
-  const response = await fetch(`${apiUrl}/v1/parse-command/audio`, { method: 'POST', body });
-  if (!response.ok) throw new Error('Voice could not be understood. Please try again.');
-  return { ...(await response.json()), source: 'ai' } as ParsedCommand;
+  const session = await readSession();
+  const response = await apiRequest<ParsedCommand>(
+    '/v1/parse-command/audio',
+    { method: 'POST', body },
+    session,
+  );
+  return { ...response, source: 'ai' } as ParsedCommand;
 }

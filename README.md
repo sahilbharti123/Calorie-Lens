@@ -20,7 +20,12 @@ codebase for both platforms.
 - Asks a short follow-up instead of guessing when a portion or workout detail is missing
 - Tracks water, steps, sleep, weight, exercise, and daily notes
 - Imports Apple Health XML/ZIP snapshots, including Apple Watch steps and workouts
-- Saves your data locally in `data/fitness_logs.json`
+- Provides secure signup, login, recovery codes, password rotation, and account deletion
+- Encrypts the local mobile vault with a device-only key and the server vault with AES-GCM
+- Syncs fitness history across devices with offline-first conflict recovery
+- Saves coach preferences, limitations, notes, and recent conversations as long-term memory
+- Exports and restores portable JSON backups
+- Saves web companion data locally in `data/fitness_logs.json`
 - Exports your current day as JSON or CSV
 
 ## Voice logging
@@ -68,6 +73,21 @@ npm run ios
 See [`mobile/README.md`](mobile/README.md) for HealthKit, Apple Watch, Health
 Connect, development-build, and EAS setup.
 
+## Run the account API in a container
+
+The included container exposes the account, sync, backup, AI parsing, voice,
+and coach endpoints. Mount `/data` so accounts survive restarts and keep the
+master key in your deployment secret manager.
+
+```bash
+docker build -t calorie-lens-api .
+docker run --rm -p 8000:8000 \
+  -v calorie-lens-data:/data \
+  -e CALORIE_LENS_MASTER_KEY=your_urlsafe_base64_32_byte_key \
+  -e GOOGLE_API_KEY=your_google_ai_key \
+  calorie-lens-api
+```
+
 ## Environment
 
 Create a `.env` file or Streamlit secret:
@@ -75,11 +95,19 @@ Create a `.env` file or Streamlit secret:
 ```bash
 GOOGLE_API_KEY=your_google_ai_key
 GEMINI_TEXT_MODEL=gemini-3.6-flash
+CALORIE_LENS_DB_PATH=data/calorie_lens.db
+# Set this to a stable URL-safe base64 32-byte key in production:
+CALORIE_LENS_MASTER_KEY=
 ```
 
 `GOOGLE_API_KEY` is optional for typed logging. Voice transcription requires
 the API. The offline path uses the same conservative reference rules for its
 reviewed food and activity catalog.
+
+The API creates a development encryption key in `data/` when no master key is
+configured. In production, mount the database on persistent storage and set a
+stable `CALORIE_LENS_MASTER_KEY`; losing that key makes encrypted vaults
+unrecoverable.
 
 ## Notes
 

@@ -2,17 +2,19 @@
   "expo": {
     "name": "Calorie Lens",
     "slug": "calorie-lens",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "calorielens",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.sahilbharti.calorielens"
+      "bundleIdentifier": "com.sahilbharti.calorielens",
+      "buildNumber": "2"
     },
     "android": {
       "package": "com.sahilbharti.calorielens",
+      "versionCode": 2,
       "permissions": [
         "android.permission.health.READ_STEPS",
         "android.permission.health.READ_ACTIVE_CALORIES_BURNED",
@@ -68,7 +70,8 @@
           }
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true,

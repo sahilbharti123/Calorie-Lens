@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { type Href, useRouter } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
@@ -8,6 +8,7 @@ import { Metric, ProgressBar, ScreenHeader, SectionTitle, VoiceBar } from '@/src
 import { friendlyDay, greeting } from '@/src/lib/date';
 import { dayTotals, slotLabels } from '@/src/lib/stats';
 import { useApp } from '@/src/store/app-store';
+import { useAuth } from '@/src/store/auth-store';
 import { palette, radius, space, type } from '@/src/theme';
 import type { MealSlot } from '@/src/types';
 
@@ -15,6 +16,7 @@ const slots: MealSlot[] = ['breakfast', 'lunch', 'snack', 'dinner'];
 
 export default function TodayScreen() {
   const router = useRouter();
+  const { session } = useAuth();
   const { data, today, addWater } = useApp();
   const totals = dayTotals(today);
   const remaining = Math.max(0, data.goals.calories - totals.calories);
@@ -24,8 +26,10 @@ export default function TodayScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <ScreenHeader eyebrow={friendlyDay()} title={greeting()} action={
-          <Pressable onPress={() => router.push('/settings')} style={styles.avatar}>
-            <Text style={styles.avatarText}>SB</Text>
+          <Pressable onPress={() => router.push('/account' as Href)} style={styles.avatar}>
+            <Text style={styles.avatarText}>
+              {(session?.user.displayName ?? 'ME').slice(0, 2).toUpperCase()}
+            </Text>
           </Pressable>
         } />
 

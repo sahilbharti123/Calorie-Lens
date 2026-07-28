@@ -51,6 +51,13 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <Glyph size={23} name="chart" color={color} />,
         }}
       />
+      <Tabs.Screen
+        name="coach"
+        options={{
+          title: 'Coach',
+          tabBarIcon: ({ color }) => <Glyph size={23} name="spark" color={color} />,
+        }}
+      />
     </Tabs>
   );
 }

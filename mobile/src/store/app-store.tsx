@@ -1,36 +1,72 @@
-import Storage from 'expo-sqlite/kv-store';
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
+import { ApiError, apiRequest } from '@/src/lib/api-client';
 import { dateKey } from '@/src/lib/date';
+import { readEncryptedJson, removeEncryptedJson, writeEncryptedJson } from '@/src/lib/secure-storage';
+import { useAuth } from '@/src/store/auth-store';
 import type {
   AppData,
+  CoachMemory,
+  CoachMessage,
   DayLog,
   EstimationProfile,
   Goals,
   HealthSnapshot,
   LogOperation,
   MealItem,
+  SyncState,
   WeightPoint,
   Workout,
 } from '@/src/types';
 
-const STORAGE_KEY = 'calorie-lens.app-data.v1';
+const LEGACY_STORAGE_KEY = 'calorie-lens.app-data.v1';
+const STORAGE_PREFIX = 'calorie-lens.encrypted-app-data.v2';
 
-const initialData: AppData = {
+type StoredEnvelope = {
+  data: AppData;
+  cloudVersion: number;
+};
+
+const initialCoachMemory: CoachMemory = {
+  dietaryPreferences: [],
+  injuries: [],
+  workoutPreferences: [],
+  coachingStyle: 'supportive and concise',
+  notes: '',
+  updatedAt: '',
+};
+
+export const initialData: AppData = {
   goals: { calories: 2200, protein: 120, waterMl: 3000, steps: 8000 },
   estimation: { cupMl: 200 },
   days: {},
   weights: [],
+  coachMemory: initialCoachMemory,
+  coachMessages: [],
+  deletedMealIds: [],
+  deletedWorkoutIds: [],
 };
 
-function normalizeData(saved: Partial<AppData>): AppData {
+export function normalizeData(saved?: Partial<AppData> | null): AppData {
   return {
     ...initialData,
-    ...saved,
-    goals: { ...initialData.goals, ...saved.goals },
-    estimation: { ...initialData.estimation, ...saved.estimation },
-    days: saved.days ?? {},
-    weights: saved.weights ?? [],
+    ...(saved ?? {}),
+    goals: { ...initialData.goals, ...(saved?.goals ?? {}) },
+    estimation: { ...initialData.estimation, ...(saved?.estimation ?? {}) },
+    days: saved?.days ?? {},
+    weights: saved?.weights ?? [],
+    coachMemory: { ...initialCoachMemory, ...(saved?.coachMemory ?? {}) },
+    coachMessages: saved?.coachMessages ?? [],
+    deletedMealIds: saved?.deletedMealIds ?? [],
+    deletedWorkoutIds: saved?.deletedWorkoutIds ?? [],
   };
 }
 
@@ -50,10 +86,114 @@ function id(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function storageKey(scope: string) {
+  return `${STORAGE_PREFIX}.${scope}`;
+}
+
+function isEnvelope(value: unknown): value is StoredEnvelope {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && 'data' in value
+    && 'cloudVersion' in value,
+  );
+}
+
+function isPristine(data: AppData) {
+  return !Object.keys(data.days).length
+    && !data.weights.length
+    && !data.coachMessages.length
+    && JSON.stringify(data.goals) === JSON.stringify(initialData.goals)
+    && JSON.stringify(data.estimation) === JSON.stringify(initialData.estimation)
+    && !data.coachMemory.notes
+    && !data.coachMemory.dietaryPreferences.length
+    && !data.coachMemory.injuries.length
+    && !data.coachMemory.workoutPreferences.length;
+}
+
+function byNewest<T extends { updatedAt: string }>(local: T, remote: T) {
+  if (!local.updatedAt) return remote;
+  if (!remote.updatedAt) return local;
+  return local.updatedAt >= remote.updatedAt ? local : remote;
+}
+
+function unionById<T extends { id: string }>(left: T[], right: T[]) {
+  const values = new Map<string, T>();
+  for (const value of [...left, ...right]) values.set(value.id, value);
+  return [...values.values()];
+}
+
+export function mergeAppData(localInput: Partial<AppData>, remoteInput: Partial<AppData>) {
+  const local = normalizeData(localInput);
+  const remote = normalizeData(remoteInput);
+  if (isPristine(local)) return remote;
+  if (isPristine(remote)) return local;
+  const deletedMealIds = [...new Set([...local.deletedMealIds, ...remote.deletedMealIds])];
+  const deletedWorkoutIds = [...new Set([
+    ...local.deletedWorkoutIds,
+    ...remote.deletedWorkoutIds,
+  ])];
+  const dates = new Set([...Object.keys(remote.days), ...Object.keys(local.days)]);
+  const days: Record<string, DayLog> = {};
+  for (const date of dates) {
+    const localDay = local.days[date];
+    const remoteDay = remote.days[date];
+    if (!localDay) {
+      days[date] = {
+        ...remoteDay,
+        meals: remoteDay.meals.filter((meal) => !deletedMealIds.includes(meal.id)),
+        workouts: remoteDay.workouts.filter((workout) => !deletedWorkoutIds.includes(workout.id)),
+      };
+      continue;
+    }
+    if (!remoteDay) {
+      days[date] = {
+        ...localDay,
+        meals: localDay.meals.filter((meal) => !deletedMealIds.includes(meal.id)),
+        workouts: localDay.workouts.filter((workout) => !deletedWorkoutIds.includes(workout.id)),
+      };
+      continue;
+    }
+    days[date] = {
+      ...remoteDay,
+      ...localDay,
+      meals: unionById(remoteDay.meals, localDay.meals)
+        .filter((meal) => !deletedMealIds.includes(meal.id)),
+      workouts: unionById(remoteDay.workouts, localDay.workouts)
+        .filter((workout) => !deletedWorkoutIds.includes(workout.id)),
+      waterMl: Math.max(remoteDay.waterMl, localDay.waterMl),
+      steps: Math.max(remoteDay.steps, localDay.steps),
+      activeCalories: Math.max(remoteDay.activeCalories, localDay.activeCalories),
+      sleepHours: Math.max(remoteDay.sleepHours, localDay.sleepHours),
+    };
+  }
+  const weights = new Map<string, WeightPoint>();
+  for (const point of [...remote.weights, ...local.weights]) weights.set(point.date, point);
+  const messages = unionById(remote.coachMessages, local.coachMessages)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .slice(-60);
+  return normalizeData({
+    ...remote,
+    ...local,
+    days,
+    weights: [...weights.values()].sort((a, b) => a.date.localeCompare(b.date)).slice(-365),
+    coachMemory: byNewest(local.coachMemory, remote.coachMemory),
+    coachMessages: messages,
+    deletedMealIds,
+    deletedWorkoutIds,
+    lastHealthSync: [local.lastHealthSync, remote.lastHealthSync]
+      .filter((value): value is string => Boolean(value))
+      .sort()
+      .at(-1),
+  });
+}
+
 type AppContextValue = {
   data: AppData;
   today: DayLog;
   hydrated: boolean;
+  syncState: SyncState;
+  syncError: string;
   applyOperations: (operations: LogOperation[]) => void;
   addWater: (amount: number) => void;
   removeMeal: (id: string) => void;
@@ -61,25 +201,146 @@ type AppContextValue = {
   applyHealthSnapshot: (snapshot: HealthSnapshot) => void;
   updateGoals: (goals: Partial<Goals>) => void;
   updateEstimationProfile: (profile: Partial<EstimationProfile>, weightKg?: number) => void;
+  updateCoachMemory: (memory: Partial<CoachMemory>) => void;
+  addCoachMessage: (message: Omit<CoachMessage, 'id' | 'createdAt'>) => CoachMessage;
+  replaceData: (data: Partial<AppData>) => void;
+  syncNow: () => Promise<void>;
+  clearLocalData: () => Promise<void>;
 };
 
 const AppContext = createContext<AppContextValue | null>(null);
 
+type SyncResponse = {
+  payload: Partial<AppData>;
+  version: number;
+  updatedAt: string;
+};
+
 export function AppProvider({ children }: React.PropsWithChildren) {
+  const { session, justCreated } = useAuth();
+  const scope = session?.user.id ?? 'guest';
   const [data, setData] = useState<AppData>(initialData);
   const [hydrated, setHydrated] = useState(false);
+  const [cloudVersion, setCloudVersion] = useState(0);
+  const [syncState, setSyncState] = useState<SyncState>('offline');
+  const [syncError, setSyncError] = useState('');
+  const dataRef = useRef(data);
+  const versionRef = useRef(cloudVersion);
+  const syncingRef = useRef(false);
 
   useEffect(() => {
-    Storage.getItem(STORAGE_KEY)
-      .then((saved) => {
-        if (saved) setData(normalizeData(JSON.parse(saved)));
-      })
-      .finally(() => setHydrated(true));
-  }, []);
+    dataRef.current = data;
+  }, [data]);
+  useEffect(() => {
+    versionRef.current = cloudVersion;
+  }, [cloudVersion]);
 
   useEffect(() => {
-    if (hydrated) void Storage.setItem(STORAGE_KEY, JSON.stringify(data));
-  }, [data, hydrated]);
+    let active = true;
+    setHydrated(false);
+    setSyncState(session ? 'syncing' : 'offline');
+    async function load() {
+      const key = storageKey(scope);
+      let saved = await readEncryptedJson<StoredEnvelope | AppData>(key);
+      if (!saved && !session) {
+        saved = await readEncryptedJson<AppData>(LEGACY_STORAGE_KEY);
+      }
+      if (!saved && session && justCreated) {
+        saved = await readEncryptedJson<StoredEnvelope | AppData>(storageKey('guest'))
+          ?? await readEncryptedJson<AppData>(LEGACY_STORAGE_KEY);
+      }
+      const localData = normalizeData(isEnvelope(saved) ? saved.data : saved);
+      let nextData = localData;
+      let nextVersion = isEnvelope(saved) ? saved.cloudVersion : 0;
+      if (session) {
+        try {
+          const remote = await apiRequest<SyncResponse>('/v1/sync', {}, session);
+          nextVersion = remote.version;
+          const hasRemote = remote.payload && Object.keys(remote.payload).length > 0;
+          nextData = hasRemote ? mergeAppData(localData, remote.payload) : localData;
+          const uploaded = await apiRequest<SyncResponse>('/v1/sync', {
+            method: 'PUT',
+            body: JSON.stringify({ payload: nextData, base_version: nextVersion }),
+          }, session);
+          nextVersion = uploaded.version;
+          setSyncState('synced');
+        } catch (error) {
+          setSyncState('error');
+          setSyncError(error instanceof Error ? error.message : 'Cloud sync failed.');
+        }
+      }
+      if (!active) return;
+      setData(nextData);
+      setCloudVersion(nextVersion);
+      await writeEncryptedJson(key, { data: nextData, cloudVersion: nextVersion });
+      if (active) setHydrated(true);
+    }
+    void load();
+    return () => {
+      active = false;
+    };
+  }, [scope, session, justCreated]);
+
+  const syncNow = useCallback(async () => {
+    if (!session || !hydrated || syncingRef.current) {
+      if (!session) setSyncState('offline');
+      return;
+    }
+    syncingRef.current = true;
+    setSyncState('syncing');
+    setSyncError('');
+    try {
+      const response = await apiRequest<SyncResponse>('/v1/sync', {
+        method: 'PUT',
+        body: JSON.stringify({
+          payload: dataRef.current,
+          base_version: versionRef.current,
+        }),
+      }, session);
+      setCloudVersion(response.version);
+      versionRef.current = response.version;
+      setSyncState('synced');
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        const conflict = error.detail as {
+          payload?: Partial<AppData>;
+          version?: number;
+        };
+        if (conflict.payload && typeof conflict.version === 'number') {
+          const merged = mergeAppData(dataRef.current, conflict.payload);
+          setData(merged);
+          dataRef.current = merged;
+          const response = await apiRequest<SyncResponse>('/v1/sync', {
+            method: 'PUT',
+            body: JSON.stringify({
+              payload: merged,
+              base_version: conflict.version,
+            }),
+          }, session);
+          setCloudVersion(response.version);
+          versionRef.current = response.version;
+          setSyncState('synced');
+          return;
+        }
+      }
+      setSyncState('error');
+      setSyncError(error instanceof Error ? error.message : 'Cloud sync failed.');
+    } finally {
+      syncingRef.current = false;
+    }
+  }, [session, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    void writeEncryptedJson(storageKey(scope), { data, cloudVersion });
+  }, [data, cloudVersion, hydrated, scope]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    if (!session) return;
+    const timer = setTimeout(() => void syncNow(), 1200);
+    return () => clearTimeout(timer);
+  }, [data, hydrated, session, syncNow]);
 
   const updateToday = useCallback((recipe: (day: DayLog) => DayLog) => {
     const todayKey = dateKey();
@@ -144,7 +405,7 @@ export function AppProvider({ children }: React.PropsWithChildren) {
         weights: [
           ...current.weights.filter((point) => !weightPoints.some((next) => next.date === point.date)),
           ...weightPoints,
-        ].slice(-90),
+        ].slice(-365),
       }));
     }
   }, [updateToday]);
@@ -155,10 +416,21 @@ export function AppProvider({ children }: React.PropsWithChildren) {
 
   const removeMeal = useCallback((mealId: string) => {
     updateToday((day) => ({ ...day, meals: day.meals.filter((meal) => meal.id !== mealId) }));
+    setData((current) => ({
+      ...current,
+      deletedMealIds: [...new Set([...current.deletedMealIds, mealId])].slice(-1000),
+    }));
   }, [updateToday]);
 
   const removeWorkout = useCallback((workoutId: string) => {
-    updateToday((day) => ({ ...day, workouts: day.workouts.filter((workout) => workout.id !== workoutId) }));
+    updateToday((day) => ({
+      ...day,
+      workouts: day.workouts.filter((workout) => workout.id !== workoutId),
+    }));
+    setData((current) => ({
+      ...current,
+      deletedWorkoutIds: [...new Set([...current.deletedWorkoutIds, workoutId])].slice(-1000),
+    }));
   }, [updateToday]);
 
   const applyHealthSnapshot = useCallback((snapshot: HealthSnapshot) => {
@@ -175,7 +447,7 @@ export function AppProvider({ children }: React.PropsWithChildren) {
         ? [
             ...current.weights.filter((point) => point.date !== dateKey()),
             { date: dateKey(), kg: snapshot.weightKg },
-          ].slice(-90)
+          ].slice(-365)
         : current.weights,
     }));
   }, [updateToday]);
@@ -192,16 +464,56 @@ export function AppProvider({ children }: React.PropsWithChildren) {
         ? [
             ...current.weights.filter((point) => point.date !== dateKey()),
             { date: dateKey(), kg: weightKg },
-          ].slice(-90)
+          ].slice(-365)
         : current.weights,
     }));
   }, []);
 
+  const updateCoachMemory = useCallback((memory: Partial<CoachMemory>) => {
+    setData((current) => ({
+      ...current,
+      coachMemory: {
+        ...current.coachMemory,
+        ...memory,
+        updatedAt: new Date().toISOString(),
+      },
+    }));
+  }, []);
+
+  const addCoachMessage = useCallback((message: Omit<CoachMessage, 'id' | 'createdAt'>) => {
+    const next: CoachMessage = {
+      ...message,
+      id: id('coach'),
+      createdAt: new Date().toISOString(),
+    };
+    setData((current) => ({
+      ...current,
+      coachMessages: [...current.coachMessages, next].slice(-60),
+    }));
+    return next;
+  }, []);
+
+  const replaceData = useCallback((replacement: Partial<AppData>) => {
+    setData(normalizeData(replacement));
+  }, []);
+
+  const clearLocalData = useCallback(async () => {
+    await removeEncryptedJson(storageKey(scope));
+    setData(initialData);
+    dataRef.current = initialData;
+    if (!session) {
+      setCloudVersion(0);
+      versionRef.current = 0;
+    }
+  }, [scope, session]);
+
   const today = data.days[dateKey()] ?? emptyDay();
-  const value = useMemo(() => ({
+  const value = useMemo<AppContextValue>(() => ({
     data,
     today,
     hydrated,
+    syncState,
+    syncError,
     applyOperations,
     addWater,
     removeMeal,
@@ -209,10 +521,17 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     applyHealthSnapshot,
     updateGoals,
     updateEstimationProfile,
+    updateCoachMemory,
+    addCoachMessage,
+    replaceData,
+    syncNow,
+    clearLocalData,
   }), [
     data,
     today,
     hydrated,
+    syncState,
+    syncError,
     applyOperations,
     addWater,
     removeMeal,
@@ -220,6 +539,11 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     applyHealthSnapshot,
     updateGoals,
     updateEstimationProfile,
+    updateCoachMemory,
+    addCoachMessage,
+    replaceData,
+    syncNow,
+    clearLocalData,
   ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
