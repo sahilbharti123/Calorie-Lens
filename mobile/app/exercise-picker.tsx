@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import {
   FlatList,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ExerciseFigure } from '@/src/components/exercise-figure';
 import { emitExercisePick } from '@/src/lib/exercise-pick-bus';
+import { photosFor } from '@/src/lib/exercise-photos';
 import {
   EQUIPMENT_TYPES,
   MUSCLE_GROUPS,
@@ -94,10 +96,13 @@ export default function ExercisePickerScreen() {
         keyboardShouldPersistTaps="handled"
         renderItem={({ item }) => {
           const isSelected = selected.includes(item.id);
+          const photos = photosFor(item.id);
           return (
             <Pressable onPress={() => toggle(item)} style={[styles.row, isSelected && styles.rowSelected]}>
               <View style={styles.thumb}>
-                <ExerciseFigure template={item.template} gear={item.gear} size={52} paused />
+                {photos
+                  ? <Image resizeMode="cover" source={photos[0]} style={styles.thumbPhoto} />
+                  : <ExerciseFigure template={item.template} gear={item.gear} size={52} paused />}
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.rowName}>{item.name}</Text>
@@ -158,7 +163,8 @@ const styles = StyleSheet.create({
   list: { paddingHorizontal: space.md, paddingBottom: 12, gap: 7 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, padding: 10 },
   rowSelected: { borderColor: palette.limeDark, backgroundColor: '#F4FBE6' },
-  thumb: { width: 56, height: 56, borderRadius: radius.sm, backgroundColor: palette.canvas, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  thumb: { width: 56, height: 56, borderRadius: radius.sm, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', borderWidth: 1, borderColor: palette.line },
+  thumbPhoto: { width: '100%', height: '100%' },
   rowName: { color: palette.ink, fontFamily: type.demi, fontSize: 13 },
   rowMeta: { color: palette.muted, fontFamily: type.regular, fontSize: 10, marginTop: 2, textTransform: 'capitalize' },
   rowEquip: { color: palette.limeDark, fontFamily: type.medium, fontSize: 9.5, marginTop: 2, textTransform: 'capitalize' },

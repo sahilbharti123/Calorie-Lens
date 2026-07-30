@@ -1,11 +1,15 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ExerciseFigure } from '@/src/components/exercise-figure';
+import { Glyph } from '@/src/components/glyph';
+import { PhotoDemo } from '@/src/components/photo-demo';
 import { TrendChart } from '@/src/components/trend-chart';
 import { findExercise } from '@/src/lib/exercises';
+import { guideFor } from '@/src/lib/exercise-guides';
+import { photosFor } from '@/src/lib/exercise-photos';
 import {
   exerciseInfo,
   exerciseRecords,
@@ -34,9 +38,12 @@ export default function ExerciseDetailScreen() {
   const { data } = useApp();
   const training = data.training;
   const [tab, setTab] = useState<Tab>('about');
+  const [showPattern, setShowPattern] = useState(false);
 
   const info = exerciseInfo(training, id ?? '');
   const builtIn = findExercise(id ?? '');
+  const guide = guideFor(id ?? '');
+  const photos = photosFor(id ?? '');
   const records = useMemo(() => exerciseRecords(training, id ?? ''), [training, id]);
   const history = useMemo(() => sessionsWithExercise(training, id ?? ''), [training, id]);
   const isDuration = info.kind === 'duration';
@@ -54,15 +61,34 @@ export default function ExerciseDetailScreen() {
     <SafeAreaView style={styles.safe} edges={['bottom']}>
       <Stack.Screen options={{ title: info.name }} />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.stage}>
-          <ExerciseFigure template={info.template} gear={info.gear} size={210} />
-          <View style={styles.badges}>
-            <Badge label={info.primaryMuscle} strong />
-            {info.secondaryMuscles.map((muscle) => <Badge key={muscle} label={muscle} />)}
-            <Badge label={info.equipment} />
-            <Badge label={isDuration ? 'timed' : isRepsOnly ? 'bodyweight reps' : 'weight × reps'} />
+        {/* Demo: real photos when available, stylized figure otherwise */}
+        {photos ? (
+          <PhotoDemo exerciseId={id ?? ''} />
+        ) : (
+          <View style={styles.figureStage}>
+            <ExerciseFigure template={info.template} gear={info.gear} size={210} />
           </View>
+        )}
+        <View style={styles.badges}>
+          <Badge label={info.primaryMuscle} strong />
+          {info.secondaryMuscles.map((muscle) => <Badge key={muscle} label={muscle} />)}
+          <Badge label={info.equipment} />
+          <Badge label={isDuration ? 'timed' : isRepsOnly ? 'bodyweight reps' : 'weight × reps'} />
         </View>
+
+        {guide?.video ? (
+          <Pressable
+            accessibilityRole="link"
+            onPress={() => void Linking.openURL(guide.video!.url)}
+            style={({ pressed }) => [styles.videoCard, pressed && styles.pressed]}>
+            <View style={styles.videoPlay}><Text style={styles.videoPlayIcon}>▶</Text></View>
+            <View style={{ flex: 1 }}>
+              <Text numberOfLines={2} style={styles.videoTitle}>{guide.video.title}</Text>
+              <Text style={styles.videoMeta}>{guide.video.channel} · opens YouTube</Text>
+            </View>
+            <Glyph name="chevron" color={palette.muted} size={16} />
+          </Pressable>
+        ) : null}
 
         <View style={styles.tabs}>
           {(['about', 'history', 'charts', 'records'] as Tab[]).map((candidate) => (
@@ -75,32 +101,85 @@ export default function ExerciseDetailScreen() {
         </View>
 
         {tab === 'about' ? (
-          <View style={styles.card}>
-            {builtIn ? (
-              <>
-                <Text style={styles.sectionLabel}>STEP BY STEP</Text>
-                {builtIn.instructions.map((step, index) => (
-                  <View key={step} style={styles.step}>
-                    <View style={styles.stepIndex}><Text style={styles.stepIndexText}>{index + 1}</Text></View>
-                    <Text style={styles.stepText}>{step}</Text>
-                  </View>
+          guide ? (
+            <View style={{ gap: 10 }}>
+              <View style={styles.card}>
+                <Text style={styles.sectionLabel}>SET UP</Text>
+                {guide.setup.map((step, index) => (
+                  <StepRow key={step} index={index + 1} text={step} muted />
                 ))}
-                {builtIn.tips.length ? (
-                  <>
-                    <Text style={[styles.sectionLabel, { marginTop: 14 }]}>FORM TIPS</Text>
-                    {builtIn.tips.map((tip) => (
-                      <View key={tip} style={styles.tipRow}>
-                        <Text style={styles.tipBullet}>•</Text>
-                        <Text style={styles.tipText}>{tip}</Text>
+                <Text style={[styles.sectionLabel, { marginTop: 14 }]}>EXECUTION</Text>
+                {guide.execution.map((step, index) => (
+                  <StepRow key={step} index={index + 1} text={step} />
+                ))}
+                <View style={styles.breathRow}>
+                  <View style={styles.breathCell}>
+                    <Text style={styles.breathLabel}>BREATHING</Text>
+                    <Text style={styles.breathText}>{guide.breathing}</Text>
+                  </View>
+                  {guide.tempo ? (
+                    <View style={styles.breathCell}>
+                      <Text style={styles.breathLabel}>TEMPO</Text>
+                      <Text style={styles.breathText}>{guide.tempo}</Text>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+
+              <View style={styles.card}>
+                <Text style={styles.sectionLabel}>COMMON MISTAKES</Text>
+                {guide.mistakes.map((entry) => {
+                  const [mistake, ...rest] = entry.split('—');
+                  return (
+                    <View key={entry} style={styles.mistakeRow}>
+                      <Text style={styles.mistakeMark}>✕</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.mistakeTitle}>{mistake.trim()}</Text>
+                        {rest.length ? <Text style={styles.mistakeFix}>{rest.join('—').trim()}</Text> : null}
                       </View>
-                    ))}
-                  </>
-                ) : null}
-              </>
-            ) : (
-              <Text style={styles.emptyText}>This is a custom exercise — instructions are up to you.</Text>
-            )}
-          </View>
+                    </View>
+                  );
+                })}
+              </View>
+
+              {guide.safety ? (
+                <View style={styles.safety}>
+                  <Text style={styles.safetyLabel}>SAFETY</Text>
+                  <Text style={styles.safetyText}>{guide.safety}</Text>
+                </View>
+              ) : null}
+
+              <Pressable onPress={() => setShowPattern((value) => !value)} style={styles.patternToggle}>
+                <Text style={styles.patternToggleText}>
+                  {showPattern ? 'Hide movement path' : 'Show movement path'}
+                </Text>
+              </Pressable>
+              {showPattern ? (
+                <View style={styles.patternCard}>
+                  <ExerciseFigure template={info.template} gear={info.gear} size={150} />
+                  <Text style={styles.patternNote}>
+                    Stylized joint path — use the photos and video above for real form.
+                  </Text>
+                </View>
+              ) : null}
+
+              {photos ? (
+                <Text style={styles.credit}>Demo photos: free-exercise-db (public domain).</Text>
+              ) : null}
+            </View>
+          ) : (
+            <View style={styles.card}>
+              {builtIn ? (
+                <>
+                  {builtIn.instructions.map((step, index) => (
+                    <StepRow key={step} index={index + 1} text={step} />
+                  ))}
+                </>
+              ) : (
+                <Text style={styles.emptyText}>This is a custom exercise — instructions are up to you.</Text>
+              )}
+            </View>
+          )
         ) : null}
 
         {tab === 'history' ? (
@@ -180,6 +259,17 @@ export default function ExerciseDetailScreen() {
   );
 }
 
+function StepRow({ index, text, muted }: { index: number; text: string; muted?: boolean }) {
+  return (
+    <View style={styles.step}>
+      <View style={[styles.stepIndex, muted && styles.stepIndexMuted]}>
+        <Text style={[styles.stepIndexText, muted && styles.stepIndexTextMuted]}>{index}</Text>
+      </View>
+      <Text style={styles.stepText}>{text}</Text>
+    </View>
+  );
+}
+
 function Badge({ label, strong }: { label: string; strong?: boolean }) {
   return (
     <View style={[styles.badge, strong && styles.badgeStrong]}>
@@ -208,12 +298,18 @@ function EmptyCard({ text }: { text: string }) {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.canvas },
   content: { padding: space.md, paddingBottom: 30 },
-  stage: { backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.lg, alignItems: 'center', paddingVertical: 14 },
-  badges: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 6, paddingHorizontal: 14, marginTop: 4 },
-  badge: { backgroundColor: palette.canvas, borderWidth: 1, borderColor: palette.line, borderRadius: radius.pill, paddingHorizontal: 10, paddingVertical: 4 },
+  pressed: { opacity: 0.85 },
+  figureStage: { backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.lg, alignItems: 'center', paddingVertical: 14 },
+  badges: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
+  badge: { backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.pill, paddingHorizontal: 10, paddingVertical: 4 },
   badgeStrong: { backgroundColor: palette.forest, borderColor: palette.forest },
   badgeText: { color: palette.ink, fontFamily: type.medium, fontSize: 10, textTransform: 'capitalize' },
   badgeTextStrong: { color: palette.lime, fontFamily: type.demi },
+  videoCard: { flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: palette.forest, borderRadius: radius.md, padding: 13, marginTop: 10 },
+  videoPlay: { width: 40, height: 40, borderRadius: 20, backgroundColor: palette.lime, alignItems: 'center', justifyContent: 'center' },
+  videoPlayIcon: { color: palette.forest, fontSize: 15 },
+  videoTitle: { color: palette.white, fontFamily: type.demi, fontSize: 12.5, lineHeight: 17 },
+  videoMeta: { color: '#AEB9B0', fontFamily: type.regular, fontSize: 10, marginTop: 3 },
   tabs: { flexDirection: 'row', backgroundColor: '#E8ECE3', borderRadius: radius.pill, padding: 4, marginVertical: 12 },
   tab: { flex: 1, height: 34, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center' },
   tabActive: { backgroundColor: palette.paper },
@@ -222,12 +318,27 @@ const styles = StyleSheet.create({
   card: { backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, padding: 15 },
   sectionLabel: { color: palette.limeDark, fontFamily: type.demi, fontSize: 9, letterSpacing: 1.2, marginBottom: 9 },
   step: { flexDirection: 'row', gap: 10, marginBottom: 10 },
-  stepIndex: { width: 22, height: 22, borderRadius: 8, backgroundColor: palette.softLime, alignItems: 'center', justifyContent: 'center', marginTop: 1 },
-  stepIndexText: { color: palette.limeDark, fontFamily: type.demi, fontSize: 10.5 },
+  stepIndex: { width: 22, height: 22, borderRadius: 8, backgroundColor: palette.lime, alignItems: 'center', justifyContent: 'center', marginTop: 1 },
+  stepIndexMuted: { backgroundColor: palette.softLime },
+  stepIndexText: { color: palette.forest, fontFamily: type.demi, fontSize: 10.5 },
+  stepIndexTextMuted: { color: palette.limeDark },
   stepText: { flex: 1, color: palette.ink, fontFamily: type.regular, fontSize: 12.5, lineHeight: 19 },
-  tipRow: { flexDirection: 'row', gap: 8, marginBottom: 6 },
-  tipBullet: { color: palette.limeDark, fontFamily: type.demi, fontSize: 12 },
-  tipText: { flex: 1, color: palette.muted, fontFamily: type.regular, fontSize: 11.5, lineHeight: 17 },
+  breathRow: { flexDirection: 'row', gap: 8, marginTop: 6 },
+  breathCell: { flex: 1, backgroundColor: palette.canvas, borderRadius: radius.sm, padding: 11 },
+  breathLabel: { color: palette.limeDark, fontFamily: type.demi, fontSize: 8.5, letterSpacing: 1, marginBottom: 4 },
+  breathText: { color: palette.ink, fontFamily: type.regular, fontSize: 11, lineHeight: 16 },
+  mistakeRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
+  mistakeMark: { color: '#B64B45', fontFamily: type.demi, fontSize: 12, marginTop: 1 },
+  mistakeTitle: { color: palette.ink, fontFamily: type.demi, fontSize: 12, lineHeight: 17 },
+  mistakeFix: { color: palette.muted, fontFamily: type.regular, fontSize: 11, lineHeight: 16, marginTop: 2 },
+  safety: { backgroundColor: palette.softCoral, borderRadius: radius.md, padding: 13 },
+  safetyLabel: { color: palette.coral, fontFamily: type.demi, fontSize: 9, letterSpacing: 1.2, marginBottom: 4 },
+  safetyText: { color: palette.ink, fontFamily: type.regular, fontSize: 11.5, lineHeight: 17 },
+  patternToggle: { alignItems: 'center', paddingVertical: 4 },
+  patternToggleText: { color: palette.coral, fontFamily: type.demi, fontSize: 11 },
+  patternCard: { alignItems: 'center', backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, paddingVertical: 10 },
+  patternNote: { color: palette.muted, fontFamily: type.regular, fontSize: 9.5, textAlign: 'center', paddingHorizontal: 20, marginTop: 2 },
+  credit: { color: palette.muted, fontFamily: type.regular, fontSize: 9, textAlign: 'center' },
   historyDate: { color: palette.ink, fontFamily: type.demi, fontSize: 12, marginBottom: 8 },
   historySet: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingVertical: 4 },
   historySetIndex: { width: 18, color: palette.muted, fontFamily: type.demi, fontSize: 10.5 },

@@ -35,10 +35,15 @@ React Native.
 The Train tab is a complete gym logger in the style of dedicated trackers
 like Hevy:
 
-- **Exercise library** — 85+ built-in exercises across barbell, dumbbell,
+- **Exercise library** — 100 built-in exercises across barbell, dumbbell,
   machine, cable, bodyweight, kettlebell, and cardio. Every exercise has
-  primary/secondary muscles, equipment, step-by-step instructions, form tips,
-  and an animated skeleton demo of the movement.
+  primary/secondary muscles and equipment, real start/finish demonstration
+  photos (public-domain, from free-exercise-db), a full researched how-to
+  (setup, execution with range-of-motion standards, breathing, tempo, common
+  mistakes with fixes, safety), a one-tap technique video from an established
+  channel (every link verified against YouTube metadata), and an animated
+  movement-path figure. See ../ACCURACY.md for the content provenance and
+  review process.
 - **Routines** — build reusable workouts with target sets, exact reps or rep
   ranges (`8-12`), starting weights, per-exercise rest timers, notes,
   supersets, and optional folders. Template routines (full-body, push/pull/

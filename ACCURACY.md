@@ -94,6 +94,33 @@ method represents.
 Estimated 1RM in exercise records uses the Epley formula
 (weight × (1 + reps ÷ 30)) and is labeled as an estimate.
 
+## Exercise guides, photos, and videos
+
+Every built-in exercise ships with a researched how-to (setup, execution,
+breathing, tempo, common mistakes, safety), real start/finish demonstration
+photos, and a linked technique video:
+
+- **Instructions** were written from reputable coaching sources (StrengthLog,
+  NASM, ACE Fitness, Squat University, Renaissance Periodization, BarBend,
+  Bret Contreras, and others; per-guide source lists are kept in the content
+  pipeline), then graded by an adversarial reviewer against a strict rubric —
+  equipment-specific setup, a concrete range-of-motion standard, correct
+  breathing for the lift type, real prevalent mistakes with fixes — and
+  revised until every guide passed at 10/10 (three review rounds).
+- **Photos** are from the free-exercise-db project
+  (https://github.com/yuhonas/free-exercise-db), released into the public
+  domain (Unlicense), bundled in `mobile/assets/exercises/`.
+- **Videos** are links to established channels (Renaissance Periodization,
+  Squat University, ScottHermanFitness, BarBend, Jeff Nippard, PureGym, GCN,
+  Planet Fitness, and similar). Every URL was verified against YouTube's
+  oEmbed metadata — exact title and channel — and re-verified by the
+  reviewer; wrong-variation videos (e.g. a barbell demo for a dumbbell
+  movement) were rejected and replaced.
+- **Movement-path figures** (the stylized skeletons) are a secondary aid and
+  went through eleven rounds of pixel-measured visual review: 60 of 63
+  templates at 10/10, with the remaining three (shrug, russian twist, walk)
+  documented as inherent limits of a stylized side view.
+
 ## Confidence labels
 
 - **High:** an exact gram weight with a reviewed food match and no recipe

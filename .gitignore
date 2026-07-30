@@ -30,3 +30,6 @@ data/calorie_lens.db
 data/calorie_lens.db-shm
 data/calorie_lens.db-wal
 data/calorie_lens.master.key
+
+# Local cleanup staging (bridge cannot delete files)
+_to_delete/
