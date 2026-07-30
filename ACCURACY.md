@@ -22,12 +22,28 @@ Examples:
 | --- | --- | ---: |
 | Cooked red kidney beans | FDC 175194 | 127 kcal/100 g |
 | Cooked lentils | FDC 172421 | 116 kcal/100 g |
+| Boiled chickpeas (chana/chole) | FDC 173757 | 164 kcal/100 g |
 | Cooked white rice | FDC 168878 | 130 kcal/100 g |
+| Cooked brown rice | FDC 169704 | 123 kcal/100 g |
+| Rolled oats, dry | FDC 173904 | 379 kcal/100 g |
 | Whole-wheat chapati/roti | FDC 174075 | 299 kcal/100 g |
+| Whole-wheat paratha | FDC 174076 | 326 kcal/100 g |
 | Roasted chicken breast | FDC 171477 | 165 kcal/100 g |
 | Boiled egg | FDC 173424 | 155 kcal/100 g |
+| Egg white | FDC 172183 | 52 kcal/100 g |
+| Boiled potato | FDC 170438 | 87 kcal/100 g |
 | Idli | FDC 2708346 | 128 kcal/100 g |
 | Plain dosa | FDC 2708347 | 210 kcal/100 g |
+| Samosa (FNDDS recipe) | FDC 2344214 | 309 kcal/100 g |
+| Biryani with meat (FNDDS recipe) | FDC 2341916 | 144 kcal/100 g |
+| Chicken curry (FNDDS recipe) | FDC 2341861 | 82 kcal/100 g |
+
+Paneer is mapped to USDA "Cheese, white, queso blanco" (FDC 172224,
+310 kcal/100 g), the closest published analog to fresh paneer; the FNDDS
+"Cheese, paneer" survey record was reviewed and rejected because its
+carbohydrate value (22.5 g/100 g) is inconsistent with fresh acid-set
+cheese composition. The catalog was last re-verified against the published
+FoodData Central values in July 2026.
 
 Grams receive the narrowest portion range. Pieces use a documented standard
 piece weight and a size range. Volume measures use the user's calibrated bowl
@@ -57,6 +73,26 @@ intensity. Speed narrows walking and running estimates.
 Wearable active-energy values can still be synced through Apple Health or
 Health Connect, but they remain estimates. They are preserved as device data
 rather than presented as laboratory measurement.
+
+The intensity METs were re-verified against the published 2024 Adult
+Compendium tables in July 2026: resistance training 3.5 / 5.0 / 6.0 (codes
+02054 / 02052 / 02050), circuit training 3.5 / 5.0 / 7.5 (02034 / 02035 /
+02040), HIIT 7.0–11.0 (02210 / 02214), yoga 2.3 / 2.7 / 4.0 (Hatha /
+Vinyasa / Power), calisthenics 2.8 / 3.8 / 7.5 (02024 / 02022 / 02020), and
+the walking speed bands match codes 17170–17220.
+
+## Strength sessions (Train tab)
+
+A finished strength workout logs its active energy with the same net-MET
+method. The session MET is the set-weighted average of the involved
+exercises' Compendium-family MET values, the shown range widens toward the
+light (3.5) and vigorous ends, and the basis line always states the MET,
+body weight, and duration used. Set-by-set energy is *not* claimed — rest
+periods dominate gym sessions, which is exactly what the duration × MET
+method represents.
+
+Estimated 1RM in exercise records uses the Epley formula
+(weight × (1 + reps ÷ 30)) and is labeled as an estimate.
 
 ## Confidence labels
 

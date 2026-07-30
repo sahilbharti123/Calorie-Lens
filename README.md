@@ -16,6 +16,12 @@ codebase for both platforms.
 - Uses the on-device parser first and only calls Gemini for voice or an unrecognized typed command
 - Calculates known foods from reviewed USDA FoodData Central records
 - Calculates active workout energy from body weight, duration, intensity, and 2024 Compendium MET values
+- Full strength training in the Train tab: routines with folders, supersets,
+  rep ranges and per-exercise rest timers; a live workout logger with the
+  previous performance beside every set, set types (warm-up/failure/drop),
+  optional RPE, automatic rest countdown and live PR detection; workout
+  history, per-exercise records and charts; and an 85+ exercise library with
+  step-by-step instructions and animated form demos
 - Shows a range, confidence, source, and calculation basis before saving
 - Asks a short follow-up instead of guessing when a portion or workout detail is missing
 - Tracks water, steps, sleep, weight, exercise, and daily notes
@@ -67,11 +73,22 @@ For the native app and its AI/voice service:
 ```bash
 uvicorn api:app --reload --host 0.0.0.0 --port 8000
 cd mobile
-cp .env.example .env
 npm install
 npm run ios
 # or: npm run android
 ```
+
+In development the app discovers the API automatically from the Metro
+bundler address, so a physical phone reaches your computer without any
+`.env` as long as both are on the same Wi-Fi and uvicorn is bound to
+`0.0.0.0`. Set `EXPO_PUBLIC_API_URL` (see `mobile/.env.example`) only to
+override this or for production builds. The auth screen shows a live
+reachability indicator with the exact URL it is trying.
+
+If `uvicorn api:app` used to exit immediately with an import error
+mentioning `google`, that was a startup crash triggered by any partially
+installed `google-*` package — fixed; accounts and typed logging never
+needed the AI SDK.
 
 See [`mobile/README.md`](mobile/README.md) for HealthKit, Apple Watch, Health
 Connect, development-build, and EAS setup.

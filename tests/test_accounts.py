@@ -47,6 +47,11 @@ class AccountStoreTests(unittest.TestCase):
 
         payload = {
             "coachMemory": {"notes": "private training schedule"},
+            "profile": {
+                "primaryGoal": "build-muscle",
+                "dietStyle": "vegetarian",
+                "injuries": ["sensitive left knee"],
+            },
             "days": {"2026-07-29": {"waterMl": 1750}},
         }
         saved = self.store.save_vault(user["id"], payload, 0)
@@ -169,11 +174,22 @@ class AccountApiTests(unittest.TestCase):
             headers=headers,
             json={
                 "base_version": 0,
-                "payload": {"goals": {"calories": 2100}, "days": {}},
+                "payload": {
+                    "goals": {"calories": 2100},
+                    "profile": {
+                        "primaryGoal": "lose-fat",
+                        "dietStyle": "home-indian",
+                    },
+                    "days": {},
+                },
             },
         )
         self.assertEqual(first.status_code, 200)
         self.assertEqual(first.json()["version"], 1)
+        self.assertEqual(
+            api._vault_profile({"id": auth["user"]["id"]})["primaryGoal"],
+            "lose-fat",
+        )
 
         conflict = self.client.put(
             "/v1/sync",

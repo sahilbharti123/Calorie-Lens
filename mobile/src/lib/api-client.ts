@@ -1,3 +1,6 @@
+import Constants from 'expo-constants';
+import { Platform } from 'react-native';
+
 import type { AuthSession } from '@/src/types';
 
 export class ApiError extends Error {
@@ -14,8 +17,39 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * In development the API host is discovered from the Metro bundler address,
+ * so a physical phone reaches the computer running `uvicorn api:app` without
+ * any .env setup. `EXPO_PUBLIC_API_URL` always wins when set.
+ */
+function devHostUrl() {
+  const hostUri = Constants.expoConfig?.hostUri
+    ?? (Constants as unknown as { expoGoConfig?: { debuggerHost?: string } }).expoGoConfig?.debuggerHost;
+  const host = hostUri?.split(':')[0];
+  if (host && host !== 'localhost' && host !== '127.0.0.1') {
+    return `http://${host}:8000`;
+  }
+  return Platform.OS === 'android'
+    ? 'http://10.0.2.2:8000'
+    : 'http://127.0.0.1:8000';
+}
+
 export function apiUrl() {
-  return process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '') ?? '';
+  const configured = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
+  if (configured) return configured;
+  if (!__DEV__) return '';
+  return devHostUrl();
+}
+
+export type ServiceHealth = {
+  ok: boolean;
+  ai_enabled: boolean;
+  accounts_enabled: boolean;
+  model: string;
+};
+
+export async function readServiceHealth() {
+  return apiRequest<ServiceHealth>('/health');
 }
 
 export async function apiRequest<T>(
@@ -34,7 +68,13 @@ export async function apiRequest<T>(
   try {
     response = await fetch(`${base}${path}`, { ...options, headers });
   } catch {
-    throw new ApiError(0, 'The service is unreachable. Your changes remain saved offline.');
+    throw new ApiError(
+      0,
+      `Could not reach the service at ${base}. `
+      + (__DEV__
+        ? 'Start it with `uvicorn api:app --host 0.0.0.0 --port 8000` and keep this device on the same Wi-Fi. Your changes stay saved offline.'
+        : 'Check your connection — your changes stay saved offline.'),
+    );
   }
   const text = await response.text();
   let payload: unknown = null;

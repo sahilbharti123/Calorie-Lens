@@ -52,9 +52,65 @@ export type DayLog = {
   sleepHours: number;
 };
 
-export type Goals = { calories: number; protein: number; waterMl: number; steps: number };
+export type Goals = {
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  waterMl: number;
+  steps: number;
+  weeklyWorkoutMinutes: number;
+  strengthDays: number;
+};
 export type WeightPoint = { date: string; kg: number };
 export type EstimationProfile = { bowlMl?: number; cupMl: number };
+
+export type PrimaryGoal =
+  | 'lose-fat'
+  | 'build-muscle'
+  | 'maintain'
+  | 'improve-fitness'
+  | 'build-habits';
+export type EquationSex = 'female' | 'male' | 'neutral';
+export type GoalPace = 'gentle' | 'steady' | 'ambitious';
+export type ActivityLevel = 'mostly-seated' | 'lightly-active' | 'active' | 'very-active';
+export type WorkoutPreference = 'gym' | 'walking' | 'home' | 'mixed' | 'restarting';
+export type ExperienceLevel = 'new' | 'some' | 'experienced';
+export type DietStyle = 'home-indian' | 'vegetarian' | 'vegan' | 'mixed' | 'high-protein';
+export type MainChallenge = 'portions' | 'protein' | 'cravings' | 'time' | 'consistency';
+export type CoachingTone = 'gentle' | 'direct' | 'data-led';
+
+export type PersonalProfile = {
+  primaryGoal?: PrimaryGoal;
+  equationSex?: EquationSex;
+  age?: number;
+  heightCm?: number;
+  weightKg?: number;
+  targetWeightKg?: number;
+  goalPace?: GoalPace;
+  activityLevel?: ActivityLevel;
+  workoutPreference?: WorkoutPreference;
+  experienceLevel?: ExperienceLevel;
+  trainingDays?: number;
+  availableMinutes?: number;
+  dietStyle?: DietStyle;
+  mealsPerDay?: number;
+  allergies: string[];
+  injuries: string[];
+  mainChallenge?: MainChallenge;
+  coachingTone?: CoachingTone;
+  updatedAt: string;
+};
+
+export type PersonalPlan = {
+  maintenanceCalories?: number;
+  calorieAdjustment?: number;
+  restingCalories?: number;
+  method: string;
+  summary: string;
+  warnings: string[];
+  updatedAt: string;
+};
 
 export type CoachMemory = {
   dietaryPreferences: string[];
@@ -72,8 +128,105 @@ export type CoachMessage = {
   createdAt: string;
 };
 
+// ---------------------------------------------------------------------------
+// Training (Hevy-style strength logging)
+// ---------------------------------------------------------------------------
+
+export type SetType = 'normal' | 'warmup' | 'failure' | 'drop';
+
+export type WorkoutSet = {
+  id: string;
+  type: SetType;
+  weightKg?: number;
+  reps?: number;
+  durationSec?: number;
+  rpe?: number;
+  completed: boolean;
+  /** Records earned when this set was checked off, e.g. ['Heaviest weight']. */
+  prFlags?: string[];
+};
+
+export type RoutineSetTemplate = {
+  id: string;
+  type: SetType;
+  weightKg?: number;
+  reps?: number;
+  repsMin?: number;
+  repsMax?: number;
+  durationSec?: number;
+};
+
+export type RoutineExercise = {
+  id: string;
+  exerciseId: string;
+  note?: string;
+  restSec: number;
+  supersetId?: string;
+  sets: RoutineSetTemplate[];
+};
+
+export type Routine = {
+  id: string;
+  name: string;
+  folder?: string;
+  exercises: RoutineExercise[];
+  createdAt: string;
+  updatedAt: string;
+  lastPerformedAt?: string;
+};
+
+export type SessionExercise = {
+  id: string;
+  exerciseId: string;
+  note?: string;
+  restSec: number;
+  supersetId?: string;
+  sets: WorkoutSet[];
+};
+
+export type WorkoutSession = {
+  id: string;
+  name: string;
+  routineId?: string;
+  startedAt: string;
+  endedAt?: string;
+  durationMin?: number;
+  exercises: SessionExercise[];
+  totalVolumeKg?: number;
+  totalSets?: number;
+  records?: number;
+  calories?: number;
+  calorieLow?: number;
+  calorieHigh?: number;
+  calorieBasis?: string;
+  note?: string;
+};
+
+export type CustomExercise = {
+  id: string;
+  name: string;
+  equipment: string;
+  primaryMuscle: string;
+  kind: 'weight-reps' | 'reps-only' | 'duration';
+  createdAt: string;
+};
+
+export type TrainingData = {
+  routines: Routine[];
+  sessions: WorkoutSession[];
+  activeSession: WorkoutSession | null;
+  customExercises: CustomExercise[];
+  deletedRoutineIds: string[];
+  deletedSessionIds: string[];
+  defaultRestSec: number;
+  rpeEnabled: boolean;
+  updatedAt: string;
+};
+
 export type AppData = {
   goals: Goals;
+  profile: PersonalProfile;
+  plan: PersonalPlan;
   estimation: EstimationProfile;
   days: Record<string, DayLog>;
   weights: WeightPoint[];
@@ -81,6 +234,7 @@ export type AppData = {
   coachMessages: CoachMessage[];
   deletedMealIds: string[];
   deletedWorkoutIds: string[];
+  training: TrainingData;
   lastHealthSync?: string;
 };
 

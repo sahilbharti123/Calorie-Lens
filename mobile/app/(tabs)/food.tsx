@@ -31,8 +31,8 @@ export default function FoodScreen() {
           <ProgressBar value={totals.calories / data.goals.calories} />
           <View style={styles.macros}>
             <Macro label="Protein" value={totals.protein} target={data.goals.protein} />
-            <Macro label="Carbs" value={totals.carbs} target={250} />
-            <Macro label="Fat" value={totals.fat} target={70} />
+            <Macro label="Carbs" value={totals.carbs} target={data.goals.carbs} />
+            <Macro label="Fat" value={totals.fat} target={data.goals.fat} />
           </View>
         </View>
 

@@ -13,7 +13,9 @@ from typing import Any, Dict, List, Optional, Tuple
 try:
     from google import genai
     from google.genai import types as genai_types
-except ModuleNotFoundError:
+except ImportError:
+    # ImportError also covers a bare `google` namespace package without
+    # genai, which ModuleNotFoundError alone does not catch.
     genai = None
     genai_types = None
 

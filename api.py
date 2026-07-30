@@ -27,7 +27,11 @@ from calorie_engine import estimate_command
 try:
     from google import genai
     from google.genai import types as genai_types
-except ModuleNotFoundError:
+except ImportError:
+    # Catch ImportError (not just ModuleNotFoundError): when another
+    # google-* package created the `google` namespace without genai,
+    # Python raises a plain ImportError. Accounts, sync, and typed
+    # logging must keep working without the AI SDK.
     genai = None
     genai_types = None
 
@@ -91,6 +95,8 @@ class CoachRequest(BaseModel):
     message: str = Field(min_length=1, max_length=800)
     today: Optional[dict[str, Any]] = None
     memory: Optional[dict[str, Any]] = None
+    profile: Optional[dict[str, Any]] = None
+    plan: Optional[dict[str, Any]] = None
     recent_messages: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
 
 
@@ -208,7 +214,10 @@ Use the user's saved preferences, limitations, goals, and recent tracking data.
 Be concise, practical, and non-judgmental. Never diagnose, prescribe, or claim
 medical certainty. Encourage professional care for symptoms, eating-disorder
 concerns, injuries, pregnancy, or other high-risk situations. Do not invent
-logged facts. Calorie and exercise values are estimates."""
+logged facts. Calorie and exercise values are estimates. Tie each recommendation
+to the user's stated primary goal, available time, diet, experience, and main
+challenge. Respect allergies and injuries. Prefer one useful next action over a
+generic list. Do not recommend a more aggressive calorie target."""
 
 
 def _bearer_token(authorization: Optional[str]) -> Optional[str]:
@@ -268,6 +277,17 @@ def _vault_memory(user: Optional[dict[str, Any]]) -> dict[str, Any]:
         return {}
     memory = vault.get("coachMemory")
     return memory if isinstance(memory, dict) else {}
+
+
+def _vault_profile(user: Optional[dict[str, Any]]) -> dict[str, Any]:
+    if not user:
+        return {}
+    try:
+        vault = STORE.read_vault(user["id"])["payload"]
+    except (KeyError, ValueError):
+        return {}
+    profile = vault.get("profile")
+    return profile if isinstance(profile, dict) else {}
 
 
 def _cache_key(kind: str, user_id: str, payload: dict[str, Any]) -> str:
@@ -466,6 +486,7 @@ def _generate(
     audio_mime_type: str = "audio/mp4",
     profile: Optional[dict[str, Any]] = None,
     coach_memory: Optional[dict[str, Any]] = None,
+    personal_profile: Optional[dict[str, Any]] = None,
     previous_transcript: Optional[str] = None,
     clarification_question: Optional[str] = None,
 ) -> dict[str, Any]:
@@ -478,6 +499,8 @@ def _generate(
         f"\nTyped update: {typed_text or 'none'}."
         f"\nSaved user preferences and limitations: "
         f"{json.dumps(coach_memory or {}, ensure_ascii=False)}."
+        f"\nPersonal goal profile: "
+        f"{json.dumps(personal_profile or {}, ensure_ascii=False)}."
         "\nWhen a previous update and question are present, merge the new answer into "
         "the original facts and return the complete combined intent."
     )
@@ -549,12 +572,14 @@ def parse_command(
     user: dict[str, Any] = Depends(_current_user),
 ) -> dict[str, Any]:
     memory = _vault_memory(user)
+    personal_profile = _vault_profile(user)
     cache_key = _cache_key(
         "text",
         user["id"],
         {
             **command.model_dump(),
             "memory": memory,
+            "profile": personal_profile,
         },
     )
     cached = _cached_result(user["id"], cache_key)
@@ -570,6 +595,7 @@ def parse_command(
             "cupMl": command.cup_ml,
         },
         coach_memory=memory,
+        personal_profile=personal_profile,
         previous_transcript=command.previous_transcript,
         clarification_question=command.clarification_question,
     )
@@ -596,6 +622,7 @@ async def parse_audio_command(
             detail="Keep voice commands short (maximum recording size is 2 MB).",
         )
     memory = _vault_memory(user)
+    personal_profile = _vault_profile(user)
     cache_key = _cache_key(
         "audio",
         user["id"],
@@ -608,6 +635,7 @@ async def parse_audio_command(
             "previousTranscript": previous_transcript,
             "clarificationQuestion": clarification_question,
             "memory": memory,
+            "profile": personal_profile,
         },
     )
     cached = _cached_result(user["id"], cache_key)
@@ -621,6 +649,7 @@ async def parse_audio_command(
         audio_mime_type=audio.content_type or "audio/mp4",
         profile={"weightKg": weight_kg, "bowlMl": bowl_ml, "cupMl": cup_ml},
         coach_memory=memory,
+        personal_profile=personal_profile,
         previous_transcript=previous_transcript,
         clarification_question=clarification_question,
     )
@@ -636,6 +665,7 @@ def coach(
     if len(_compact_json(request.model_dump(), 12_001)) > 12_000:
         raise HTTPException(status_code=413, detail="The coach context is too large.")
     memory = {**_vault_memory(user), **(request.memory or {})}
+    profile = {**_vault_profile(user), **(request.profile or {})}
     recent_messages = request.recent_messages[-6:]
     cache_key = _cache_key(
         "coach",
@@ -643,6 +673,7 @@ def coach(
         {
             **request.model_dump(),
             "memory": memory,
+            "profile": profile,
             "recent_messages": recent_messages,
         },
     )
@@ -654,6 +685,8 @@ def coach(
         f"{COACH_PROMPT}\n"
         f"User: {user['displayName']}.\n"
         f"Saved long-term memory: {_compact_json(memory, 2_000)}.\n"
+        f"Personal goal profile: {_compact_json(profile, 2_500)}.\n"
+        f"Calculated starting plan: {_compact_json(request.plan or {}, 1_500)}.\n"
         f"Today's tracking snapshot: "
         f"{_compact_json(request.today or {}, 4_000)}.\n"
         f"Recent conversation: "

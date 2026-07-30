@@ -10,7 +10,9 @@ import React, {
 
 import { ApiError, apiRequest } from '@/src/lib/api-client';
 import { dateKey } from '@/src/lib/date';
+import { calculatePersonalTargets } from '@/src/lib/personalization';
 import { readEncryptedJson, removeEncryptedJson, writeEncryptedJson } from '@/src/lib/secure-storage';
+import { initialTraining, mergeTraining, normalizeTraining } from '@/src/lib/training';
 import { useAuth } from '@/src/store/auth-store';
 import type {
   AppData,
@@ -22,7 +24,9 @@ import type {
   HealthSnapshot,
   LogOperation,
   MealItem,
+  PersonalProfile,
   SyncState,
+  TrainingData,
   WeightPoint,
   Workout,
 } from '@/src/types';
@@ -44,8 +48,30 @@ const initialCoachMemory: CoachMemory = {
   updatedAt: '',
 };
 
+const initialProfile: PersonalProfile = {
+  allergies: [],
+  injuries: [],
+  updatedAt: '',
+};
+
 export const initialData: AppData = {
-  goals: { calories: 2200, protein: 120, waterMl: 3000, steps: 8000 },
+  goals: {
+    calories: 2200,
+    protein: 120,
+    carbs: 250,
+    fat: 70,
+    waterMl: 3000,
+    steps: 8000,
+    weeklyWorkoutMinutes: 150,
+    strengthDays: 2,
+  },
+  profile: initialProfile,
+  plan: {
+    method: 'Complete onboarding to calculate a personal starting point',
+    summary: 'General starter targets',
+    warnings: [],
+    updatedAt: '',
+  },
   estimation: { cupMl: 200 },
   days: {},
   weights: [],
@@ -53,6 +79,7 @@ export const initialData: AppData = {
   coachMessages: [],
   deletedMealIds: [],
   deletedWorkoutIds: [],
+  training: initialTraining,
 };
 
 export function normalizeData(saved?: Partial<AppData> | null): AppData {
@@ -60,6 +87,13 @@ export function normalizeData(saved?: Partial<AppData> | null): AppData {
     ...initialData,
     ...(saved ?? {}),
     goals: { ...initialData.goals, ...(saved?.goals ?? {}) },
+    profile: {
+      ...initialProfile,
+      ...(saved?.profile ?? {}),
+      allergies: saved?.profile?.allergies ?? [],
+      injuries: saved?.profile?.injuries ?? [],
+    },
+    plan: { ...initialData.plan, ...(saved?.plan ?? {}) },
     estimation: { ...initialData.estimation, ...(saved?.estimation ?? {}) },
     days: saved?.days ?? {},
     weights: saved?.weights ?? [],
@@ -67,6 +101,7 @@ export function normalizeData(saved?: Partial<AppData> | null): AppData {
     coachMessages: saved?.coachMessages ?? [],
     deletedMealIds: saved?.deletedMealIds ?? [],
     deletedWorkoutIds: saved?.deletedWorkoutIds ?? [],
+    training: normalizeTraining(saved?.training),
   };
 }
 
@@ -79,6 +114,27 @@ function emptyDay(date = dateKey()): DayLog {
     steps: 0,
     activeCalories: 0,
     sleepHours: 0,
+  };
+}
+
+function withCurrentWeight(current: AppData, weightKg: number): AppData {
+  const updatedAt = new Date().toISOString();
+  const weights = [
+    ...current.weights.filter((point) => point.date !== dateKey()),
+    { date: dateKey(), kg: weightKg },
+  ].slice(-365);
+  if (!current.profile.primaryGoal) return { ...current, weights };
+  const profile = { ...current.profile, weightKg, updatedAt };
+  if (current.plan.method === 'Manually adjusted in profile settings') {
+    return { ...current, profile, weights };
+  }
+  const { goals, plan } = calculatePersonalTargets(profile);
+  return {
+    ...current,
+    goals,
+    profile,
+    plan: { ...plan, updatedAt },
+    weights,
   };
 }
 
@@ -104,11 +160,15 @@ function isPristine(data: AppData) {
     && !data.weights.length
     && !data.coachMessages.length
     && JSON.stringify(data.goals) === JSON.stringify(initialData.goals)
+    && !data.profile.primaryGoal
     && JSON.stringify(data.estimation) === JSON.stringify(initialData.estimation)
     && !data.coachMemory.notes
     && !data.coachMemory.dietaryPreferences.length
     && !data.coachMemory.injuries.length
-    && !data.coachMemory.workoutPreferences.length;
+    && !data.coachMemory.workoutPreferences.length
+    && !data.training.routines.length
+    && !data.training.sessions.length
+    && !data.training.activeSession;
 }
 
 function byNewest<T extends { updatedAt: string }>(local: T, remote: T) {
@@ -177,10 +237,13 @@ export function mergeAppData(localInput: Partial<AppData>, remoteInput: Partial<
     ...local,
     days,
     weights: [...weights.values()].sort((a, b) => a.date.localeCompare(b.date)).slice(-365),
+    profile: byNewest(local.profile, remote.profile),
+    plan: byNewest(local.plan, remote.plan),
     coachMemory: byNewest(local.coachMemory, remote.coachMemory),
     coachMessages: messages,
     deletedMealIds,
     deletedWorkoutIds,
+    training: mergeTraining(local.training, remote.training),
     lastHealthSync: [local.lastHealthSync, remote.lastHealthSync]
       .filter((value): value is string => Boolean(value))
       .sort()
@@ -200,9 +263,11 @@ type AppContextValue = {
   removeWorkout: (id: string) => void;
   applyHealthSnapshot: (snapshot: HealthSnapshot) => void;
   updateGoals: (goals: Partial<Goals>) => void;
+  savePersonalization: (profile: PersonalProfile, bowlMl?: number) => void;
   updateEstimationProfile: (profile: Partial<EstimationProfile>, weightKg?: number) => void;
   updateCoachMemory: (memory: Partial<CoachMemory>) => void;
   addCoachMessage: (message: Omit<CoachMessage, 'id' | 'createdAt'>) => CoachMessage;
+  updateTraining: (recipe: (training: TrainingData) => TrainingData) => void;
   replaceData: (data: Partial<AppData>) => void;
   syncNow: () => Promise<void>;
   clearLocalData: () => Promise<void>;
@@ -400,13 +465,7 @@ export function AppProvider({ children }: React.PropsWithChildren) {
       return next;
     });
     if (weightPoints.length) {
-      setData((current) => ({
-        ...current,
-        weights: [
-          ...current.weights.filter((point) => !weightPoints.some((next) => next.date === point.date)),
-          ...weightPoints,
-        ].slice(-365),
-      }));
+      setData((current) => withCurrentWeight(current, weightPoints.at(-1)!.kg));
     }
   }, [updateToday]);
 
@@ -440,33 +499,59 @@ export function AppProvider({ children }: React.PropsWithChildren) {
       activeCalories: snapshot.activeCalories ?? day.activeCalories,
       sleepHours: snapshot.sleepHours ?? day.sleepHours,
     }));
-    setData((current) => ({
-      ...current,
-      lastHealthSync: new Date().toISOString(),
-      weights: snapshot.weightKg
-        ? [
-            ...current.weights.filter((point) => point.date !== dateKey()),
-            { date: dateKey(), kg: snapshot.weightKg },
-          ].slice(-365)
-        : current.weights,
-    }));
+    setData((current) => {
+      const synced = { ...current, lastHealthSync: new Date().toISOString() };
+      return snapshot.weightKg ? withCurrentWeight(synced, snapshot.weightKg) : synced;
+    });
   }, [updateToday]);
 
   const updateGoals = useCallback((goals: Partial<Goals>) => {
-    setData((current) => ({ ...current, goals: { ...current.goals, ...goals } }));
+    setData((current) => {
+      const nextGoals = { ...current.goals, ...goals };
+      return {
+        ...current,
+        goals: nextGoals,
+        plan: {
+          ...current.plan,
+          method: 'Manually adjusted in profile settings',
+          summary: `Manual targets · ${nextGoals.calories} kcal · ${nextGoals.protein} g protein`,
+          updatedAt: new Date().toISOString(),
+        },
+      };
+    });
   }, []);
 
-  const updateEstimationProfile = useCallback((profile: Partial<EstimationProfile>, weightKg?: number) => {
+  const savePersonalization = useCallback((profile: PersonalProfile, bowlMl?: number) => {
+    const updatedAt = new Date().toISOString();
+    const nextProfile = { ...profile, updatedAt };
+    const { goals, plan } = calculatePersonalTargets(nextProfile);
     setData((current) => ({
       ...current,
-      estimation: { ...current.estimation, ...profile },
-      weights: weightKg
+      goals,
+      profile: nextProfile,
+      plan: { ...plan, updatedAt },
+      estimation: {
+        ...current.estimation,
+        bowlMl: bowlMl && bowlMl >= 50 ? Math.min(1000, bowlMl) : current.estimation.bowlMl,
+        cupMl: current.estimation.cupMl || 200,
+      },
+      weights: nextProfile.weightKg
         ? [
             ...current.weights.filter((point) => point.date !== dateKey()),
-            { date: dateKey(), kg: weightKg },
+            { date: dateKey(), kg: nextProfile.weightKg },
           ].slice(-365)
         : current.weights,
     }));
+  }, []);
+
+  const updateEstimationProfile = useCallback((profile: Partial<EstimationProfile>, weightKg?: number) => {
+    setData((current) => {
+      const calibrated = {
+        ...current,
+        estimation: { ...current.estimation, ...profile },
+      };
+      return weightKg ? withCurrentWeight(calibrated, weightKg) : calibrated;
+    });
   }, []);
 
   const updateCoachMemory = useCallback((memory: Partial<CoachMemory>) => {
@@ -475,6 +560,16 @@ export function AppProvider({ children }: React.PropsWithChildren) {
       coachMemory: {
         ...current.coachMemory,
         ...memory,
+        updatedAt: new Date().toISOString(),
+      },
+    }));
+  }, []);
+
+  const updateTraining = useCallback((recipe: (training: TrainingData) => TrainingData) => {
+    setData((current) => ({
+      ...current,
+      training: {
+        ...recipe(current.training),
         updatedAt: new Date().toISOString(),
       },
     }));
@@ -520,9 +615,11 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     removeWorkout,
     applyHealthSnapshot,
     updateGoals,
+    savePersonalization,
     updateEstimationProfile,
     updateCoachMemory,
     addCoachMessage,
+    updateTraining,
     replaceData,
     syncNow,
     clearLocalData,
@@ -538,9 +635,11 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     removeWorkout,
     applyHealthSnapshot,
     updateGoals,
+    savePersonalization,
     updateEstimationProfile,
     updateCoachMemory,
     addCoachMessage,
+    updateTraining,
     replaceData,
     syncNow,
     clearLocalData,

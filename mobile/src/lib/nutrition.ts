@@ -1,3 +1,6 @@
+import { apiRequest, apiUrl } from '@/src/lib/api-client';
+import { FOODS, type FoodReference } from '@/src/lib/food-catalog';
+import { readSession } from '@/src/lib/session';
 import type {
   EstimationContext,
   LogOperation,
@@ -5,42 +8,14 @@ import type {
   MealSlot,
   ParsedCommand,
 } from '@/src/types';
-import { apiRequest } from '@/src/lib/api-client';
-import { readSession } from '@/src/lib/session';
 
-type FoodReference = {
-  name: string;
-  aliases: string[];
-  calories: number;
-  protein: number;
-  carbs: number;
-  fat: number;
-  fdcId: number;
-  pieceG?: number;
-  pieceVariance?: number;
-  density?: number;
-  densityVariance?: number;
-};
-
-const foods: FoodReference[] = [
-  { name: 'Cooked kidney beans', aliases: ['kidney beans', 'kidney bean', 'rajma'], calories: 127, protein: 8.67, carbs: 22.8, fat: 0.5, fdcId: 175194, density: 0.75, densityVariance: 0.18 },
-  { name: 'Cooked lentils', aliases: ['lentils', 'lentil', 'dhal', 'dal'], calories: 116, protein: 9.02, carbs: 20.1, fat: 0.38, fdcId: 172421, density: 0.75, densityVariance: 0.18 },
-  { name: 'Cooked white rice', aliases: ['white rice', 'plain rice', 'cooked rice', 'rice'], calories: 130, protein: 2.69, carbs: 28.2, fat: 0.28, fdcId: 168878, density: 0.79, densityVariance: 0.12 },
-  { name: 'Whole-wheat roti', aliases: ['chapati', 'chappati', 'phulka', 'roti'], calories: 299, protein: 7.85, carbs: 46.1, fat: 9.2, fdcId: 174075, pieceG: 40, pieceVariance: 0.2 },
-  { name: 'Roasted chicken breast', aliases: ['chicken breast', 'grilled chicken', 'roasted chicken'], calories: 165, protein: 31, carbs: 0, fat: 3.57, fdcId: 171477 },
-  { name: 'Boiled egg', aliases: ['hard boiled egg', 'boiled egg', 'egg'], calories: 155, protein: 12.6, carbs: 1.12, fat: 10.6, fdcId: 173424, pieceG: 50, pieceVariance: 0.12 },
-  { name: 'Whole milk', aliases: ['whole milk', 'full fat milk', 'milk'], calories: 60, protein: 3.27, carbs: 4.63, fat: 3.2, fdcId: 746782, density: 1.03, densityVariance: 0.03 },
-  { name: 'Plain whole-milk yogurt', aliases: ['plain yogurt', 'yogurt', 'curd', 'dahi'], calories: 61, protein: 3.47, carbs: 4.66, fat: 3.25, fdcId: 171284, density: 1.03, densityVariance: 0.06 },
-  { name: 'Banana', aliases: ['banana', 'kela'], calories: 89, protein: 1.09, carbs: 22.8, fat: 0.33, fdcId: 173944, pieceG: 118, pieceVariance: 0.18 },
-  { name: 'Whole-wheat bread', aliases: ['whole wheat bread', 'brown bread', 'bread', 'toast'], calories: 252, protein: 12.4, carbs: 42.7, fat: 3.5, fdcId: 172688, pieceG: 28, pieceVariance: 0.18 },
-  { name: 'Smooth peanut butter', aliases: ['peanut butter'], calories: 598, protein: 22.2, carbs: 22.3, fat: 51.4, fdcId: 172470, density: 1.07, densityVariance: 0.08 },
-  { name: 'Idli', aliases: ['idli'], calories: 128, protein: 6.36, carbs: 24.98, fat: 0.35, fdcId: 2708346, pieceG: 50, pieceVariance: 0.22 },
-  { name: 'Plain dosa', aliases: ['plain dosa', 'dosa'], calories: 210, protein: 5.7, carbs: 37.04, fat: 4.05, fdcId: 2708347, pieceG: 100, pieceVariance: 0.3 },
-];
+const foods = FOODS;
 
 const numberWords: Record<string, number> = {
-  a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, half: 0.5,
+  a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, half: 0.5, quarter: 0.25,
 };
+
+const GLASS_ML = 250;
 
 type Quantity = { amount: number; unit: string };
 
@@ -53,22 +28,29 @@ function numberValue(value?: string) {
   return numberWords[value] ?? Number.parseFloat(value);
 }
 
+function normalizeUnit(raw: string | undefined, reference: FoodReference) {
+  const unit = (raw ?? (reference.pieceG ? 'piece' : 'unknown'))
+    .replace(/s$/, '')
+    .replace(/^glasse$/, 'glass')
+    .replace(/^gram$/, 'g')
+    .replace(/^litre$|^liter$/, 'l')
+    .replace(/^slice$/, 'piece')
+    .replace(/^katori$/, 'bowl');
+  return unit;
+}
+
 function quantityNear(text: string, alias: string, reference: FoodReference): Quantity {
-  const units = 'kg|g|grams?|ml|l|litres?|liters?|bowls?|cups?|pieces?|tbsp|tsp';
-  const number = '\\d+(?:\\.\\d+)?|a|an|one|two|three|four|five|half';
+  const units = 'kg|g|grams?|ml|l|litres?|liters?|bowls?|katoris?|cups?|glass(?:es)?|pieces?|slices?|tbsp|tsp';
+  const number = '\\d+(?:\\.\\d+)?|a|an|one|two|three|four|five|six|half|quarter';
   const explicitVolume = text.match(
-    new RegExp(`(\\d+(?:\\.\\d+)?)\\s*ml\\s*(?:bowl(?:\\s+of)?\\s*)?${escapeRegex(alias)}s?\\b`),
+    new RegExp(`(\\d+(?:\\.\\d+)?)\\s*ml\\s*(?:bowl|katori|glass)?(?:\\s+of)?\\s*${escapeRegex(alias)}s?\\b`),
   );
   if (explicitVolume) return { amount: numberValue(explicitVolume[1]), unit: 'ml' };
-  const before = text.match(new RegExp(`(${number})\\s*(${units})?\\s*${escapeRegex(alias)}s?\\b`));
-  const after = text.match(new RegExp(`${escapeRegex(alias)}s?\\s*(${number})\\s*(${units})\\b`));
+  const before = text.match(new RegExp(`(${number})\\s*(${units})?\\s*(?:of\\s+)?${escapeRegex(alias)}s?\\b`));
+  const after = text.match(new RegExp(`${escapeRegex(alias)}s?\\s*[:,-]?\\s*(${number})\\s*(${units})\\b`));
   const match = before ?? after;
   if (!match) return { amount: 0, unit: 'unknown' };
-  const unit = (match[2] ?? (reference.pieceG ? 'piece' : 'unknown'))
-    .replace(/s$/, '')
-    .replace(/^gram$/, 'g')
-    .replace(/^litre$|^liter$/, 'l');
-  return { amount: numberValue(match[1]), unit };
+  return { amount: numberValue(match[1]), unit: normalizeUnit(match[2], reference) };
 }
 
 function firstNumber(text: string, pattern: RegExp) {
@@ -87,6 +69,15 @@ function clarification(transcript: string, question: string, suggestions: string
     clarification: { question, suggestions },
   };
 }
+
+const UNKNOWN_FOOD_MARK = 'verified reference';
+
+/**
+ * Composite dishes whose parts would otherwise partially match the catalog
+ * (e.g. "butter chicken" → butter + chicken breast). These go to the AI
+ * service or the label-calories path instead of a wrong local match.
+ */
+const COMPLEX_DISHES = /butter chicken|paneer tikka|palak paneer|shahi paneer|kadai paneer|tikka masala|fried rice|noodles?|maggi|pizza|burger|pasta|sandwich|milkshake|smoothie|pav bhaji|chole bhature|masala dosa/;
 
 export function inferMealSlot(text = ''): MealSlot {
   const lowered = text.toLowerCase();
@@ -131,6 +122,9 @@ function gramsFor(
   } else if (unit === 'cup') {
     volumeMl = amount * context.cupMl;
     label = `${amount} × ${context.cupMl} ml cup`;
+  } else if (unit === 'glass') {
+    volumeMl = amount * GLASS_ML;
+    label = `${amount} × ${GLASS_ML} ml glass`;
   } else if (unit === 'ml') {
     volumeMl = amount;
     label = `${amount} ml`;
@@ -154,6 +148,7 @@ function estimateFood(
   quantity: Quantity,
   text: string,
   context: EstimationContext,
+  suppressOilAssumption = false,
 ): Omit<MealItem, 'id' | 'slot' | 'loggedAt'> | { question: string; suggestions: string[] } {
   const measured = gramsFor(quantity, food, context);
   if ('question' in measured) return measured;
@@ -163,7 +158,8 @@ function estimateFood(
   let high = food.calories * measured.high / 100;
   let fat = food.fat * scale;
   const assumptions: string[] = [];
-  if ((/rajma|dal|curry/.test(text)) && !/plain|boiled|dry/.test(text)) {
+  const isCurryBase = /rajma|dal|daal|chole|chana|curry/.test(text) && /rajma|dal|daal|chole|chana|chickpea|kidney|lentil/i.test(food.name + food.aliases.join(' '));
+  if (isCurryBase && !suppressOilAssumption && !/plain|boiled|dry/.test(text)) {
     const oilKcal = 4.6 * 8.84;
     calories += oilKcal;
     low += oilKcal * 0.5;
@@ -196,7 +192,7 @@ const activities: Activity[] = [
   { name: 'Walking', aliases: /walk/, mets: [2.8, 3.8, 4.8], sourceId: 'walking' },
   { name: 'Running', aliases: /run|jog/, mets: [6.5, 8.5, 11], sourceId: 'running' },
   { name: 'Cycling', aliases: /cycl|bike/, mets: [4.3, 7, 9], sourceId: 'bicycling' },
-  { name: 'Strength training', aliases: /strength|weight|lifting|gym/, mets: [3.5, 5, 6], sourceId: 'conditioning-exercise' },
+  { name: 'Strength training', aliases: /strength|weight training|weights|lifting|gym/, mets: [3.5, 5, 6], sourceId: 'conditioning-exercise' },
   { name: 'HIIT', aliases: /hiit|high intensity interval/, mets: [7, 9, 11], sourceId: 'conditioning-exercise' },
   { name: 'Yoga', aliases: /yoga|vinyasa|hatha/, mets: [2.3, 2.7, 4], sourceId: 'conditioning-exercise' },
 ];
@@ -208,7 +204,7 @@ function estimateWorkout(text: string, context: EstimationContext): LogOperation
   if (!duration) return clarification(text, `How many minutes did you do ${activity.name.toLowerCase()}?`, ['15 min', '30 min', '45 min', '60 min']);
   if (!context.weightKg) return clarification(text, 'What is your current body weight? I need it to estimate active calories.', ['60 kg', '70 kg', '80 kg', '90 kg']);
   const hasIntensity = /hard|intense|vigorous|brisk|moderate|easy|light/.test(text);
-  if (!hasIntensity) return clarification(text, `How hard was the ${activity.name.toLowerCase()}?`, ['Light', 'Moderate', 'Hard', 'Give speed']);
+  if (!hasIntensity) return clarification(text, `How hard was the ${activity.name.toLowerCase()}?`, ['Light', 'Moderate', 'Hard']);
   const intensityIndex = /hard|intense|vigorous|brisk/.test(text) ? 2 : /easy|light/.test(text) ? 0 : 1;
   const intensity = (['light', 'moderate', 'hard'] as const)[intensityIndex];
   const met = activity.mets[intensityIndex];
@@ -242,8 +238,8 @@ export function parseCommandLocally(
   const water = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*(?:ml|millilit)/);
   const waterLitres = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*(?:l|litre|liter)\b/);
   const glasses = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*glass/);
-  if (/water|paani|pani|glass/.test(lowered)) {
-    operations.push({ type: 'water', action: 'add', amount: water || waterLitres * 1000 || glasses * 250 || 250 });
+  if (/water|paani|pani/.test(lowered) || (/glass/.test(lowered) && !foods.some((food) => food.aliases.some((alias) => lowered.includes(alias))))) {
+    operations.push({ type: 'water', action: 'add', amount: water || waterLitres * 1000 || glasses * GLASS_ML || GLASS_ML });
   }
   const steps = firstNumber(lowered, /(\d[\d,]*)\s*steps?/);
   if (steps) operations.push({ type: 'steps', action: 'set', amount: steps });
@@ -260,10 +256,21 @@ export function parseCommandLocally(
   if (workout && !('type' in workout)) return workout;
   if (workout) operations.push(workout);
 
-  const matches = foods
+  // Match foods, then keep only the most specific alias when one match's
+  // alias is contained in another (e.g. "brown rice" beats "rice",
+  // "egg white" beats "egg", "peanut butter" beats "butter").
+  const complexDish = COMPLEX_DISHES.test(lowered);
+  const rawMatches = complexDish ? [] : foods
     .map((food) => ({ food, alias: food.aliases.find((alias) => new RegExp(`\\b${escapeRegex(alias)}s?\\b`).test(lowered)) }))
     .filter((match): match is { food: FoodReference; alias: string } => Boolean(match.alias));
-  const looksLikeMeal = /ate|had|breakfast|lunch|dinner|snack|khaya|khayi/.test(lowered) || matches.length > 0;
+  const matches = rawMatches.filter(({ alias }) => !rawMatches.some(
+    (other) => other.alias !== alias && other.alias.length > alias.length && other.alias.includes(alias),
+  ));
+  const hasExplicitOil = matches.some(({ food }) => food.name === 'Olive oil');
+
+  const looksLikeMeal = /ate|had|breakfast|lunch|dinner|snack|khaya|khayi|khaya tha/.test(lowered)
+    || matches.length > 0
+    || complexDish;
   if (looksLikeMeal) {
     if (!matches.length) {
       const declaredCalories = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*(?:kcal|calories?)/);
@@ -274,7 +281,7 @@ export function parseCommandLocally(
           slot: preferredSlot ?? inferMealSlot(lowered),
           description: text.trim(),
           items: [{
-            name: text.replace(/\d+(?:\.\d+)?\s*(?:kcal|calories?)/i, '').trim() || 'Packaged food',
+            name: text.replace(/\d+(?:\.\d+)?\s*(?:kcal|calories?)/i, '').replace(/\bfrom (?:the )?label\b/i, '').trim() || 'Packaged food',
             quantity: 'amount described by user',
             calories: Math.round(declaredCalories),
             calorieLow: Math.round(declaredCalories * 0.95),
@@ -291,12 +298,16 @@ export function parseCommandLocally(
           }],
         });
       } else {
-      return clarification(text, 'I do not have a verified reference for that food yet. Can you give its label calories or main ingredients?', ['Read label calories', 'List ingredients', 'Use a different food name']);
+        return clarification(
+          text,
+          'I don’t have a verified reference for that food yet. Give its label calories, or log the main parts with amounts.',
+          ['e.g. 350 kcal from the label', 'e.g. 150 g rice and 1 bowl dal', 'e.g. 2 rotis and 100 g paneer'],
+        );
       }
     }
     const items: Omit<MealItem, 'id' | 'slot' | 'loggedAt'>[] = [];
     for (const { food, alias } of matches) {
-      const estimate = estimateFood(food, quantityNear(lowered, alias, food), lowered, context);
+      const estimate = estimateFood(food, quantityNear(lowered, alias, food), lowered, context, hasExplicitOil);
       if ('question' in estimate) return clarification(text, estimate.question, estimate.suggestions);
       items.push(estimate);
     }
@@ -337,6 +348,12 @@ function requestPayload(
   };
 }
 
+/**
+ * Typed logging: local reviewed catalog first; the AI service is only asked
+ * when the local parser could not recognize a food or part of the update —
+ * and the local result remains the fallback whenever the service or the
+ * account is unavailable.
+ */
 export async function parseFitnessCommand(
   text: string,
   preferredSlot: MealSlot | undefined,
@@ -348,22 +365,25 @@ export async function parseFitnessCommand(
     : text;
   const local = parseCommandLocally(combined, preferredSlot, context);
   const fragments = combined
-    .split(/\b(?:and|plus|aur|with)\b|,/i)
+    .split(/\b(?:and|plus|aur|with|then)\b|,/i)
     .map((fragment) => fragment.trim())
-    .filter(Boolean);
-  const locallyCovered = fragments.every((fragment) => {
+    .filter((fragment) => fragment.length > 2);
+  const fragmentUnknown = fragments.some((fragment) => {
     const fragmentResult = parseCommandLocally(fragment, preferredSlot, context);
-    return Boolean(fragmentResult.operations.length || fragmentResult.clarification);
+    return fragmentResult.clarification?.question.includes(UNKNOWN_FOOD_MARK)
+      || (!fragmentResult.operations.length && !fragmentResult.clarification);
   });
-  if (local.clarification || (local.operations.length && locallyCovered)) return local;
-  if (!process.env.EXPO_PUBLIC_API_URL) return local;
+  const localUnknown = local.clarification?.question.includes(UNKNOWN_FOOD_MARK) ?? false;
+  const needsAi = localUnknown || (Boolean(local.operations.length) && fragmentUnknown);
+  if (!needsAi) return local;
+  if (!apiUrl()) return local;
   try {
     const session = await readSession();
     if (!session) return local;
     const response = await apiRequest<ParsedCommand>('/v1/parse-command', {
       method: 'POST',
       body: JSON.stringify({
-        text,
+        text: combined,
         preferred_slot: preferredSlot,
         ...requestPayload(context, clarification),
       }),
@@ -380,7 +400,13 @@ export async function parseVoiceCommand(
   context: EstimationContext,
   clarification?: ClarificationContext,
 ) {
-  if (!process.env.EXPO_PUBLIC_API_URL) throw new Error('Set EXPO_PUBLIC_API_URL to enable voice transcription.');
+  if (!apiUrl()) {
+    throw new Error('Voice needs the account service. Set EXPO_PUBLIC_API_URL (or run the local API in development).');
+  }
+  const session = await readSession();
+  if (!session) {
+    throw new Error('Sign in to use voice logging — transcription runs through your private account.');
+  }
   const body = new FormData();
   body.append('audio', { uri: audioUri, name: 'quick-log.m4a', type: 'audio/mp4' } as unknown as Blob);
   if (preferredSlot) body.append('preferred_slot', preferredSlot);
@@ -389,7 +415,6 @@ export async function parseVoiceCommand(
   body.append('cup_ml', String(context.cupMl));
   if (clarification?.previousTranscript) body.append('previous_transcript', clarification.previousTranscript);
   if (clarification?.clarificationQuestion) body.append('clarification_question', clarification.clarificationQuestion);
-  const session = await readSession();
   const response = await apiRequest<ParsedCommand>(
     '/v1/parse-command/audio',
     { method: 'POST', body },

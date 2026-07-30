@@ -15,26 +15,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Glyph } from '@/src/components/glyph';
 import { apiRequest } from '@/src/lib/api-client';
+import { personalOfflineReply } from '@/src/lib/personalization';
 import { dayTotals } from '@/src/lib/stats';
 import { useApp } from '@/src/store/app-store';
 import { useAuth } from '@/src/store/auth-store';
 import { palette, radius, space, type } from '@/src/theme';
 import type { CoachMessage } from '@/src/types';
-
-function offlineReply(message: string, calories: number, protein: number, target: number) {
-  const remaining = Math.max(0, target - calories);
-  const lowered = message.toLowerCase();
-  if (/workout|gym|train|exercise/.test(lowered)) {
-    return 'A simple session works: 5–10 minutes easy warm-up, your planned strength or cardio work, then a short cool-down. Keep pain—not normal effort—as a stop signal.';
-  }
-  if (/dinner|eat|meal|protein|food/.test(lowered)) {
-    return `You have about ${Math.round(remaining)} kcal left today and have logged ${Math.round(protein)} g protein. Build the next meal around a protein you enjoy, then add vegetables and a measured carb portion.`;
-  }
-  if (/water|hydr/.test(lowered)) {
-    return 'Sip steadily rather than catching up all at once. Use the water tile on Today to log each 250 ml.';
-  }
-  return `Today you have logged about ${Math.round(calories)} kcal and ${Math.round(protein)} g protein. Pick one small next action: log your next meal, drink 250 ml water, or take a 10-minute walk.`;
-}
 
 export default function CoachScreen() {
   const router = useRouter();
@@ -87,16 +73,18 @@ export default function CoachScreen() {
               })),
             },
             memory: data.coachMemory,
+            profile: data.profile,
+            plan: data.plan,
             recent_messages: recent,
           }),
         }, session);
         reply = response.reply;
       } else {
-        reply = offlineReply(question, totals.calories, totals.protein, data.goals.calories);
+        reply = personalOfflineReply(question, data, today);
       }
       addCoachMessage({ role: 'coach', text: reply });
     } catch (reason) {
-      const fallback = offlineReply(question, totals.calories, totals.protein, data.goals.calories);
+      const fallback = personalOfflineReply(question, data, today);
       addCoachMessage({ role: 'coach', text: fallback });
       setError(`${reason instanceof Error ? reason.message : 'Coach service is unavailable.'} Showing an offline suggestion.`);
     } finally {

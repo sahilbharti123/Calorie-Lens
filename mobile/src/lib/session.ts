@@ -4,6 +4,7 @@ import type { AuthSession } from '@/src/types';
 
 const SESSION_KEY = 'calorie-lens.auth-session.v1';
 const RECOVERY_KEY = 'calorie-lens.recovery-code.v1';
+const ONBOARDING_KEY = 'calorie-lens.onboarding-complete.v2';
 const OPTIONS: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
 };
@@ -49,4 +50,16 @@ export async function readRecoveryCode(userId?: string) {
 
 export async function clearRecoveryCode() {
   await SecureStore.deleteItemAsync(RECOVERY_KEY, OPTIONS);
+}
+
+export async function readOnboardingComplete() {
+  return (await SecureStore.getItemAsync(ONBOARDING_KEY, OPTIONS)) === 'true';
+}
+
+export async function saveOnboardingComplete(complete: boolean) {
+  if (complete) {
+    await SecureStore.setItemAsync(ONBOARDING_KEY, 'true', OPTIONS);
+  } else {
+    await SecureStore.deleteItemAsync(ONBOARDING_KEY, OPTIONS);
+  }
 }

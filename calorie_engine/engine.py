@@ -38,6 +38,10 @@ def _quantity_grams(
 ) -> tuple[Optional[float], Optional[float], Optional[float], str, Optional[dict[str, Any]]]:
     amount = float(item.get("amount") or 0)
     unit = str(item.get("unit") or "unknown").casefold()
+    if unit in {"slice", "slices"}:
+        unit = "piece"
+    elif unit in {"katori", "katoris"}:
+        unit = "bowl"
     if amount <= 0:
         return 0, 0, 0, "", {
             "question": f"How much {item.get('name') or reference.name} did you have?",
@@ -106,6 +110,23 @@ def _quantity_grams(
             grams * (1 - variance),
             grams * (1 + variance),
             f"{amount:g} × {cup_ml:g} ml cup",
+            None,
+        )
+
+    if unit in {"glass", "glasses"}:
+        if reference.density_g_ml is None:
+            return 0, 0, 0, "", {
+                "question": f"About how many grams were in the glass of {item.get('name') or reference.name}?",
+                "suggestions": ["100 g", "150 g", "200 g", "250 g"],
+            }
+        volume = amount * 250
+        grams = volume * reference.density_g_ml
+        variance = reference.density_variance
+        return (
+            grams,
+            grams * (1 - variance),
+            grams * (1 + variance),
+            f"{amount:g} × 250 ml glass",
             None,
         )
 
@@ -182,9 +203,13 @@ def _estimate_food_item(
         return None, {
             "question": (
                 f"I do not have a verified reference for “{raw_name or 'that food'}” yet. "
-                "Can you give its label calories or describe the main ingredients?"
+                "Give its label calories, or log the main parts with amounts."
             ),
-            "suggestions": ["Read label calories", "List ingredients", "Use a different food name"],
+            "suggestions": [
+                "e.g. 350 kcal from the label",
+                "e.g. 150 g rice and 1 bowl dal",
+                "e.g. 2 rotis and 100 g paneer",
+            ],
         }
 
     grams, grams_low, grams_high, quantity_label, missing = _quantity_grams(
@@ -208,11 +233,11 @@ def _estimate_food_item(
     normalized_name = raw_name.casefold()
     preparation = str(item.get("preparation") or "").casefold()
     oil_tsp = item.get("oilTsp")
-    is_home_curry = reference.key in {"kidney_beans", "lentils"} and (
+    is_home_curry = reference.key in {"kidney_beans", "lentils", "chickpeas"} and (
         "curry" in preparation
         or "gravy" in preparation
         or (
-            ("rajma" in normalized_name or "dal" in normalized_name)
+            any(word in normalized_name for word in ("rajma", "dal", "chole", "chana"))
             and not any(style in preparation for style in ("plain", "boiled", "dry"))
         )
     )

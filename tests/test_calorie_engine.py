@@ -73,6 +73,42 @@ class FoodEstimationTests(unittest.TestCase):
         self.assertEqual(item["calorieLow"], 207)
         self.assertEqual(item["calorieHigh"], 229)
 
+    def test_chickpeas_use_verified_usda_record(self):
+        result = estimate_command(meal_payload("chana", 100, "g", preparation="boiled"))
+        item = result["operations"][0]["items"][0]
+        self.assertEqual(item["calories"], 164)
+        self.assertEqual(item["sourceId"], "FDC 173757")
+        self.assertEqual(item["confidence"], "high")
+
+    def test_chole_gets_home_curry_oil_range(self):
+        result = estimate_command(meal_payload("chole", 100, "g"))
+        item = result["operations"][0]["items"][0]
+        self.assertIn("½–2 tsp oil", item["basis"])
+        self.assertGreater(item["calories"], 164)
+
+    def test_paneer_uses_queso_blanco_analog(self):
+        result = estimate_command(meal_payload("paneer", 100, "g"))
+        item = result["operations"][0]["items"][0]
+        self.assertEqual(item["calories"], 310)
+        self.assertEqual(item["sourceId"], "FDC 172224")
+
+    def test_glass_unit_uses_250_ml(self):
+        result = estimate_command(meal_payload("milk", 1, "glass"))
+        item = result["operations"][0]["items"][0]
+        # 250 ml × 1.03 g/ml = 257.5 g of whole milk at 60 kcal/100 g.
+        self.assertEqual(item["calories"], 154)
+        self.assertIn("250 ml glass", item["quantity"])
+
+    def test_slice_maps_to_piece(self):
+        result = estimate_command(meal_payload("bread", 2, "slice"))
+        item = result["operations"][0]["items"][0]
+        self.assertEqual(item["quantity"], "2 × 28 g standard piece")
+
+    def test_katori_maps_to_bowl(self):
+        result = estimate_command(meal_payload("dal", 1, "katori"), {"bowlMl": 150})
+        item = result["operations"][0]["items"][0]
+        self.assertIn("150 ml bowl", item["quantity"])
+
 
 class ExerciseEstimationTests(unittest.TestCase):
     def test_active_energy_formula_excludes_resting_met(self):

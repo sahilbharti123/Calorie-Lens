@@ -16,8 +16,12 @@ export default function SettingsScreen() {
   const [values, setValues] = useState<Record<keyof Goals, string>>({
     calories: String(data.goals.calories),
     protein: String(data.goals.protein),
+    carbs: String(data.goals.carbs),
+    fat: String(data.goals.fat),
     waterMl: String(data.goals.waterMl),
     steps: String(data.goals.steps),
+    weeklyWorkoutMinutes: String(data.goals.weeklyWorkoutMinutes),
+    strengthDays: String(data.goals.strengthDays),
   });
   const [weightKg, setWeightKg] = useState(currentWeight ? String(currentWeight) : '');
   const [bowlMl, setBowlMl] = useState(data.estimation.bowlMl ? String(data.estimation.bowlMl) : '');
@@ -25,12 +29,6 @@ export default function SettingsScreen() {
   function save() {
     const parsedWeight = Number(weightKg);
     const parsedBowl = Number(bowlMl);
-    updateGoals({
-      calories: Math.max(500, Number(values.calories) || data.goals.calories),
-      protein: Math.max(10, Number(values.protein) || data.goals.protein),
-      waterMl: Math.max(250, Number(values.waterMl) || data.goals.waterMl),
-      steps: Math.max(500, Number(values.steps) || data.goals.steps),
-    });
     updateEstimationProfile(
       {
         bowlMl: Number.isFinite(parsedBowl) && parsedBowl > 0
@@ -42,6 +40,22 @@ export default function SettingsScreen() {
         ? Math.min(400, Math.max(20, parsedWeight))
         : undefined,
     );
+    updateGoals({
+      calories: Math.max(500, Number(values.calories) || data.goals.calories),
+      protein: Math.max(10, Number(values.protein) || data.goals.protein),
+      carbs: Math.max(20, Number(values.carbs) || data.goals.carbs),
+      fat: Math.max(20, Number(values.fat) || data.goals.fat),
+      waterMl: Math.max(250, Number(values.waterMl) || data.goals.waterMl),
+      steps: Math.max(500, Number(values.steps) || data.goals.steps),
+      weeklyWorkoutMinutes: Math.max(
+        10,
+        Number(values.weeklyWorkoutMinutes) || data.goals.weeklyWorkoutMinutes,
+      ),
+      strengthDays: Math.min(
+        7,
+        Math.max(0, Number(values.strengthDays) || data.goals.strengthDays),
+      ),
+    });
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     router.dismiss();
   }
@@ -69,8 +83,12 @@ export default function SettingsScreen() {
           <View style={styles.form}>
             <GoalField label="Daily calories" unit="kcal" value={values.calories} onChange={(value) => setValues((current) => ({ ...current, calories: value }))} />
             <GoalField label="Daily protein" unit="g" value={values.protein} onChange={(value) => setValues((current) => ({ ...current, protein: value }))} />
+            <GoalField label="Daily carbohydrates" unit="g" value={values.carbs} onChange={(value) => setValues((current) => ({ ...current, carbs: value }))} />
+            <GoalField label="Daily fat" unit="g" value={values.fat} onChange={(value) => setValues((current) => ({ ...current, fat: value }))} />
             <GoalField label="Daily water" unit="ml" value={values.waterMl} onChange={(value) => setValues((current) => ({ ...current, waterMl: value }))} />
             <GoalField label="Daily steps" unit="steps" value={values.steps} onChange={(value) => setValues((current) => ({ ...current, steps: value }))} />
+            <GoalField label="Weekly training" unit="min" value={values.weeklyWorkoutMinutes} onChange={(value) => setValues((current) => ({ ...current, weeklyWorkoutMinutes: value }))} />
+            <GoalField label="Strength sessions" unit="/ week" value={values.strengthDays} onChange={(value) => setValues((current) => ({ ...current, strengthDays: value }))} />
           </View>
 
           <Pressable onPress={save} style={styles.saveButton}><Text style={styles.saveText}>Save profile and goals</Text></Pressable>

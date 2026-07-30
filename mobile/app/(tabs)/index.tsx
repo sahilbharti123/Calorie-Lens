@@ -6,6 +6,7 @@ import Svg, { Circle } from 'react-native-svg';
 import { Glyph } from '@/src/components/glyph';
 import { Metric, ProgressBar, ScreenHeader, SectionTitle, VoiceBar } from '@/src/components/ui';
 import { friendlyDay, greeting } from '@/src/lib/date';
+import { personalDailyNudge } from '@/src/lib/personalization';
 import { dayTotals, slotLabels } from '@/src/lib/stats';
 import { useApp } from '@/src/store/app-store';
 import { useAuth } from '@/src/store/auth-store';
@@ -21,6 +22,7 @@ export default function TodayScreen() {
   const totals = dayTotals(today);
   const remaining = Math.max(0, data.goals.calories - totals.calories);
   const dayScore = Math.min(100, Math.round((totals.calories / data.goals.calories) * 100));
+  const nudge = personalDailyNudge(data, today);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -88,12 +90,8 @@ export default function TodayScreen() {
         <View style={styles.coach}>
           <View style={styles.coachIcon}><Glyph name="spark" color={palette.forest} size={21} /></View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.coachLabel}>COACH NOTE</Text>
-            <Text style={styles.coachText}>
-              {totals.protein < data.goals.protein * 0.5
-                ? 'Protein is still light. Make the next meal eggs, paneer, chicken, curd, or a whey shake.'
-                : 'Your protein pace looks solid. Keep dinner simple and stay near your energy target.'}
-            </Text>
+            <Text style={styles.coachLabel}>{nudge.title.toUpperCase()}</Text>
+            <Text style={styles.coachText}>{nudge.body}</Text>
           </View>
         </View>
       </ScrollView>

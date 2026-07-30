@@ -1,7 +1,7 @@
 import * as DocumentPicker from 'expo-document-picker';
 import { File, Paths } from 'expo-file-system';
 import * as Haptics from 'expo-haptics';
-import { useRouter } from 'expo-router';
+import { type Href, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -62,6 +62,7 @@ export default function AccountScreen() {
     changePassword,
     deleteAccount,
     exitOfflineMode,
+    restartOnboarding,
     session,
     signOut,
   } = useAuth();
@@ -279,8 +280,18 @@ export default function AccountScreen() {
           <ActionRow
             icon="chart"
             title="Goals & calibration"
-            body="Calories, protein, water, steps, weight and bowl size"
+            body={`${data.plan.summary} · adjust targets and bowl size`}
             onPress={() => router.push('/settings')}
+          />
+          <ActionRow
+            icon="spark"
+            title="Personalize again"
+            body="Recalculate from your goal, body, routine, food and constraints"
+            onPress={() => {
+              void restartOnboarding().then(
+                () => router.replace('/onboarding' as Href),
+              );
+            }}
           />
 
           <SectionLabel text="COACH MEMORY" />

@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import * as Device from 'expo-device';
 
 import { startOfLocalDay } from '@/src/lib/date';
 import type { HealthSnapshot } from '@/src/types';
@@ -9,11 +10,48 @@ export async function syncNativeHealth(): Promise<HealthSnapshot> {
   throw new Error('Health sync is available in native iOS and Android builds.');
 }
 
+export function healthSetupCopy() {
+  if (Platform.OS === 'ios') {
+    if (!Device.isDevice) {
+      return {
+        title: 'Apple Health test mode',
+        detail: 'The simulator can exercise the Health permission flow, but it cannot receive records from your Apple Watch and may have no fitness samples. Use a development build on your iPhone for real Watch data.',
+        physicalDeviceRequired: true,
+      };
+    }
+    return {
+      title: 'Apple Health + Watch',
+      detail: 'Watch workouts and activity appear after the Watch syncs them into Apple Health on this iPhone.',
+      physicalDeviceRequired: false,
+    };
+  }
+  if (Platform.OS === 'android') {
+    return {
+      title: 'Health Connect',
+      detail: Device.isDevice
+        ? 'Reads steps, activity, sleep and weight from apps you approve.'
+        : 'An emulator needs Health Connect and sample records before a sync can return data.',
+      physicalDeviceRequired: false,
+    };
+  }
+  return {
+    title: 'Health connection unavailable',
+    detail: 'Health sync is available only in native iOS and Android builds.',
+    physicalDeviceRequired: true,
+  };
+}
+
 async function syncAppleHealth(): Promise<HealthSnapshot> {
   const healthkit = await import('@kingstinct/react-native-healthkit');
-  if (!healthkit.isHealthDataAvailable()) throw new Error('Apple Health is not available on this device.');
+  if (!healthkit.isHealthDataAvailable()) {
+    throw new Error(
+      Device.isDevice
+        ? 'Apple Health is unavailable on this device. Check Screen Time or device-management restrictions.'
+        : 'HealthKit is unavailable in this simulator runtime. Use an iPhone development build for Apple Health and Watch data.',
+    );
+  }
 
-  await healthkit.requestAuthorization({
+  const authorized = await healthkit.requestAuthorization({
     toRead: [
       'HKQuantityTypeIdentifierStepCount',
       'HKQuantityTypeIdentifierActiveEnergyBurned',
@@ -21,6 +59,9 @@ async function syncAppleHealth(): Promise<HealthSnapshot> {
       'HKCategoryTypeIdentifierSleepAnalysis',
     ],
   });
+  if (!authorized) {
+    throw new Error('Apple Health did not finish authorization. Open Health › Sharing › Apps › Calorie Lens and review access.');
+  }
 
   const date = { startDate: startOfLocalDay(), endDate: new Date() };
   const sleepStart = new Date(startOfLocalDay());
@@ -64,12 +105,15 @@ async function syncHealthConnect(): Promise<HealthSnapshot> {
   const available = await health.initialize();
   if (!available) throw new Error('Health Connect is not available. Install or update it, then try again.');
 
-  await health.requestPermission([
+  const permissions = await health.requestPermission([
     { accessType: 'read', recordType: 'Steps' },
     { accessType: 'read', recordType: 'ActiveCaloriesBurned' },
     { accessType: 'read', recordType: 'Weight' },
     { accessType: 'read', recordType: 'SleepSession' },
   ]);
+  if (!permissions.length) {
+    throw new Error('No Health Connect categories were approved. Review Calorie Lens permissions in Health Connect.');
+  }
 
   const startTime = startOfLocalDay().toISOString();
   const endTime = new Date().toISOString();

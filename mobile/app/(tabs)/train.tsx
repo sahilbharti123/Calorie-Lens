@@ -1,117 +1,342 @@
 import { useRouter } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Glyph } from '@/src/components/glyph';
-import { EmptyState, ScreenHeader, SectionTitle, VoiceBar } from '@/src/components/ui';
-import { workoutTotals } from '@/src/lib/stats';
+import { EmptyState, ScreenHeader, SectionTitle } from '@/src/components/ui';
+import { TEMPLATE_ROUTINE_SEEDS, findExercise } from '@/src/lib/exercises';
+import {
+  REST_CHOICES,
+  completedSessions,
+  exerciseInfo,
+  formatDuration,
+  weeklyMuscleSets,
+  weeklyTrainingSummary,
+} from '@/src/lib/training';
 import { useApp } from '@/src/store/app-store';
+import { useWorkouts } from '@/src/store/workout-store';
 import { palette, radius, space, type } from '@/src/theme';
+import type { Routine } from '@/src/types';
 
 export default function TrainScreen() {
   const router = useRouter();
-  const { today, removeWorkout } = useApp();
-  const totals = workoutTotals(today);
+  const { data } = useApp();
+  const workouts = useWorkouts();
+  const training = data.training;
+  const [expandedRoutineId, setExpandedRoutineId] = useState<string | null>(null);
+  const [showTemplates, setShowTemplates] = useState(false);
+
+  const history = useMemo(() => completedSessions(training), [training]);
+  const week = useMemo(() => weeklyTrainingSummary(training), [training]);
+  const muscles = useMemo(() => weeklyMuscleSets(training), [training]);
+  const routines = useMemo(
+    () => [...training.routines].sort((a, b) => (b.lastPerformedAt ?? b.updatedAt).localeCompare(a.lastPerformedAt ?? a.updatedAt)),
+    [training.routines],
+  );
+  const active = training.activeSession;
+  const importedNames = new Set(training.routines.map((routine) => routine.name));
+
+  function startEmpty() {
+    if (active) {
+      router.push('/workout-session');
+      return;
+    }
+    workouts.startEmptyWorkout();
+    router.push('/workout-session');
+  }
+
+  function startRoutine(routine: Routine) {
+    if (active) {
+      Alert.alert(
+        'Workout in progress',
+        'Finish or discard the current workout before starting another one.',
+        [
+          { text: 'Open current workout', onPress: () => router.push('/workout-session') },
+          { text: 'Cancel', style: 'cancel' },
+        ],
+      );
+      return;
+    }
+    workouts.startRoutine(routine.id);
+    router.push('/workout-session');
+  }
+
+  function editRoutine(routineId?: string) {
+    workouts.beginRoutineDraft(routineId);
+    router.push('/routine-editor');
+  }
+
+  function confirmDelete(routine: Routine) {
+    Alert.alert('Delete routine', `Delete “${routine.name}”? Workout history is kept.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => workouts.deleteRoutine(routine.id) },
+    ]);
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <ScreenHeader eyebrow="Movement" title="Train" />
+        <ScreenHeader eyebrow="Strength & movement" title="Train" />
 
-        <View style={styles.hero}>
-          <View style={styles.heroIcon}><Glyph name="dumbbell" color={palette.forest} size={26} /></View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.heroLabel}>TODAY’S TRAINING</Text>
-            <Text style={styles.heroValue}>{totals.minutes || 0} <Text style={styles.heroUnit}>minutes</Text></Text>
-            <Text style={styles.heroMeta}>~{totals.calories} active kcal midpoint</Text>
-          </View>
-          <Pressable
-            onPress={() => router.push({ pathname: '/quick-log', params: { prefill: '30 min strength workout' } })}
-            style={styles.heroAdd}>
-            <Glyph name="plus" color={palette.lime} size={20} />
+        {active ? (
+          <Pressable onPress={() => router.push('/workout-session')} style={({ pressed }) => [styles.resume, pressed && styles.pressed]}>
+            <View style={styles.resumePulse}><Glyph name="dumbbell" color={palette.forest} size={20} /></View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.resumeTitle}>Workout in progress</Text>
+              <Text style={styles.resumeMeta}>{active.name} · started {new Date(active.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
+            </View>
+            <Text style={styles.resumeAction}>Resume</Text>
           </Pressable>
+        ) : (
+          <Pressable onPress={startEmpty} style={({ pressed }) => [styles.startEmpty, pressed && styles.pressed]}>
+            <View style={styles.startIcon}><Glyph name="plus" color={palette.forest} size={22} /></View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.startTitle}>Start empty workout</Text>
+              <Text style={styles.startMeta}>Log sets as you go · rest timer · PR detection</Text>
+            </View>
+            <Glyph name="chevron" color={palette.lime} size={18} />
+          </Pressable>
+        )}
+
+        <View style={styles.weekRow}>
+          <WeekStat label="Workouts" value={String(week.workouts)} />
+          <WeekStat label="Time" value={week.minutes ? formatDuration(week.minutes * 60) : '0m'} />
+          <WeekStat label="Volume" value={`${week.volumeKg.toLocaleString()} kg`} />
         </View>
 
-        <VoiceBar label="Say “45 min hard strength workout”" />
-
-        <View style={styles.recovery}>
-          <Text style={styles.recoveryEyebrow}>RECOVERY CUE</Text>
-          <Text style={styles.recoveryTitle}>
-            {today.sleepHours >= 7 ? 'You’re ready to push.' : 'Keep the first set easy.'}
-          </Text>
-          <Text style={styles.recoveryBody}>
-            {today.sleepHours
-              ? `${today.sleepHours} hours of sleep logged. Use the warm-up to decide today’s intensity.`
-              : 'Sync sleep from your health app or log it by voice for a more useful training cue.'}
-          </Text>
-        </View>
-
-        <SectionTitle title="Workout log" aside={`${today.workouts.length} sessions`} />
-        {today.workouts.length ? (
-          <View style={styles.workoutList}>
-            {today.workouts.map((workout, index) => (
-              <View key={workout.id} style={[styles.workout, index < today.workouts.length - 1 && styles.workoutBorder]}>
-                <View style={styles.workoutIndex}><Text style={styles.workoutIndexText}>{String(index + 1).padStart(2, '0')}</Text></View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.workoutName}>{workout.name}</Text>
-                  <Text style={styles.workoutMeta}>
-                    {workout.durationMin} min · {workout.intensity} · {workout.calorieLow ?? workout.calories}–{workout.calorieHigh ?? workout.calories} active kcal
-                  </Text>
+        <SectionTitle title="Routines" aside={`${routines.length} saved`} />
+        {routines.length ? (
+          <View style={styles.routineList}>
+            {routines.map((routine) => {
+              const expanded = expandedRoutineId === routine.id;
+              const preview = routine.exercises
+                .map((entry) => exerciseInfo(training, entry.exerciseId).name)
+                .slice(0, 4)
+                .join(' · ');
+              return (
+                <View key={routine.id} style={styles.routineCard}>
+                  <Pressable
+                    onPress={() => setExpandedRoutineId(expanded ? null : routine.id)}
+                    style={styles.routineTop}>
+                    <View style={{ flex: 1 }}>
+                      {routine.folder ? <Text style={styles.routineFolder}>{routine.folder.toUpperCase()}</Text> : null}
+                      <Text style={styles.routineName}>{routine.name}</Text>
+                      <Text numberOfLines={2} style={styles.routinePreview}>
+                        {preview || 'No exercises yet'}{routine.exercises.length > 4 ? ` +${routine.exercises.length - 4}` : ''}
+                      </Text>
+                    </View>
+                    <Pressable onPress={() => startRoutine(routine)} style={({ pressed }) => [styles.routineStart, pressed && styles.pressed]}>
+                      <Text style={styles.routineStartText}>Start</Text>
+                    </Pressable>
+                  </Pressable>
+                  {expanded ? (
+                    <View style={styles.routineActions}>
+                      <RoutineAction label="Edit" onPress={() => editRoutine(routine.id)} />
+                      <RoutineAction label="Duplicate" onPress={() => workouts.duplicateRoutine(routine.id)} />
+                      <RoutineAction label="Delete" destructive onPress={() => confirmDelete(routine)} />
+                    </View>
+                  ) : null}
                 </View>
-                <Pressable hitSlop={10} onPress={() => removeWorkout(workout.id)}>
-                  <Glyph name="trash" color={palette.muted} size={18} />
-                </Pressable>
-              </View>
-            ))}
+              );
+            })}
           </View>
         ) : (
           <EmptyState
             icon="dumbbell"
-            title="No workout yet"
-            body="Log gym sessions, runs, walks, yoga, or any movement in one short sentence."
+            title="No routines yet"
+            body="Build your own program or import a template below. Routines remember your targets and last weights."
           />
         )}
 
-        <Text style={styles.templatesLabel}>QUICK STARTS</Text>
-        <View style={styles.templates}>
-          {['45 min hard strength workout', '30 min brisk walk', '20 min light yoga'].map((template) => (
-            <Pressable
-              key={template}
-              onPress={() => router.push({ pathname: '/quick-log', params: { prefill: template } })}
-              style={styles.template}>
-              <Text style={styles.templateText}>{template}</Text>
-              <Glyph name="chevron" color={palette.muted} size={15} />
-            </Pressable>
-          ))}
+        <Pressable onPress={() => editRoutine()} style={({ pressed }) => [styles.newRoutine, pressed && styles.pressed]}>
+          <Glyph name="plus" color={palette.forest} size={17} />
+          <Text style={styles.newRoutineText}>New routine</Text>
+        </Pressable>
+
+        <Pressable onPress={() => setShowTemplates((value) => !value)} style={styles.templateToggle}>
+          <Text style={styles.templateToggleText}>
+            {showTemplates ? 'Hide template routines' : 'Explore template routines'}
+          </Text>
+        </Pressable>
+        {showTemplates ? (
+          <View style={styles.templateList}>
+            {TEMPLATE_ROUTINE_SEEDS.map((seed) => (
+              <View key={seed.name} style={styles.templateCard}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.templateFolder}>{seed.folder.toUpperCase()}</Text>
+                  <Text style={styles.templateName}>{seed.name}</Text>
+                  <Text numberOfLines={1} style={styles.templateMeta}>
+                    {seed.items.map((item) => findExercise(item.exerciseId)?.name ?? item.exerciseId).slice(0, 3).join(' · ')}
+                    {seed.items.length > 3 ? ` +${seed.items.length - 3}` : ''}
+                  </Text>
+                </View>
+                <Pressable
+                  disabled={importedNames.has(seed.name)}
+                  onPress={() => workouts.importTemplateRoutine(seed.name)}
+                  style={({ pressed }) => [styles.templateAdd, importedNames.has(seed.name) && styles.templateAdded, pressed && styles.pressed]}>
+                  <Text style={styles.templateAddText}>{importedNames.has(seed.name) ? 'Added' : 'Add'}</Text>
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        ) : null}
+
+        {muscles.length ? (
+          <>
+            <SectionTitle title="Sets this week" aside="per muscle" />
+            <View style={styles.muscleCard}>
+              {muscles.map((entry) => (
+                <View key={entry.muscle} style={styles.muscleRow}>
+                  <Text style={styles.muscleName}>{entry.muscle}</Text>
+                  <View style={styles.muscleTrack}>
+                    <View style={[styles.muscleFill, { width: `${Math.min(1, entry.sets / 20) * 100}%` }]} />
+                  </View>
+                  <Text style={styles.muscleSets}>{entry.sets}</Text>
+                </View>
+              ))}
+              <Text style={styles.muscleHint}>10–20 hard sets per muscle per week is a common hypertrophy guideline.</Text>
+            </View>
+          </>
+        ) : null}
+
+        <SectionTitle title="History" aside={history.length ? `${history.length} workouts` : undefined} />
+        {history.length ? (
+          <View style={styles.historyList}>
+            {history.slice(0, 3).map((session) => (
+              <Pressable
+                key={session.id}
+                onPress={() => router.push({ pathname: '/workout/[id]', params: { id: session.id } })}
+                style={({ pressed }) => [styles.historyCard, pressed && styles.pressed]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.historyName}>{session.name}</Text>
+                  <Text style={styles.historyMeta}>
+                    {new Date(session.startedAt).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}
+                    {' · '}{formatDuration((session.durationMin ?? 0) * 60)}
+                    {' · '}{(session.totalVolumeKg ?? 0).toLocaleString()} kg
+                  </Text>
+                </View>
+                {session.records ? (
+                  <View style={styles.historyPr}><Text style={styles.historyPrText}>{session.records} PR</Text></View>
+                ) : null}
+                <Glyph name="chevron" color={palette.muted} size={16} />
+              </Pressable>
+            ))}
+            {history.length > 3 ? (
+              <Pressable onPress={() => router.push('/workout-history')} style={styles.seeAll}>
+                <Text style={styles.seeAllText}>See all workouts</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : (
+          <EmptyState
+            icon="chart"
+            title="No workouts logged"
+            body="Finish your first session and your history, records and charts appear here."
+          />
+        )}
+
+        <Text style={styles.settingsLabel}>WORKOUT SETTINGS</Text>
+        <View style={styles.settingsRow}>
+          <Pressable
+            onPress={() => {
+              const index = REST_CHOICES.indexOf(training.defaultRestSec);
+              workouts.setDefaultRest(REST_CHOICES[(index + 1) % REST_CHOICES.length]);
+            }}
+            style={styles.settingChip}>
+            <Text style={styles.settingChipText}>
+              Default rest: {training.defaultRestSec ? `${training.defaultRestSec}s` : 'off'}
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => workouts.setRpeEnabled(!training.rpeEnabled)}
+            style={[styles.settingChip, training.rpeEnabled && styles.settingChipOn]}>
+            <Text style={[styles.settingChipText, training.rpeEnabled && styles.settingChipTextOn]}>
+              RPE: {training.rpeEnabled ? 'on' : 'off'}
+            </Text>
+          </Pressable>
         </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
+function WeekStat({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.weekStat}>
+      <Text style={styles.weekValue}>{value}</Text>
+      <Text style={styles.weekLabel}>{label.toUpperCase()}</Text>
+    </View>
+  );
+}
+
+function RoutineAction({ label, destructive, onPress }: { label: string; destructive?: boolean; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.routineAction, pressed && styles.pressed]}>
+      <Text style={[styles.routineActionText, destructive && { color: '#B64B45' }]}>{label}</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.canvas },
   content: { paddingHorizontal: space.md, paddingBottom: 28 },
-  hero: { minHeight: 132, backgroundColor: palette.forest, borderRadius: radius.lg, padding: 18, flexDirection: 'row', alignItems: 'center', gap: 13, marginBottom: 12 },
-  heroIcon: { width: 50, height: 50, borderRadius: 16, backgroundColor: palette.lime, alignItems: 'center', justifyContent: 'center' },
-  heroLabel: { color: '#AEB9B0', fontFamily: type.demi, fontSize: 9, letterSpacing: 1.2 },
-  heroValue: { color: palette.white, fontFamily: type.demi, fontSize: 29, letterSpacing: -1, marginTop: 3 },
-  heroUnit: { color: '#AEB9B0', fontFamily: type.medium, fontSize: 12 },
-  heroMeta: { color: '#AEB9B0', fontFamily: type.regular, fontSize: 10, marginTop: 2 },
-  heroAdd: { width: 38, height: 38, borderRadius: 19, backgroundColor: '#2B382F', alignItems: 'center', justifyContent: 'center' },
-  recovery: { backgroundColor: palette.softCoral, borderRadius: radius.md, padding: 16, marginVertical: 22 },
-  recoveryEyebrow: { color: palette.coral, fontFamily: type.demi, fontSize: 9, letterSpacing: 1.2 },
-  recoveryTitle: { color: palette.ink, fontFamily: type.demi, fontSize: 17, marginTop: 4 },
-  recoveryBody: { color: palette.ink, fontFamily: type.regular, fontSize: 11, lineHeight: 17, marginTop: 5 },
-  workoutList: { backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, paddingHorizontal: 14 },
-  workout: { minHeight: 70, flexDirection: 'row', alignItems: 'center', gap: 11 },
-  workoutBorder: { borderBottomWidth: 1, borderBottomColor: palette.line },
-  workoutIndex: { width: 34, height: 34, borderRadius: 11, backgroundColor: palette.softLime, alignItems: 'center', justifyContent: 'center' },
-  workoutIndexText: { color: palette.limeDark, fontFamily: type.demi, fontSize: 11 },
-  workoutName: { color: palette.ink, fontFamily: type.demi, fontSize: 14 },
-  workoutMeta: { color: palette.muted, fontFamily: type.regular, fontSize: 10, marginTop: 3, textTransform: 'capitalize' },
-  templatesLabel: { color: palette.muted, fontFamily: type.demi, fontSize: 10, letterSpacing: 1.3, marginTop: 24, marginBottom: 8 },
-  templates: { gap: 8 },
-  template: { minHeight: 50, paddingHorizontal: 14, borderRadius: radius.sm, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  templateText: { color: palette.ink, fontFamily: type.medium, fontSize: 12 },
+  pressed: { opacity: 0.85, transform: [{ scale: 0.995 }] },
+  resume: { minHeight: 76, backgroundColor: palette.lime, borderRadius: radius.md, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, marginBottom: 12 },
+  resumePulse: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#D3F694', alignItems: 'center', justifyContent: 'center' },
+  resumeTitle: { color: palette.forest, fontFamily: type.demi, fontSize: 14 },
+  resumeMeta: { color: '#3E5030', fontFamily: type.regular, fontSize: 10.5, marginTop: 2 },
+  resumeAction: { color: palette.forest, fontFamily: type.demi, fontSize: 13 },
+  startEmpty: { minHeight: 76, backgroundColor: palette.forest, borderRadius: radius.md, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, marginBottom: 12 },
+  startIcon: { width: 42, height: 42, borderRadius: 21, backgroundColor: palette.lime, alignItems: 'center', justifyContent: 'center' },
+  startTitle: { color: palette.white, fontFamily: type.demi, fontSize: 14.5 },
+  startMeta: { color: '#AEB9B0', fontFamily: type.regular, fontSize: 10.5, marginTop: 2 },
+  weekRow: { flexDirection: 'row', gap: 8, marginBottom: 22 },
+  weekStat: { flex: 1, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, paddingVertical: 13, alignItems: 'center' },
+  weekValue: { color: palette.ink, fontFamily: type.demi, fontSize: 16 },
+  weekLabel: { color: palette.muted, fontFamily: type.demi, fontSize: 8.5, letterSpacing: 1, marginTop: 3 },
+  routineList: { gap: 9 },
+  routineCard: { backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, padding: 14 },
+  routineTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  routineFolder: { color: palette.limeDark, fontFamily: type.demi, fontSize: 8.5, letterSpacing: 1, marginBottom: 3 },
+  routineName: { color: palette.ink, fontFamily: type.demi, fontSize: 15 },
+  routinePreview: { color: palette.muted, fontFamily: type.regular, fontSize: 10.5, lineHeight: 15, marginTop: 4 },
+  routineStart: { height: 38, paddingHorizontal: 16, borderRadius: radius.pill, backgroundColor: palette.forest, alignItems: 'center', justifyContent: 'center' },
+  routineStartText: { color: palette.lime, fontFamily: type.demi, fontSize: 12 },
+  routineActions: { flexDirection: 'row', gap: 8, marginTop: 12, borderTopWidth: 1, borderTopColor: palette.line, paddingTop: 12 },
+  routineAction: { flex: 1, height: 36, borderRadius: radius.sm, borderWidth: 1, borderColor: palette.line, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.canvas },
+  routineActionText: { color: palette.ink, fontFamily: type.medium, fontSize: 11.5 },
+  newRoutine: { height: 48, borderRadius: radius.md, borderWidth: 1.5, borderColor: palette.forest, borderStyle: 'dashed', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 10 },
+  newRoutineText: { color: palette.forest, fontFamily: type.demi, fontSize: 13 },
+  templateToggle: { alignItems: 'center', paddingVertical: 14 },
+  templateToggleText: { color: palette.coral, fontFamily: type.demi, fontSize: 11.5 },
+  templateList: { gap: 8, marginBottom: 6 },
+  templateCard: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, padding: 13 },
+  templateFolder: { color: palette.limeDark, fontFamily: type.demi, fontSize: 8.5, letterSpacing: 1 },
+  templateName: { color: palette.ink, fontFamily: type.demi, fontSize: 13.5, marginTop: 2 },
+  templateMeta: { color: palette.muted, fontFamily: type.regular, fontSize: 10, marginTop: 3 },
+  templateAdd: { height: 34, paddingHorizontal: 14, borderRadius: radius.pill, backgroundColor: palette.softLime, alignItems: 'center', justifyContent: 'center' },
+  templateAdded: { opacity: 0.5 },
+  templateAddText: { color: palette.limeDark, fontFamily: type.demi, fontSize: 11.5 },
+  muscleCard: { backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, padding: 14, marginBottom: 22 },
+  muscleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 9 },
+  muscleName: { width: 86, color: palette.ink, fontFamily: type.medium, fontSize: 11, textTransform: 'capitalize' },
+  muscleTrack: { flex: 1, height: 6, borderRadius: radius.pill, backgroundColor: '#E8ECE3', overflow: 'hidden' },
+  muscleFill: { height: '100%', borderRadius: radius.pill, backgroundColor: palette.limeDark },
+  muscleSets: { width: 24, textAlign: 'right', color: palette.ink, fontFamily: type.demi, fontSize: 11 },
+  muscleHint: { color: palette.muted, fontFamily: type.regular, fontSize: 9.5, lineHeight: 14, marginTop: 6 },
+  historyList: { gap: 8, marginBottom: 8 },
+  historyCard: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, paddingHorizontal: 14 },
+  historyName: { color: palette.ink, fontFamily: type.demi, fontSize: 13.5 },
+  historyMeta: { color: palette.muted, fontFamily: type.regular, fontSize: 10.5, marginTop: 3 },
+  historyPr: { backgroundColor: palette.softLime, borderRadius: radius.pill, paddingHorizontal: 9, paddingVertical: 4 },
+  historyPrText: { color: palette.limeDark, fontFamily: type.demi, fontSize: 10 },
+  seeAll: { alignItems: 'center', paddingVertical: 10 },
+  seeAllText: { color: palette.forest, fontFamily: type.demi, fontSize: 12 },
+  settingsLabel: { color: palette.muted, fontFamily: type.demi, fontSize: 9, letterSpacing: 1.3, marginTop: 22, marginBottom: 8 },
+  settingsRow: { flexDirection: 'row', gap: 8 },
+  settingChip: { height: 38, paddingHorizontal: 14, borderRadius: radius.pill, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.paper, alignItems: 'center', justifyContent: 'center' },
+  settingChipOn: { backgroundColor: palette.forest, borderColor: palette.forest },
+  settingChipText: { color: palette.ink, fontFamily: type.medium, fontSize: 11.5 },
+  settingChipTextOn: { color: palette.lime, fontFamily: type.demi },
 });

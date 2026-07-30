@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -14,10 +14,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Glyph } from '@/src/components/glyph';
+import { apiUrl, readServiceHealth } from '@/src/lib/api-client';
 import { useAuth } from '@/src/store/auth-store';
 import { palette, radius, space, type } from '@/src/theme';
 
 type Mode = 'login' | 'signup' | 'recover';
+type ServiceProbe = 'checking' | 'online' | 'offline';
 
 export default function AuthScreen() {
   const {
@@ -27,13 +29,32 @@ export default function AuthScreen() {
     signIn,
     signUp,
   } = useAuth();
-  const [mode, setMode] = useState<Mode>('login');
+  const [mode, setMode] = useState<Mode>('signup');
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [recoveryCode, setRecoveryCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [probe, setProbe] = useState<ServiceProbe>('checking');
+
+  const checkService = useCallback(async () => {
+    if (!serviceConfigured) {
+      setProbe('offline');
+      return;
+    }
+    setProbe('checking');
+    try {
+      await readServiceHealth();
+      setProbe('online');
+    } catch {
+      setProbe('offline');
+    }
+  }, [serviceConfigured]);
+
+  useEffect(() => {
+    void checkService();
+  }, [checkService]);
 
   async function submit() {
     setError('');
@@ -152,10 +173,27 @@ export default function AuthScreen() {
 
           {error ? <Text style={styles.error}>{error}</Text> : null}
           {!serviceConfigured ? (
-            <Text style={styles.serviceNote}>
-              Account service is not configured in this build. You can keep using the encrypted offline vault.
+            <Text style={[styles.serviceNote, styles.serviceNoteAlone]}>
+              Account service is not configured in this release. You can keep using the encrypted offline vault.
             </Text>
-          ) : null}
+          ) : (
+            <Pressable onPress={() => void checkService()} style={styles.serviceRow}>
+              <View style={[
+                styles.serviceDot,
+                probe === 'online' && styles.serviceDotOnline,
+                probe === 'offline' && styles.serviceDotOffline,
+              ]} />
+              <Text style={styles.serviceNote}>
+                {probe === 'checking'
+                  ? `Checking the account service at ${apiUrl()}…`
+                  : probe === 'online'
+                    ? 'Account service is reachable.'
+                    : `Can’t reach the service at ${apiUrl()}. ${__DEV__
+                      ? 'Start it with `uvicorn api:app --host 0.0.0.0 --port 8000` on your computer, keep both devices on the same Wi-Fi, then tap to retry.'
+                      : 'Check your connection, then tap to retry.'}`}
+              </Text>
+            </Pressable>
+          )}
 
           <Pressable
             accessibilityRole="button"
@@ -236,7 +274,12 @@ const styles = StyleSheet.create({
   label: { color: palette.muted, fontFamily: type.demi, fontSize: 9, letterSpacing: 1.1, textTransform: 'uppercase', marginBottom: 5 },
   input: { color: palette.ink, fontFamily: type.medium, fontSize: 15, paddingVertical: 4 },
   error: { color: palette.coral, fontFamily: type.medium, fontSize: 11, lineHeight: 16, marginTop: 10, paddingHorizontal: 3 },
-  serviceNote: { color: palette.muted, fontFamily: type.regular, fontSize: 11, lineHeight: 16, marginTop: 10, paddingHorizontal: 3 },
+  serviceRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 7, marginTop: 10, paddingHorizontal: 3 },
+  serviceDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#C9CFC6', marginTop: 4 },
+  serviceDotOnline: { backgroundColor: palette.limeDark },
+  serviceDotOffline: { backgroundColor: palette.coral },
+  serviceNote: { flex: 1, color: palette.muted, fontFamily: type.regular, fontSize: 11, lineHeight: 16 },
+  serviceNoteAlone: { flex: 0, marginTop: 10, paddingHorizontal: 3 },
   primary: { height: 56, borderRadius: radius.md, backgroundColor: palette.forest, alignItems: 'center', justifyContent: 'center', marginTop: 16 },
   primaryText: { color: palette.lime, fontFamily: type.demi, fontSize: 14 },
   disabled: { opacity: 0.48 },

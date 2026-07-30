@@ -7,7 +7,7 @@ import Svg, { Circle, Line, Polyline } from 'react-native-svg';
 import { Glyph } from '@/src/components/glyph';
 import { ScreenHeader, SectionTitle } from '@/src/components/ui';
 import { dateKey } from '@/src/lib/date';
-import { syncNativeHealth } from '@/src/lib/health';
+import { healthSetupCopy, syncNativeHealth } from '@/src/lib/health';
 import { dayTotals } from '@/src/lib/stats';
 import { useApp } from '@/src/store/app-store';
 import { palette, radius, space, type } from '@/src/theme';
@@ -18,6 +18,7 @@ export default function ProgressScreen() {
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState('');
   const provider = Platform.OS === 'ios' ? 'Apple Health + Watch' : 'Health Connect';
+  const setup = healthSetupCopy();
 
   const week = useMemo(() => Array.from({ length: 7 }, (_, index) => {
     const date = new Date();
@@ -36,7 +37,17 @@ export default function ProgressScreen() {
     try {
       const snapshot = await syncNativeHealth();
       applyHealthSnapshot(snapshot);
-      setMessage(`Updated from ${snapshot.source}`);
+      const hasSamples = Boolean(
+        snapshot.steps
+        || snapshot.activeCalories
+        || snapshot.sleepHours
+        || snapshot.weightKg,
+      );
+      setMessage(
+        hasSamples
+          ? `Updated from ${snapshot.source}.`
+          : `Connected to ${snapshot.source}, but no approved samples were found. Check the Health app’s sharing permissions; use a physical phone for real wearable records.`,
+      );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Health sync failed.');
     } finally {
@@ -89,7 +100,7 @@ export default function ProgressScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.providerName}>{provider}</Text>
             <Text style={styles.providerMeta}>
-              Steps, activity, sleep and weight{Platform.OS === 'ios' ? ' · Watch data included' : ''}
+              {data.lastHealthSync ? 'Connected · ' : ''}Steps, activity, sleep and weight
             </Text>
           </View>
           <Pressable disabled={syncing} onPress={sync} style={styles.syncButton}>
@@ -97,6 +108,10 @@ export default function ProgressScreen() {
           </Pressable>
         </View>
         {message ? <Text style={styles.syncMessage}>{message}</Text> : null}
+        <View style={styles.setupNote}>
+          <Text style={styles.setupTitle}>{setup.title}</Text>
+          <Text style={styles.setupBody}>{setup.detail}</Text>
+        </View>
         <Text style={styles.privacy}>
           Health access is requested by the operating system. Calorie Lens reads only the categories you approve.
         </Text>
@@ -185,7 +200,10 @@ const styles = StyleSheet.create({
   providerMeta: { color: palette.muted, fontFamily: type.regular, fontSize: 9.5, lineHeight: 14, marginTop: 2 },
   syncButton: { backgroundColor: palette.forest, borderRadius: radius.pill, paddingHorizontal: 14, paddingVertical: 9 },
   syncText: { color: palette.lime, fontFamily: type.demi, fontSize: 10 },
-  syncMessage: { color: palette.coral, fontFamily: type.medium, fontSize: 10, marginTop: 8 },
+  syncMessage: { color: palette.ink, backgroundColor: palette.softLime, borderRadius: radius.sm, padding: 11, fontFamily: type.medium, fontSize: 10, lineHeight: 15, marginTop: 8 },
+  setupNote: { marginTop: 10, paddingHorizontal: 3 },
+  setupTitle: { color: palette.ink, fontFamily: type.demi, fontSize: 10.5 },
+  setupBody: { color: palette.muted, fontFamily: type.regular, fontSize: 9.5, lineHeight: 15, marginTop: 3 },
   privacy: { color: palette.muted, fontFamily: type.regular, fontSize: 9.5, lineHeight: 15, marginTop: 10 },
   weekBars: { height: 120, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-around', marginTop: 25, paddingHorizontal: 18 },
   weekBarItem: { alignItems: 'center', gap: 6 },

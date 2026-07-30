@@ -5,6 +5,7 @@ import {
   useAudioRecorder,
   useAudioRecorderState,
 } from 'expo-audio';
+import * as Device from 'expo-device';
 import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
@@ -22,9 +23,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Glyph } from '@/src/components/glyph';
+import { readServiceHealth } from '@/src/lib/api-client';
 import { parseFitnessCommand, parseVoiceCommand } from '@/src/lib/nutrition';
 import { slotLabels } from '@/src/lib/stats';
 import { useApp } from '@/src/store/app-store';
+import { useAuth } from '@/src/store/auth-store';
 import { palette, radius, space, type } from '@/src/theme';
 import type { EstimationContext, LogOperation, MealSlot, ParsedCommand } from '@/src/types';
 
@@ -32,11 +35,21 @@ export default function QuickLogScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ slot?: MealSlot; prefill?: string }>();
   const { applyOperations, data, updateEstimationProfile } = useApp();
+  const { session } = useAuth();
   const [text, setText] = useState(params.prefill ?? '');
   const [showKeyboard, setShowKeyboard] = useState(Boolean(params.prefill));
   const [parsed, setParsed] = useState<ParsedCommand | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [voiceStatus, setVoiceStatus] = useState<{
+    ready: boolean;
+    title: string;
+    detail: string;
+  }>({
+    ready: false,
+    title: 'Checking voice setup…',
+    detail: 'Typed logging is always available.',
+  });
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder, 120);
   const context = useMemo<EstimationContext>(() => ({
@@ -46,8 +59,60 @@ export default function QuickLogScreen() {
   }), [data.estimation.bowlMl, data.estimation.cupMl, data.weights]);
 
   useEffect(() => {
-    void setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true });
+    void setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true })
+      .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    async function checkVoiceReadiness() {
+      if (Platform.OS === 'ios' && !Device.isDevice) {
+        setVoiceStatus({
+          ready: false,
+          title: 'Voice needs a physical iPhone',
+          detail: 'The iOS Simulator cannot record voice commands. Use the keyboard here, then test voice in an iPhone development build.',
+        });
+        return;
+      }
+      if (!session) {
+        setVoiceStatus({
+          ready: false,
+          title: 'Sign in to use voice',
+          detail: 'Voice transcription is protected by your account. Typed logging remains private and works offline.',
+        });
+        return;
+      }
+      try {
+        const service = await readServiceHealth();
+        if (!active) return;
+        setVoiceStatus(service.ai_enabled
+          ? {
+              ready: true,
+              title: 'Voice is ready',
+              detail: 'Tap once, say one short update, then tap again.',
+            }
+          : {
+              ready: false,
+              title: 'Voice service needs an AI key',
+              detail: 'The local API is running, but GOOGLE_API_KEY is not configured. Typed logging still works.',
+            });
+      } catch (reason) {
+        if (!active) return;
+        const deviceHint = Device.isDevice
+          ? 'Set EXPO_PUBLIC_API_URL to your computer’s LAN address and keep both devices on the same Wi-Fi.'
+          : 'Start the local API on port 8000.';
+        setVoiceStatus({
+          ready: false,
+          title: 'Voice service is offline',
+          detail: `${reason instanceof Error ? reason.message : 'The API is unreachable.'} ${deviceHint}`,
+        });
+      }
+    }
+    void checkVoiceReadiness();
+    return () => {
+      active = false;
+    };
+  }, [session]);
 
   function followUp() {
     if (!parsed?.clarification) return undefined;
@@ -64,6 +129,16 @@ export default function QuickLogScreen() {
     if (question.includes('bowl') && numeric >= 50 && numeric <= 1000) return { bowlMl: numeric };
     if (question.includes('body weight') && numeric >= 20 && numeric <= 400) return { weightKg: numeric };
     return {};
+  }
+
+  function onSuggestion(suggestion: string) {
+    // "e.g." chips are editable starting points, not literal answers.
+    if (suggestion.toLowerCase().startsWith('e.g.')) {
+      setText(suggestion.slice(4).trim());
+      setShowKeyboard(true);
+      return;
+    }
+    void understandTyped(suggestion);
   }
 
   function saveProfileUpdates(updates?: ParsedCommand['profileUpdates']) {
@@ -109,6 +184,11 @@ export default function QuickLogScreen() {
       } finally {
         setBusy(false);
       }
+      return;
+    }
+    if (!voiceStatus.ready) {
+      setError(voiceStatus.detail);
+      setShowKeyboard(true);
       return;
     }
     const permission = await requestRecordingPermissionsAsync();
@@ -157,7 +237,7 @@ export default function QuickLogScreen() {
                   ))}
                 </View>
                 <Pressable
-                  disabled={busy}
+                  disabled={busy || (!voiceStatus.ready && !recorderState.isRecording)}
                   onPress={toggleRecording}
                   accessibilityLabel={recorderState.isRecording ? 'Stop recording' : 'Start recording'}
                   style={({ pressed }) => [
@@ -168,12 +248,18 @@ export default function QuickLogScreen() {
                   {busy ? <ActivityIndicator color={palette.forest} /> : <Glyph name="mic" color={palette.forest} size={31} />}
                 </Pressable>
                 <Text style={styles.voiceTitle}>
-                  {busy ? 'Checking quantities…' : recorderState.isRecording ? 'Listening — tap when done' : 'Tap, then speak naturally'}
+                  {busy
+                    ? 'Checking quantities…'
+                    : recorderState.isRecording
+                      ? 'Listening — tap when done'
+                      : voiceStatus.title}
                 </Text>
                 <Text style={styles.voiceMeta}>
                   {recorderState.isRecording
                     ? `${Math.floor(recorderState.durationMillis / 1000)} seconds`
-                    : 'English, Hindi and Hinglish'}
+                    : voiceStatus.ready
+                      ? 'English, Hindi and Hinglish'
+                      : voiceStatus.detail}
                 </Text>
               </View>
 
@@ -228,7 +314,7 @@ export default function QuickLogScreen() {
                     <Pressable
                       key={suggestion}
                       disabled={busy}
-                      onPress={() => void understandTyped(suggestion)}
+                      onPress={() => onSuggestion(suggestion)}
                       style={({ pressed }) => [styles.suggestion, pressed && styles.pressed]}>
                       <Text style={styles.suggestionText}>{suggestion}</Text>
                     </Pressable>
@@ -421,7 +507,7 @@ const styles = StyleSheet.create({
   micButton: { width: 76, height: 76, borderRadius: 38, backgroundColor: palette.lime, alignItems: 'center', justifyContent: 'center' },
   micRecording: { borderWidth: 8, borderColor: '#40503F' },
   voiceTitle: { color: palette.white, fontFamily: type.demi, fontSize: 15, marginTop: 15 },
-  voiceMeta: { color: '#AEB9B0', fontFamily: type.regular, fontSize: 10, marginTop: 5 },
+  voiceMeta: { color: '#AEB9B0', fontFamily: type.regular, fontSize: 10, lineHeight: 15, marginTop: 5, maxWidth: 290, textAlign: 'center' },
   pressed: { opacity: 0.82, transform: [{ scale: 0.99 }] },
   profileStrip: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, paddingHorizontal: 13, marginTop: 12 },
   profileDot: { width: 36, height: 36, borderRadius: 12, backgroundColor: palette.softLime, alignItems: 'center', justifyContent: 'center' },

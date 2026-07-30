@@ -4,7 +4,9 @@ import { ApiError, apiRequest, apiUrl } from '@/src/lib/api-client';
 import {
   clearRecoveryCode,
   clearSession,
+  readOnboardingComplete,
   readSession,
+  saveOnboardingComplete,
   saveRecoveryCode,
   saveSession,
 } from '@/src/lib/session';
@@ -15,12 +17,15 @@ type AuthContextValue = {
   session: AuthSession | null;
   loading: boolean;
   offlineMode: boolean;
+  onboardingComplete: boolean;
   justCreated: boolean;
   serviceConfigured: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (displayName: string, email: string, password: string) => Promise<SignupResult>;
   recover: (email: string, recoveryCode: string, newPassword: string) => Promise<SignupResult>;
   continueOffline: () => void;
+  completeOnboarding: () => Promise<void>;
+  restartOnboarding: () => Promise<void>;
   exitOfflineMode: () => void;
   signOut: () => Promise<void>;
   deleteAccount: () => Promise<void>;
@@ -35,12 +40,14 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [offlineMode, setOfflineMode] = useState(false);
+  const [onboardingComplete, setOnboardingComplete] = useState(false);
   const [justCreated, setJustCreated] = useState(false);
   const serviceConfigured = Boolean(apiUrl());
 
   useEffect(() => {
-    readSession()
-      .then(async (stored) => {
+    Promise.all([readSession(), readOnboardingComplete()])
+      .then(async ([stored, hasOnboarded]) => {
+        setOnboardingComplete(hasOnboarded);
         if (!stored) return;
         setSession(stored);
         try {
@@ -143,16 +150,29 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
     setSession(null);
   }, [session]);
 
+  const completeOnboarding = useCallback(async () => {
+    await saveOnboardingComplete(true);
+    setOnboardingComplete(true);
+  }, []);
+
+  const restartOnboarding = useCallback(async () => {
+    await saveOnboardingComplete(false);
+    setOnboardingComplete(false);
+  }, []);
+
   const value = useMemo<AuthContextValue>(() => ({
     session,
     loading,
     offlineMode,
+    onboardingComplete,
     justCreated,
     serviceConfigured,
     signIn,
     signUp,
     recover,
     continueOffline: () => setOfflineMode(true),
+    completeOnboarding,
+    restartOnboarding,
     exitOfflineMode: () => setOfflineMode(false),
     signOut,
     deleteAccount,
@@ -161,11 +181,14 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
     session,
     loading,
     offlineMode,
+    onboardingComplete,
     justCreated,
     serviceConfigured,
     signIn,
     signUp,
     recover,
+    completeOnboarding,
+    restartOnboarding,
     signOut,
     deleteAccount,
     changePassword,
