@@ -9,6 +9,9 @@ import type {
   ParsedCommand,
 } from '@/src/types';
 
+/** Remote language parsing is opt-in and off by default — the app ships with zero running cost. */
+const AI_PARSING_ENABLED = process.env.EXPO_PUBLIC_ENABLE_AI_PARSING === '1';
+
 const foods = FOODS;
 
 const numberWords: Record<string, number> = {
@@ -349,10 +352,12 @@ function requestPayload(
 }
 
 /**
- * Typed logging: local reviewed catalog first; the AI service is only asked
- * when the local parser could not recognize a food or part of the update —
- * and the local result remains the fallback whenever the service or the
- * account is unavailable.
+ * Every logged update — typed or dictated — is parsed by the local reviewed
+ * catalog. The remote AI service is a disabled-by-default extra: it is only
+ * consulted when the local parser could not recognize a food or part of the
+ * update, and only when `EXPO_PUBLIC_ENABLE_AI_PARSING=1`. The local result
+ * is always the fallback, and it asks a clarifying question instead of
+ * inventing a number.
  */
 export async function parseFitnessCommand(
   text: string,
@@ -376,6 +381,11 @@ export async function parseFitnessCommand(
   const localUnknown = local.clarification?.question.includes(UNKNOWN_FOOD_MARK) ?? false;
   const needsAi = localUnknown || (Boolean(local.operations.length) && fragmentUnknown);
   if (!needsAi) return local;
+  // Off by default. The local result already asks the user for the missing
+  // detail rather than guessing, so the app costs nothing to run and works
+  // offline. The branch below stays here so the service can be switched back
+  // on with EXPO_PUBLIC_ENABLE_AI_PARSING=1.
+  if (!AI_PARSING_ENABLED) return local;
   if (!apiUrl()) return local;
   try {
     const session = await readSession();
@@ -392,33 +402,4 @@ export async function parseFitnessCommand(
   } catch {
     return local;
   }
-}
-
-export async function parseVoiceCommand(
-  audioUri: string,
-  preferredSlot: MealSlot | undefined,
-  context: EstimationContext,
-  clarification?: ClarificationContext,
-) {
-  if (!apiUrl()) {
-    throw new Error('Voice needs the account service. Set EXPO_PUBLIC_API_URL (or run the local API in development).');
-  }
-  const session = await readSession();
-  if (!session) {
-    throw new Error('Sign in to use voice logging — transcription runs through your private account.');
-  }
-  const body = new FormData();
-  body.append('audio', { uri: audioUri, name: 'quick-log.m4a', type: 'audio/mp4' } as unknown as Blob);
-  if (preferredSlot) body.append('preferred_slot', preferredSlot);
-  if (context.weightKg) body.append('weight_kg', String(context.weightKg));
-  if (context.bowlMl) body.append('bowl_ml', String(context.bowlMl));
-  body.append('cup_ml', String(context.cupMl));
-  if (clarification?.previousTranscript) body.append('previous_transcript', clarification.previousTranscript);
-  if (clarification?.clarificationQuestion) body.append('clarification_question', clarification.clarificationQuestion);
-  const response = await apiRequest<ParsedCommand>(
-    '/v1/parse-command/audio',
-    { method: 'POST', body },
-    session,
-  );
-  return { ...response, source: 'ai' } as ParsedCommand;
 }

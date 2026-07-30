@@ -3,16 +3,25 @@ import { useMemo, useState } from 'react';
 import {
   FlatList,
   Image,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ExerciseFigure } from '@/src/components/exercise-figure';
+import { Glyph } from '@/src/components/glyph';
+import {
+  Card,
+  Chip,
+  EmptyState,
+  GlassFooter,
+  PrimaryButton,
+  Reveal,
+  Screen,
+  Tap,
+} from '@/src/components/ui';
 import { emitExercisePick } from '@/src/lib/exercise-pick-bus';
 import { photosFor } from '@/src/lib/exercise-photos';
 import {
@@ -23,7 +32,12 @@ import {
   type Exercise,
   type MuscleGroup,
 } from '@/src/lib/exercises';
-import { palette, radius, space, type } from '@/src/theme';
+import { palette, radius, space, tabular, text } from '@/src/theme';
+
+/** 'full body' → 'Full Body'. The data is lower-case; the chips are not. */
+function titleCase(value: string) {
+  return value.replace(/(^|\s)\S/g, (character) => character.toUpperCase());
+}
 
 export default function ExercisePickerScreen() {
   const router = useRouter();
@@ -49,133 +63,203 @@ export default function ExercisePickerScreen() {
     router.back();
   }
 
+  function clearFilters() {
+    setQuery('');
+    setMuscle(null);
+    setEquipment(null);
+  }
+
   return (
-    <SafeAreaView style={styles.safe} edges={['bottom']}>
-      <View style={styles.searchRow}>
-        <View style={styles.searchBox}>
-          <TextInput
-            autoCorrect={false}
-            placeholder="Search exercises"
-            placeholderTextColor="#8A938B"
-            style={styles.searchInput}
-            value={query}
-            onChangeText={setQuery}
-          />
+    <Screen edges={['bottom']}>
+      <Reveal>
+        <View style={styles.searchRow}>
+          <View style={styles.searchBox}>
+            <Glyph color={palette.inkLow} name="search" size={17} />
+            <TextInput
+              accessibilityLabel="Search exercises"
+              autoCorrect={false}
+              onChangeText={setQuery}
+              placeholder="Search exercises"
+              placeholderTextColor={palette.inkLow}
+              selectionColor={palette.lime}
+              style={styles.searchInput}
+              value={query}
+            />
+            {query ? (
+              <Tap accessibilityLabel="Clear search" hitSlop={8} onPress={() => setQuery('')} scaleTo={0.88}>
+                <View style={styles.searchClear}>
+                  <Glyph color={palette.inkMid} name="close" size={13} />
+                </View>
+              </Tap>
+            ) : null}
+          </View>
         </View>
-      </View>
+      </Reveal>
 
-      <View style={styles.filters}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-          <FilterChip label="All muscles" active={muscle === null} onPress={() => setMuscle(null)} />
-          {MUSCLE_GROUPS.map((group) => (
-            <FilterChip
-              key={group}
-              label={group}
-              active={muscle === group}
-              onPress={() => setMuscle(muscle === group ? null : group)}
+      <Reveal index={1}>
+        <View style={styles.filters}>
+          <ScrollView contentContainerStyle={styles.chipRow} horizontal showsHorizontalScrollIndicator={false}>
+            <Chip active={muscle === null} icon="muscle" label="All muscles" onPress={() => setMuscle(null)} />
+            {MUSCLE_GROUPS.map((group) => (
+              <Chip
+                active={muscle === group}
+                key={group}
+                label={titleCase(group)}
+                onPress={() => setMuscle(muscle === group ? null : group)}
+              />
+            ))}
+          </ScrollView>
+          <ScrollView contentContainerStyle={styles.chipRow} horizontal showsHorizontalScrollIndicator={false}>
+            <Chip active={equipment === null} icon="dumbbell" label="All equipment" onPress={() => setEquipment(null)} />
+            {EQUIPMENT_TYPES.map((kind) => (
+              <Chip
+                active={equipment === kind}
+                key={kind}
+                label={titleCase(kind)}
+                onPress={() => setEquipment(equipment === kind ? null : kind)}
+              />
+            ))}
+          </ScrollView>
+        </View>
+      </Reveal>
+
+      <Reveal index={2} style={styles.fill}>
+        <FlatList
+          contentContainerStyle={styles.list}
+          data={results}
+          keyboardShouldPersistTaps="handled"
+          keyExtractor={(item) => item.id}
+          ListEmptyComponent={(
+            <EmptyState
+              action={<PrimaryButton icon="restart" label="Clear filters" onPress={clearFilters} />}
+              body="Nothing matches that combination yet. Widen the muscle or equipment filter and try again."
+              icon="search"
+              title="No exercises match"
             />
-          ))}
-        </ScrollView>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-          <FilterChip label="All equipment" active={equipment === null} onPress={() => setEquipment(null)} />
-          {EQUIPMENT_TYPES.map((kind) => (
-            <FilterChip
-              key={kind}
-              label={kind}
-              active={equipment === kind}
-              onPress={() => setEquipment(equipment === kind ? null : kind)}
-            />
-          ))}
-        </ScrollView>
-      </View>
+          )}
+          renderItem={({ item }) => {
+            const isSelected = selected.includes(item.id);
+            const photos = photosFor(item.id);
+            return (
+              <Tap
+                accessibilityLabel={`${isSelected ? 'Deselect' : 'Select'} ${item.name}`}
+                onPress={() => toggle(item)}
+                scaleTo={0.985}>
+                <Card padded={false} style={[styles.row, isSelected && styles.rowSelected]}>
+                  <View style={[styles.thumb, photos ? styles.thumbPhotoBg : null]}>
+                    {photos
+                      ? <Image resizeMode="cover" source={photos[0]} style={styles.thumbPhoto} />
+                      : <ExerciseFigure accent={palette.lime} gear={item.gear} paused size={52} template={item.template} tint={palette.inkMid} />}
+                  </View>
+                  <View style={styles.rowCopy}>
+                    <Text numberOfLines={1} style={styles.rowName}>{item.name}</Text>
+                    <Text numberOfLines={1} style={styles.rowMeta}>
+                      {item.primaryMuscle}{item.secondaryMuscles.length ? ` · +${item.secondaryMuscles.join(', ')}` : ''}
+                    </Text>
+                    <Text numberOfLines={1} style={styles.rowEquip}>
+                      {item.equipment} · {item.kind === 'duration' ? 'timed' : item.kind === 'reps-only' ? 'bodyweight reps' : 'weight × reps'}
+                    </Text>
+                  </View>
+                  <Tap
+                    accessibilityLabel={`How to do ${item.name}`}
+                    hitSlop={8}
+                    onPress={() => router.push({ pathname: '/exercise/[id]', params: { id: item.id } })}
+                    scaleTo={0.9}
+                    style={styles.info}>
+                    <Text style={styles.infoText}>How to</Text>
+                  </Tap>
+                  <View style={[styles.check, isSelected && styles.checkOn]}>
+                    {isSelected ? <Glyph color={palette.onLime} name="check" size={14} strokeWidth={2.6} /> : null}
+                  </View>
+                </Card>
+              </Tap>
+            );
+          }}
+        />
+      </Reveal>
 
-      <FlatList
-        data={results}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.list}
-        keyboardShouldPersistTaps="handled"
-        renderItem={({ item }) => {
-          const isSelected = selected.includes(item.id);
-          const photos = photosFor(item.id);
-          return (
-            <Pressable onPress={() => toggle(item)} style={[styles.row, isSelected && styles.rowSelected]}>
-              <View style={styles.thumb}>
-                {photos
-                  ? <Image resizeMode="cover" source={photos[0]} style={styles.thumbPhoto} />
-                  : <ExerciseFigure template={item.template} gear={item.gear} size={52} paused />}
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.rowName}>{item.name}</Text>
-                <Text style={styles.rowMeta}>
-                  {item.primaryMuscle}{item.secondaryMuscles.length ? ` · +${item.secondaryMuscles.join(', ')}` : ''}
-                </Text>
-                <Text style={styles.rowEquip}>{item.equipment} · {item.kind === 'duration' ? 'timed' : item.kind === 'reps-only' ? 'bodyweight reps' : 'weight × reps'}</Text>
-              </View>
-              <Pressable
-                hitSlop={8}
-                onPress={() => router.push({ pathname: '/exercise/[id]', params: { id: item.id } })}>
-                <Text style={styles.info}>How to</Text>
-              </Pressable>
-              <View style={[styles.check, isSelected && styles.checkOn]}>
-                {isSelected ? <Text style={styles.checkMark}>✓</Text> : null}
-              </View>
-            </Pressable>
-          );
-        }}
-        ListEmptyComponent={(
-          <Text style={styles.empty}>No exercises match. Try another muscle or equipment filter.</Text>
-        )}
-      />
-
-      <View style={styles.footer}>
-        <Pressable
+      <GlassFooter>
+        <PrimaryButton
           disabled={!selected.length}
+          icon="plus"
+          label={selected.length
+            ? `Add ${selected.length} exercise${selected.length > 1 ? 's' : ''}`
+            : 'Select exercises'}
           onPress={confirm}
-          style={({ pressed }) => [styles.addButton, !selected.length && styles.disabled, pressed && styles.pressed]}>
-          <Text style={styles.addText}>
-            {selected.length ? `Add ${selected.length} exercise${selected.length > 1 ? 's' : ''}` : 'Select exercises'}
-          </Text>
-        </Pressable>
-      </View>
-    </SafeAreaView>
-  );
-}
-
-function FilterChip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
-  return (
-    <Pressable onPress={onPress} style={[styles.chip, active && styles.chipActive]}>
-      <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
-    </Pressable>
+        />
+      </GlassFooter>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: palette.canvas },
+  fill: { flex: 1 },
+
   searchRow: { paddingHorizontal: space.md, paddingTop: 10 },
-  searchBox: { backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, paddingHorizontal: 14 },
-  searchInput: { height: 46, color: palette.ink, fontFamily: type.medium, fontSize: 14 },
-  filters: { gap: 6, paddingVertical: 10 },
-  chipRow: { gap: 6, paddingHorizontal: space.md },
-  chip: { height: 32, paddingHorizontal: 13, borderRadius: radius.pill, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.paper, alignItems: 'center', justifyContent: 'center' },
-  chipActive: { backgroundColor: palette.forest, borderColor: palette.forest },
-  chipText: { color: palette.ink, fontFamily: type.medium, fontSize: 11, textTransform: 'capitalize' },
-  chipTextActive: { color: palette.lime, fontFamily: type.demi },
-  list: { paddingHorizontal: space.md, paddingBottom: 12, gap: 7 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, padding: 10 },
-  rowSelected: { borderColor: palette.limeDark, backgroundColor: '#F4FBE6' },
-  thumb: { width: 56, height: 56, borderRadius: radius.sm, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', borderWidth: 1, borderColor: palette.line },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.lineHi,
+    borderRadius: radius.md,
+    paddingHorizontal: 14,
+  },
+  searchInput: { flex: 1, height: 50, ...text.row, fontSize: 14.5, color: palette.ink },
+  searchClear: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: palette.surfaceLo,
+    borderWidth: 1,
+    borderColor: palette.line,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  filters: { gap: 7, paddingVertical: 11 },
+  chipRow: { gap: 7, paddingHorizontal: space.md },
+
+  list: { paddingHorizontal: space.md, paddingBottom: space.md, gap: 8 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 11, padding: 10 },
+  rowSelected: { borderColor: `${palette.lime}59`, backgroundColor: palette.limeSoft },
+  rowCopy: { flex: 1 },
+  thumb: {
+    width: 58,
+    height: 58,
+    borderRadius: radius.sm,
+    backgroundColor: palette.surfaceLo,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  thumbPhotoBg: { backgroundColor: palette.white },
   thumbPhoto: { width: '100%', height: '100%' },
-  rowName: { color: palette.ink, fontFamily: type.demi, fontSize: 13 },
-  rowMeta: { color: palette.muted, fontFamily: type.regular, fontSize: 10, marginTop: 2, textTransform: 'capitalize' },
-  rowEquip: { color: palette.limeDark, fontFamily: type.medium, fontSize: 9.5, marginTop: 2, textTransform: 'capitalize' },
-  info: { color: palette.coral, fontFamily: type.demi, fontSize: 10.5, paddingHorizontal: 4 },
-  check: { width: 26, height: 26, borderRadius: 13, borderWidth: 1.5, borderColor: palette.line, alignItems: 'center', justifyContent: 'center' },
-  checkOn: { backgroundColor: palette.forest, borderColor: palette.forest },
-  checkMark: { color: palette.lime, fontSize: 13, fontFamily: type.demi },
-  empty: { color: palette.muted, fontFamily: type.regular, fontSize: 12, textAlign: 'center', paddingVertical: 30 },
-  footer: { padding: space.md, borderTopWidth: 1, borderTopColor: palette.line, backgroundColor: palette.canvas },
-  addButton: { height: 52, borderRadius: radius.md, backgroundColor: palette.forest, alignItems: 'center', justifyContent: 'center' },
-  addText: { color: palette.lime, fontFamily: type.demi, fontSize: 14 },
-  disabled: { opacity: 0.45 },
-  pressed: { opacity: 0.85 },
+  rowName: { ...text.row, color: palette.ink },
+  rowMeta: { ...text.caption, fontSize: 10.5, color: palette.inkMid, marginTop: 3, textTransform: 'capitalize' },
+  rowEquip: { ...text.micro, fontSize: 10, color: palette.lime, marginTop: 3, textTransform: 'capitalize' },
+  info: {
+    height: 30,
+    paddingHorizontal: 10,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: palette.lineHi,
+    backgroundColor: palette.surfaceLo,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  infoText: { ...text.micro, fontFamily: text.value.fontFamily, fontSize: 10.5, color: palette.inkMid, ...tabular },
+  check: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: palette.lineHi,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkOn: { backgroundColor: palette.lime, borderColor: palette.lime },
 });

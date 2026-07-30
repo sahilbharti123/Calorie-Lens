@@ -1,27 +1,44 @@
-import * as Device from 'expo-device';
-import { requestRecordingPermissionsAsync } from 'expo-audio';
 import { type Href, useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import Animated, {
+  interpolateColor,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from 'react-native-reanimated';
 
+import { BrandMark } from '@/src/components/brand-mark';
 import { Glyph, type GlyphName } from '@/src/components/glyph';
-import { readServiceHealth } from '@/src/lib/api-client';
+import {
+  Bar,
+  Card,
+  CountUp,
+  GlassFooter,
+  MacroChip,
+  Metric,
+  PrimaryButton,
+  Reveal,
+  Screen,
+  SectionTitle,
+  Tap,
+  Well,
+} from '@/src/components/ui';
 import { healthSetupCopy, syncNativeHealth } from '@/src/lib/health';
 import { calculatePersonalTargets, goalLabel } from '@/src/lib/personalization';
+import { ensureSpeechPermission, speechAvailable } from '@/src/lib/speech';
 import { useApp } from '@/src/store/app-store';
 import { useAuth } from '@/src/store/auth-store';
-import { palette, radius, space, type } from '@/src/theme';
+import { macroColor, motion, palette, radius, shadow, space, tabular, text } from '@/src/theme';
 import type {
   ActivityLevel,
   CoachingTone,
@@ -36,12 +53,13 @@ import type {
 } from '@/src/types';
 
 const TOTAL_STEPS = 10;
+const THUMB = 9;
 
 type Choice<T extends string> = {
   value: T;
   title: string;
   body: string;
-  icon?: GlyphName;
+  icon: GlyphName;
 };
 
 const goalChoices: Choice<PrimaryGoal>[] = [
@@ -53,58 +71,58 @@ const goalChoices: Choice<PrimaryGoal>[] = [
 ];
 
 const sexChoices: Choice<EquationSex>[] = [
-  { value: 'female', title: 'Female equation', body: 'Uses the female Mifflin–St Jeor constant.' },
-  { value: 'male', title: 'Male equation', body: 'Uses the male Mifflin–St Jeor constant.' },
-  { value: 'neutral', title: 'Use a midpoint', body: 'Less precise, but does not require choosing either equation.' },
+  { value: 'female', title: 'Female equation', body: 'Uses the female Mifflin–St Jeor constant.', icon: 'user' },
+  { value: 'male', title: 'Male equation', body: 'Uses the male Mifflin–St Jeor constant.', icon: 'user' },
+  { value: 'neutral', title: 'Use a midpoint', body: 'Less precise, but does not require choosing either equation.', icon: 'scale' },
 ];
 
 const paceChoices: Choice<GoalPace>[] = [
-  { value: 'gentle', title: 'Gentle', body: 'Smaller calorie change; easiest to sustain and assess.' },
-  { value: 'steady', title: 'Steady', body: 'A practical middle ground for most routines.' },
-  { value: 'ambitious', title: 'Ambitious', body: 'Larger change; monitor hunger, recovery and performance.' },
+  { value: 'gentle', title: 'Gentle', body: 'Smaller calorie change; easiest to sustain and assess.', icon: 'steps' },
+  { value: 'steady', title: 'Steady', body: 'A practical middle ground for most routines.', icon: 'trend' },
+  { value: 'ambitious', title: 'Ambitious', body: 'Larger change; monitor hunger, recovery and performance.', icon: 'flame' },
 ];
 
 const activityChoices: Choice<ActivityLevel>[] = [
-  { value: 'mostly-seated', title: 'Mostly seated', body: 'Desk-based day with little walking outside planned exercise.' },
-  { value: 'lightly-active', title: 'Some daily movement', body: 'Regular errands or walking, but much of the day is seated.' },
-  { value: 'active', title: 'Active most days', body: 'A mobile job, frequent walking or regular training.' },
-  { value: 'very-active', title: 'Very active', body: 'Physical work, long training sessions or high daily movement.' },
+  { value: 'mostly-seated', title: 'Mostly seated', body: 'Desk-based day with little walking outside planned exercise.', icon: 'keyboard' },
+  { value: 'lightly-active', title: 'Some daily movement', body: 'Regular errands or walking, but much of the day is seated.', icon: 'steps' },
+  { value: 'active', title: 'Active most days', body: 'A mobile job, frequent walking or regular training.', icon: 'trend' },
+  { value: 'very-active', title: 'Very active', body: 'Physical work, long training sessions or high daily movement.', icon: 'flame' },
 ];
 
 const workoutChoices: Choice<WorkoutPreference>[] = [
-  { value: 'gym', title: 'Gym training', body: 'Weights, machines or structured classes.' },
-  { value: 'walking', title: 'Walking and cardio', body: 'Steps and simple aerobic sessions fit best.' },
-  { value: 'home', title: 'Home workouts', body: 'Bodyweight, yoga or dumbbells at home.' },
-  { value: 'mixed', title: 'A flexible mix', body: 'Use whichever option fits the day.' },
-  { value: 'restarting', title: 'I am restarting', body: 'Begin below the standard target and build momentum.' },
+  { value: 'gym', title: 'Gym training', body: 'Weights, machines or structured classes.', icon: 'dumbbell' },
+  { value: 'walking', title: 'Walking and cardio', body: 'Steps and simple aerobic sessions fit best.', icon: 'steps' },
+  { value: 'home', title: 'Home workouts', body: 'Bodyweight, yoga or dumbbells at home.', icon: 'home' },
+  { value: 'mixed', title: 'A flexible mix', body: 'Use whichever option fits the day.', icon: 'spark' },
+  { value: 'restarting', title: 'I am restarting', body: 'Begin below the standard target and build momentum.', icon: 'restart' },
 ];
 
 const experienceChoices: Choice<ExperienceLevel>[] = [
-  { value: 'new', title: 'New', body: 'I need clear, simple starting points.' },
-  { value: 'some', title: 'Some experience', body: 'I know the basics but want consistency.' },
-  { value: 'experienced', title: 'Experienced', body: 'I track performance and can handle more detail.' },
+  { value: 'new', title: 'New', body: 'I need clear, simple starting points.', icon: 'book' },
+  { value: 'some', title: 'Some experience', body: 'I know the basics but want consistency.', icon: 'muscle' },
+  { value: 'experienced', title: 'Experienced', body: 'I track performance and can handle more detail.', icon: 'trophy' },
 ];
 
 const dietChoices: Choice<DietStyle>[] = [
-  { value: 'home-indian', title: 'Mostly home-cooked Indian', body: 'Roti, rice, dal, sabzi, curd and recipe-based portions.' },
-  { value: 'vegetarian', title: 'Vegetarian', body: 'Dairy and/or eggs are fine; keep protein practical.' },
-  { value: 'vegan', title: 'Vegan', body: 'Use plant-only suggestions and protein sources.' },
-  { value: 'mixed', title: 'Mixed diet', body: 'Home food, cafés, takeout, meat and vegetarian meals.' },
-  { value: 'high-protein', title: 'Already protein-first', body: 'I regularly use eggs, meat, paneer, tofu, whey or soy.' },
+  { value: 'home-indian', title: 'Mostly home-cooked Indian', body: 'Roti, rice, dal, sabzi, curd and recipe-based portions.', icon: 'home' },
+  { value: 'vegetarian', title: 'Vegetarian', body: 'Dairy and/or eggs are fine; keep protein practical.', icon: 'bowl' },
+  { value: 'vegan', title: 'Vegan', body: 'Use plant-only suggestions and protein sources.', icon: 'sun' },
+  { value: 'mixed', title: 'Mixed diet', body: 'Home food, cafés, takeout, meat and vegetarian meals.', icon: 'spark' },
+  { value: 'high-protein', title: 'Already protein-first', body: 'I regularly use eggs, meat, paneer, tofu, whey or soy.', icon: 'muscle' },
 ];
 
 const challengeChoices: Choice<MainChallenge>[] = [
-  { value: 'portions', title: 'Portion uncertainty', body: 'I struggle to estimate home food and serving sizes.' },
-  { value: 'protein', title: 'Getting enough protein', body: 'I need realistic protein choices across the day.' },
-  { value: 'cravings', title: 'Cravings or snacking', body: 'Evenings or stressful days usually derail me.' },
-  { value: 'time', title: 'Time and planning', body: 'Suggestions must work on busy days.' },
-  { value: 'consistency', title: 'Staying consistent', body: 'I start well and then stop tracking.' },
+  { value: 'portions', title: 'Portion uncertainty', body: 'I struggle to estimate home food and serving sizes.', icon: 'scale' },
+  { value: 'protein', title: 'Getting enough protein', body: 'I need realistic protein choices across the day.', icon: 'muscle' },
+  { value: 'cravings', title: 'Cravings or snacking', body: 'Evenings or stressful days usually derail me.', icon: 'flame' },
+  { value: 'time', title: 'Time and planning', body: 'Suggestions must work on busy days.', icon: 'timer' },
+  { value: 'consistency', title: 'Staying consistent', body: 'I start well and then stop tracking.', icon: 'calendar' },
 ];
 
 const toneChoices: Choice<CoachingTone>[] = [
-  { value: 'gentle', title: 'Gentle', body: 'Encourage me without guilt or pressure.' },
-  { value: 'direct', title: 'Direct', body: 'Give me the clearest next action.' },
-  { value: 'data-led', title: 'Data-led', body: 'Explain the numbers and tradeoffs briefly.' },
+  { value: 'gentle', title: 'Gentle', body: 'Encourage me without guilt or pressure.', icon: 'heart' },
+  { value: 'direct', title: 'Direct', body: 'Give me the clearest next action.', icon: 'target' },
+  { value: 'data-led', title: 'Data-led', body: 'Explain the numbers and tradeoffs briefly.', icon: 'chart' },
 ];
 
 const goalNotes: Record<PrimaryGoal, string> = {
@@ -150,6 +168,7 @@ export default function OnboardingScreen() {
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [voiceMessage, setVoiceMessage] = useState('');
   const setup = healthSetupCopy();
+  const scroller = useRef<ScrollView>(null);
 
   const profile = useMemo<PersonalProfile>(() => ({
     primaryGoal: primaryGoal ?? undefined,
@@ -211,30 +230,30 @@ export default function OnboardingScreen() {
     || (step === 7 && Boolean(mainChallenge) && Boolean(coachingTone))
     || step >= 8;
 
+  useEffect(() => {
+    scroller.current?.scrollTo({ y: 0, animated: false });
+  }, [step]);
+
   async function checkVoice() {
     setVoiceBusy(true);
     setVoiceMessage('');
     try {
-      if (Platform.OS === 'ios' && !Device.isDevice) {
-        setVoiceMessage('The iOS Simulator cannot record a voice command. Typed logging works here; test the microphone in an iPhone development build.');
+      if (!speechAvailable()) {
+        setVoiceMessage('This device cannot transcribe speech. Use the keyboard to log.');
         return;
       }
-      const permission = await requestRecordingPermissionsAsync();
-      if (!permission.granted) {
-        setVoiceMessage('Microphone access is off. Enable it in system settings, then return here.');
-        return;
-      }
-      const service = await readServiceHealth();
+      const permission = await ensureSpeechPermission();
       setVoiceMessage(
-        service.ai_enabled
-          ? 'Microphone and voice service are ready. Sign in on the next screen to use voice logging.'
-          : 'Microphone works, but the local service has no Gemini key. Typed logging remains available.',
+        permission.granted
+          ? 'Microphone and on-device dictation are ready. Speech is transcribed on this phone — no account and no connection needed.'
+          : permission.canAskAgain
+            ? 'Calorie Lens needs microphone and speech access to log by voice.'
+            : 'Microphone or speech access is off. Turn it on in Settings to log by voice.',
       );
     } catch (error) {
-      const deviceHint = Device.isDevice
-        ? 'Set EXPO_PUBLIC_API_URL to this Mac’s LAN address and keep both devices on the same Wi-Fi.'
-        : 'Start the API on port 8000, then try again.';
-      setVoiceMessage(`${error instanceof Error ? error.message : 'The local service is unreachable.'} ${deviceHint}`);
+      setVoiceMessage(
+        `${error instanceof Error ? error.message : 'Voice setup could not be checked.'} Typed logging always works.`,
+      );
     } finally {
       setVoiceBusy(false);
     }
@@ -290,167 +309,235 @@ export default function OnboardingScreen() {
   }
 
   if (!hydrated) {
-    return <View style={styles.loading}><ActivityIndicator color={palette.forest} /></View>;
+    return (
+      <Screen edges={['top', 'bottom']}>
+        <View style={styles.loading}>
+          <ActivityIndicator color={palette.lime} />
+        </View>
+      </Screen>
+    );
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen edges={['top', 'bottom']}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.fill}>
         <View style={styles.topBar}>
           {step > 0 ? (
-            <Pressable accessibilityLabel="Go back" onPress={() => setStep((current) => current - 1)} style={styles.back}>
-              <Text style={styles.backText}>←</Text>
-            </Pressable>
+            <Tap
+              accessibilityLabel="Go back"
+              hitSlop={10}
+              onPress={() => setStep((current) => current - 1)}
+              scaleTo={0.9}
+              style={styles.back}>
+              <Glyph color={palette.ink} name="chevronLeft" size={18} />
+            </Tap>
           ) : <View style={styles.back} />}
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${((step + 1) / TOTAL_STEPS) * 100}%` }]} />
-          </View>
-          <Text style={styles.stepCount}>{step + 1}/{TOTAL_STEPS}</Text>
+          <Text style={styles.stepCount}>STEP {step + 1} OF {TOTAL_STEPS}</Text>
+          <View style={styles.back} />
         </View>
 
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          {step === 0 ? <Welcome />
-            : step === 1 ? (
-              <Question
-                eyebrow="THE OUTCOME"
-                title="What should this plan help you change?"
-                body="This becomes the basis for calories, macros, training priorities and daily suggestions."
-                choices={goalChoices}
-                selected={primaryGoal}
-                onSelect={setPrimaryGoal}
-              />
-            ) : step === 2 ? (
-              <BodyBasics
-                age={age}
-                equationSex={equationSex}
-                height={height}
-                setAge={setAge}
-                setEquationSex={setEquationSex}
-                setHeight={setHeight}
-                setWeight={setWeight}
-                weight={weight}
-              />
-            ) : step === 3 ? (
-              <GoalDirection
-                currentWeight={weight}
-                goal={primaryGoal}
-                pace={goalPace}
-                setPace={setGoalPace}
-                setTargetWeight={setTargetWeight}
-                targetWeight={targetWeight}
-              />
-            ) : step === 4 ? (
-              <Question
-                eyebrow="A NORMAL DAY"
-                title="How active are you outside planned workouts?"
-                body="Choose your real routine. Workout sessions are handled separately on the next screen."
-                choices={activityChoices}
-                selected={activityLevel}
-                onSelect={setActivityLevel}
-              />
-            ) : step === 5 ? (
-              <TrainingSetup
-                availableMinutes={availableMinutes}
-                experience={experienceLevel}
-                preference={workoutPreference}
-                setAvailableMinutes={setAvailableMinutes}
-                setExperience={setExperienceLevel}
-                setPreference={setWorkoutPreference}
-                setTrainingDays={setTrainingDays}
-                trainingDays={trainingDays}
-              />
-            ) : step === 6 ? (
-              <FoodSetup
-                allergies={allergies}
-                dietStyle={dietStyle}
-                mealsPerDay={mealsPerDay}
-                setAllergies={setAllergies}
-                setDietStyle={setDietStyle}
-                setMealsPerDay={setMealsPerDay}
-              />
-            ) : step === 7 ? (
-              <SupportSetup
-                challenge={mainChallenge}
-                injuries={injuries}
-                setChallenge={setMainChallenge}
-                setInjuries={setInjuries}
-                setTone={setCoachingTone}
-                tone={coachingTone}
-              />
-            ) : step === 8 ? (
-              <Calibration bowl={bowl} setBowl={setBowl} />
-            ) : (
-              <PlanPreview
-                goal={primaryGoal}
-                healthBusy={healthBusy}
-                healthMessage={healthMessage}
-                onConnectHealth={() => void connectHealth()}
-                onTestVoice={() => void checkVoice()}
-                plan={preview.plan}
-                goals={preview.goals}
-                setupDetail={setup.detail}
-                setupTitle={setup.title}
-                voiceBusy={voiceBusy}
-                voiceMessage={voiceMessage}
-              />
-            )}
+        <StepProgress step={step} total={TOTAL_STEPS} />
+
+        <ScrollView
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          ref={scroller}
+          showsVerticalScrollIndicator={false}
+          style={styles.fill}>
+          <View key={step}>
+            {step === 0 ? <Welcome />
+              : step === 1 ? (
+                <Question
+                  eyebrow="THE OUTCOME"
+                  title="What should this plan help you change?"
+                  body="This becomes the basis for calories, macros, training priorities and daily suggestions."
+                  choices={goalChoices}
+                  selected={primaryGoal}
+                  onSelect={setPrimaryGoal}
+                />
+              ) : step === 2 ? (
+                <BodyBasics
+                  age={age}
+                  equationSex={equationSex}
+                  height={height}
+                  setAge={setAge}
+                  setEquationSex={setEquationSex}
+                  setHeight={setHeight}
+                  setWeight={setWeight}
+                  weight={weight}
+                />
+              ) : step === 3 ? (
+                <GoalDirection
+                  currentWeight={weight}
+                  goal={primaryGoal}
+                  pace={goalPace}
+                  setPace={setGoalPace}
+                  setTargetWeight={setTargetWeight}
+                  targetWeight={targetWeight}
+                />
+              ) : step === 4 ? (
+                <Question
+                  eyebrow="A NORMAL DAY"
+                  title="How active are you outside planned workouts?"
+                  body="Choose your real routine. Workout sessions are handled separately on the next screen."
+                  choices={activityChoices}
+                  selected={activityLevel}
+                  onSelect={setActivityLevel}
+                />
+              ) : step === 5 ? (
+                <TrainingSetup
+                  availableMinutes={availableMinutes}
+                  experience={experienceLevel}
+                  preference={workoutPreference}
+                  setAvailableMinutes={setAvailableMinutes}
+                  setExperience={setExperienceLevel}
+                  setPreference={setWorkoutPreference}
+                  setTrainingDays={setTrainingDays}
+                  trainingDays={trainingDays}
+                />
+              ) : step === 6 ? (
+                <FoodSetup
+                  allergies={allergies}
+                  dietStyle={dietStyle}
+                  mealsPerDay={mealsPerDay}
+                  setAllergies={setAllergies}
+                  setDietStyle={setDietStyle}
+                  setMealsPerDay={setMealsPerDay}
+                />
+              ) : step === 7 ? (
+                <SupportSetup
+                  challenge={mainChallenge}
+                  injuries={injuries}
+                  setChallenge={setMainChallenge}
+                  setInjuries={setInjuries}
+                  setTone={setCoachingTone}
+                  tone={coachingTone}
+                />
+              ) : step === 8 ? (
+                <Calibration bowl={bowl} setBowl={setBowl} />
+              ) : (
+                <PlanPreview
+                  goal={primaryGoal}
+                  healthBusy={healthBusy}
+                  healthMessage={healthMessage}
+                  onConnectHealth={() => void connectHealth()}
+                  onTestVoice={() => void checkVoice()}
+                  plan={preview.plan}
+                  goals={preview.goals}
+                  setupDetail={setup.detail}
+                  setupTitle={setup.title}
+                  voiceBusy={voiceBusy}
+                  voiceMessage={voiceMessage}
+                />
+              )}
+          </View>
         </ScrollView>
 
-        <View style={styles.footer}>
+        <GlassFooter>
           {step < TOTAL_STEPS - 1 ? (
-            <Pressable
+            <PrimaryButton
               disabled={!canContinue}
+              icon={step === 0 ? 'spark' : 'chevron'}
+              label={step === 0 ? 'Build my plan' : 'Continue'}
               onPress={() => setStep((current) => current + 1)}
-              style={({ pressed }) => [styles.primary, !canContinue && styles.disabled, pressed && styles.pressed]}>
-              <Text style={styles.primaryText}>{step === 0 ? 'Build my plan' : 'Continue'}</Text>
-            </Pressable>
+            />
           ) : (
-            <Pressable onPress={() => void finish()} style={({ pressed }) => [styles.primary, pressed && styles.pressed]}>
-              <Text style={styles.primaryText}>Save plan and continue</Text>
-            </Pressable>
+            <PrimaryButton icon="check" label="Save plan and continue" onPress={() => void finish()} />
           )}
           {step === 8 ? <Text style={styles.footerHint}>Bowl size is optional and can be added later.</Text> : null}
-        </View>
+        </GlassFooter>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </Screen>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Progress
+ * ------------------------------------------------------------------ */
+
+/** Slim track under the header. The lime head springs forward on every step. */
+function StepProgress({ step, total }: { step: number; total: number }) {
+  const [width, setWidth] = useState(0);
+  const ratio = (step + 1) / total;
+  const position = useSharedValue(0);
+
+  useEffect(() => {
+    position.value = withSpring(ratio, motion.enter);
+  }, [position, ratio]);
+
+  const head = useAnimatedStyle(() => {
+    const limit = Math.max(0, width - THUMB);
+    return {
+      transform: [{ translateX: Math.min(Math.max(position.value * width - THUMB / 2, 0), limit) }],
+    };
+  });
+
+  return (
+    <View
+      accessibilityLabel={`Step ${step + 1} of ${total}`}
+      accessibilityRole="progressbar"
+      style={styles.trackWrap}>
+      <View onLayout={(event) => setWidth(event.nativeEvent.layout.width)} style={styles.track}>
+        <Bar delay={0} height={4} value={ratio} />
+        {width > 0 ? <Animated.View style={[styles.trackHead, head]} /> : null}
+      </View>
+    </View>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Step scaffolding
+ * ------------------------------------------------------------------ */
+
+function StepIntro({ body, eyebrow, title }: { body: string; eyebrow: string; title: string }) {
+  return (
+    <View style={styles.intro}>
+      <Text style={styles.eyebrow}>{eyebrow}</Text>
+      <Text style={styles.title}>{title}</Text>
+      <Text style={styles.body}>{body}</Text>
+    </View>
   );
 }
 
 function Welcome() {
   return (
-    <View style={styles.welcome}>
-      <View style={styles.brandMark}><Glyph name="spark" color={palette.lime} size={28} /></View>
-      <Text style={styles.welcomeKicker}>CALORIE LENS</Text>
-      <Text style={styles.welcomeTitle}>Your plan should know who it is for.</Text>
-      <Text style={styles.welcomeBody}>
-        A few honest answers will set your calories, macros, movement targets and coaching priorities. Every answer stays editable.
-      </Text>
-      <View style={styles.promise}>
-        <PromiseRow icon="chart" text="Targets calculated from your body, routine and goal" />
-        <PromiseRow icon="dumbbell" text="Suggestions shaped around your time and training style" />
-        <PromiseRow icon="bowl" text="Food guidance that respects how you actually eat" />
-      </View>
-      <Text style={styles.safetyCopy}>For adults 18+. Estimates support general wellness and do not replace medical or dietetic care.</Text>
-    </View>
-  );
-}
-
-function PromiseRow({ icon, text }: { icon: GlyphName; text: string }) {
-  return (
-    <View style={styles.promiseRow}>
-      <View style={styles.promiseIcon}><Glyph name={icon} color={palette.forest} size={18} /></View>
-      <Text style={styles.promiseText}>{text}</Text>
-    </View>
-  );
-}
-
-function SectionIntro({ body, eyebrow, title }: { body: string; eyebrow: string; title: string }) {
-  return (
     <>
-      <Text style={styles.eyebrow}>{eyebrow}</Text>
-      <Text style={styles.questionTitle}>{title}</Text>
-      <Text style={styles.questionBody}>{body}</Text>
+      <Reveal>
+        <View style={styles.brandRow}>
+          <BrandMark size={54} />
+        </View>
+        <Text style={styles.eyebrow}>CALORIE LENS</Text>
+        <Text style={styles.title}>Your plan should know who it is for.</Text>
+        <Text style={styles.body}>
+          A few honest answers will set your calories, macros, movement targets and coaching priorities. Every answer stays editable.
+        </Text>
+      </Reveal>
+
+      <Reveal index={1} style={styles.group}>
+        <Card padded={false} style={styles.promiseCard}>
+          <PromiseRow icon="chart" text="Targets calculated from your body, routine and goal" />
+          <PromiseRow icon="dumbbell" text="Suggestions shaped around your time and training style" />
+          <PromiseRow icon="bowl" last text="Food guidance that respects how you actually eat" />
+        </Card>
+      </Reveal>
+
+      <Reveal index={2} style={styles.group}>
+        <Text style={styles.fineprint}>
+          For adults 18+. Estimates support general wellness and do not replace medical or dietetic care.
+        </Text>
+      </Reveal>
     </>
+  );
+}
+
+function PromiseRow({ icon, last, text: copy }: { icon: GlyphName; last?: boolean; text: string }) {
+  return (
+    <View style={[styles.promiseRow, !last && styles.promiseBorder]}>
+      <View style={styles.promiseIcon}>
+        <Glyph color={palette.lime} name={icon} size={17} />
+      </View>
+      <Text style={styles.promiseText}>{copy}</Text>
+    </View>
   );
 }
 
@@ -470,49 +557,98 @@ function Question<T extends string>({
   title: string;
 }) {
   return (
-    <View>
-      <SectionIntro body={body} eyebrow={eyebrow} title={title} />
+    <>
+      <Reveal>
+        <StepIntro body={body} eyebrow={eyebrow} title={title} />
+      </Reveal>
       <ChoiceList choices={choices} onSelect={onSelect} selected={selected} />
-    </View>
+    </>
   );
 }
+
+/* ------------------------------------------------------------------ *
+ * Choice cards
+ * ------------------------------------------------------------------ */
 
 function ChoiceList<T extends string>({
   choices,
   onSelect,
   selected,
+  startIndex = 1,
 }: {
   choices: Choice<T>[];
   onSelect: (value: T) => void;
   selected: T | null;
+  startIndex?: number;
 }) {
   return (
     <View style={styles.choices}>
-      {choices.map((choice) => {
-        const active = selected === choice.value;
-        return (
-          <Pressable
-            key={choice.value}
-            onPress={() => onSelect(choice.value)}
-            style={({ pressed }) => [styles.choice, active && styles.choiceActive, pressed && styles.pressed]}>
-            {choice.icon ? (
-              <View style={[styles.choiceIcon, active && styles.choiceIconActive]}>
-                <Glyph name={choice.icon} color={palette.forest} size={19} />
-              </View>
-            ) : null}
-            <View style={styles.choiceCopy}>
-              <Text style={styles.choiceTitle}>{choice.title}</Text>
-              <Text style={styles.choiceBody}>{choice.body}</Text>
-            </View>
-            <View style={[styles.radio, active && styles.radioActive]}>
-              {active ? <View style={styles.radioDot} /> : null}
-            </View>
-          </Pressable>
-        );
-      })}
+      {choices.map((choice, index) => (
+        <Reveal index={startIndex + index} key={choice.value}>
+          <ChoiceCard active={selected === choice.value} choice={choice} onSelect={onSelect} />
+        </Reveal>
+      ))}
     </View>
   );
 }
+
+function ChoiceCard<T extends string>({
+  active,
+  choice,
+  onSelect,
+}: {
+  active: boolean;
+  choice: Choice<T>;
+  onSelect: (value: T) => void;
+}) {
+  return (
+    <Tap
+      accessibilityLabel={`${choice.title}. ${choice.body}`}
+      onPress={() => onSelect(choice.value)}
+      scaleTo={0.985}
+      style={[styles.choice, active && styles.choiceOn]}>
+      <View style={[styles.choiceIcon, active && styles.choiceIconOn]}>
+        <Glyph color={active ? palette.onLime : palette.inkMid} name={choice.icon} size={18} />
+      </View>
+      <View style={styles.choiceCopy}>
+        <Text style={styles.choiceTitle}>{choice.title}</Text>
+        <Text style={styles.choiceBody}>{choice.body}</Text>
+      </View>
+      <SelectMark active={active} />
+    </Tap>
+  );
+}
+
+/** The selected-state check. Springs open so picking an answer feels physical. */
+function SelectMark({ active }: { active: boolean }) {
+  const on = useSharedValue(active ? 1 : 0);
+
+  useEffect(() => {
+    on.value = withSpring(active ? 1 : 0, motion.bouncy);
+  }, [active, on]);
+
+  const shell = useAnimatedStyle(() => ({
+    backgroundColor: interpolateColor(on.value, [0, 1], [palette.surfaceLo, palette.lime]),
+    borderColor: interpolateColor(on.value, [0, 1], [palette.lineHi, palette.lime]),
+  }));
+
+  const mark = useAnimatedStyle(() => ({
+    opacity: on.value,
+    transform: [{ scale: 0.4 + on.value * 0.6 }],
+  }));
+
+  return (
+    <Animated.View style={[styles.mark, shell]}>
+      <Animated.View style={mark}>
+        <Glyph color={palette.onLime} name="check" size={12} strokeWidth={2.4} />
+      </Animated.View>
+    </Animated.View>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Steps
+ * ------------------------------------------------------------------ */
 
 function BodyBasics({
   age,
@@ -534,20 +670,30 @@ function BodyBasics({
   weight: string;
 }) {
   return (
-    <View>
-      <SectionIntro
-        eyebrow="YOUR STARTING POINT"
-        title="Calculate energy from your body—not a generic 2,200."
-        body="Age, height and weight estimate resting energy. The equation option is about physiology used by the formula, not gender identity."
-      />
-      <View style={styles.formCard}>
-        <NumberField label="Age" unit="years" value={age} onChange={setAge} placeholder="29" />
-        <NumberField label="Height" unit="cm" value={height} onChange={setHeight} placeholder="172" />
-        <NumberField label="Current weight" unit="kg" value={weight} onChange={setWeight} placeholder="74" />
-      </View>
-      <Text style={styles.groupLabel}>ENERGY EQUATION</Text>
-      <ChoiceList choices={sexChoices} onSelect={setEquationSex} selected={equationSex} />
-    </View>
+    <>
+      <Reveal>
+        <StepIntro
+          eyebrow="YOUR STARTING POINT"
+          title="Calculate energy from your body—not a generic 2,200."
+          body="Age, height and weight estimate resting energy. The equation option is about physiology used by the formula, not gender identity."
+        />
+      </Reveal>
+
+      <Reveal index={1}>
+        <Card>
+          <View style={styles.grid}>
+            <NumberField label="Age" onChange={setAge} placeholder="29" unit="years" value={age} />
+            <NumberField label="Height" onChange={setHeight} placeholder="172" unit="cm" value={height} />
+            <NumberField label="Current weight" onChange={setWeight} placeholder="74" unit="kg" value={weight} />
+          </View>
+        </Card>
+      </Reveal>
+
+      <Reveal index={2}>
+        <SectionTitle title="Energy equation" />
+      </Reveal>
+      <ChoiceList choices={sexChoices} onSelect={setEquationSex} selected={equationSex} startIndex={3} />
+    </>
   );
 }
 
@@ -568,23 +714,49 @@ function GoalDirection({
 }) {
   const targetError = targetWeight && !validTarget(goal, currentWeight, targetWeight);
   return (
-    <View>
-      <SectionIntro
-        eyebrow="DIRECTION, NOT A DEADLINE"
-        title="How quickly should the starting plan move?"
-        body={goal ? goalNotes[goal] : 'The pace controls the starting calorie adjustment.'}
-      />
-      <View style={styles.formCard}>
-        <NumberField label="Target weight" unit="kg" value={targetWeight} onChange={setTargetWeight} placeholder="Optional" />
-      </View>
-      {targetError ? (
-        <Text style={styles.errorText}>
-          For this goal, choose a target in the intended direction or leave it blank.
-        </Text>
-      ) : <Text style={styles.helperText}>A target weight helps the coach frame progress, but it does not create a deadline.</Text>}
-      <Text style={styles.groupLabel}>STARTING PACE</Text>
-      <ChoiceList choices={paceChoices} onSelect={setPace} selected={pace} />
-    </View>
+    <>
+      <Reveal>
+        <StepIntro
+          eyebrow="DIRECTION, NOT A DEADLINE"
+          title="How quickly should the starting plan move?"
+          body={goal ? goalNotes[goal] : 'The pace controls the starting calorie adjustment.'}
+        />
+      </Reveal>
+
+      <Reveal index={1}>
+        <Card>
+          <View style={styles.grid}>
+            <NumberField
+              label="Target weight"
+              onChange={setTargetWeight}
+              placeholder="Optional"
+              unit="kg"
+              value={targetWeight}
+            />
+          </View>
+          {targetError ? (
+            <View style={styles.noteRow}>
+              <Glyph color={palette.danger} name="alert" size={14} />
+              <Text style={styles.errorText}>
+                For this goal, choose a target in the intended direction or leave it blank.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.noteRow}>
+              <Glyph color={palette.inkLow} name="info" size={14} />
+              <Text style={styles.helperText}>
+                A target weight helps the coach frame progress, but it does not create a deadline.
+              </Text>
+            </View>
+          )}
+        </Card>
+      </Reveal>
+
+      <Reveal index={2}>
+        <SectionTitle title="Starting pace" />
+      </Reveal>
+      <ChoiceList choices={paceChoices} onSelect={setPace} selected={pace} startIndex={3} />
+    </>
   );
 }
 
@@ -608,20 +780,42 @@ function TrainingSetup({
   trainingDays: string;
 }) {
   return (
-    <View>
-      <SectionIntro
-        eyebrow="A PLAN THAT FITS THE WEEK"
-        title="What training can you realistically repeat?"
-        body="These answers set weekly minutes, strength frequency and the kind of suggestions you receive."
-      />
+    <>
+      <Reveal>
+        <StepIntro
+          eyebrow="A PLAN THAT FITS THE WEEK"
+          title="What training can you realistically repeat?"
+          body="These answers set weekly minutes, strength frequency and the kind of suggestions you receive."
+        />
+      </Reveal>
       <ChoiceList choices={workoutChoices} onSelect={setPreference} selected={preference} />
-      <Text style={styles.groupLabel}>YOUR EXPERIENCE</Text>
-      <ChoiceList choices={experienceChoices} onSelect={setExperience} selected={experience} />
-      <View style={styles.formCard}>
-        <NumberField label="Days available" unit="/ week" value={trainingDays} onChange={setTrainingDays} placeholder="3" />
-        <NumberField label="Time per session" unit="minutes" value={availableMinutes} onChange={setAvailableMinutes} placeholder="30" />
-      </View>
-    </View>
+
+      <Reveal index={6}>
+        <SectionTitle title="Your experience" />
+      </Reveal>
+      <ChoiceList choices={experienceChoices} onSelect={setExperience} selected={experience} startIndex={7} />
+
+      <Reveal index={10} style={styles.group}>
+        <Card>
+          <View style={styles.grid}>
+            <NumberField
+              label="Days available"
+              onChange={setTrainingDays}
+              placeholder="3"
+              unit="/ week"
+              value={trainingDays}
+            />
+            <NumberField
+              label="Time per session"
+              onChange={setAvailableMinutes}
+              placeholder="30"
+              unit="minutes"
+              value={availableMinutes}
+            />
+          </View>
+        </Card>
+      </Reveal>
+    </>
   );
 }
 
@@ -641,24 +835,42 @@ function FoodSetup({
   setMealsPerDay: (value: string) => void;
 }) {
   return (
-    <View>
-      <SectionIntro
-        eyebrow="YOUR FOOD, NOT A TEMPLATE"
-        title="What does eating normally look like?"
-        body="The coach uses this to choose relevant protein sources, meal examples and portion advice."
-      />
-      <ChoiceList choices={dietChoices} onSelect={setDietStyle} selected={dietStyle} />
-      <View style={styles.formCard}>
-        <NumberField label="Meals most days" unit="/ day" value={mealsPerDay} onChange={setMealsPerDay} placeholder="3" />
-        <TextField
-          label="Allergies or foods to avoid"
-          onChange={setAllergies}
-          placeholder="e.g. peanuts, shellfish"
-          value={allergies}
+    <>
+      <Reveal>
+        <StepIntro
+          eyebrow="YOUR FOOD, NOT A TEMPLATE"
+          title="What does eating normally look like?"
+          body="The coach uses this to choose relevant protein sources, meal examples and portion advice."
         />
-      </View>
-      <Text style={styles.helperText}>Separate multiple items with commas. Leave blank if none.</Text>
-    </View>
+      </Reveal>
+      <ChoiceList choices={dietChoices} onSelect={setDietStyle} selected={dietStyle} />
+
+      <Reveal index={6} style={styles.group}>
+        <Card>
+          <View style={styles.grid}>
+            <NumberField
+              label="Meals most days"
+              onChange={setMealsPerDay}
+              placeholder="3"
+              unit="/ day"
+              value={mealsPerDay}
+            />
+          </View>
+          <View style={styles.stacked}>
+            <TextField
+              label="Allergies or foods to avoid"
+              onChange={setAllergies}
+              placeholder="e.g. peanuts, shellfish"
+              value={allergies}
+            />
+          </View>
+          <View style={styles.noteRow}>
+            <Glyph color={palette.inkLow} name="info" size={14} />
+            <Text style={styles.helperText}>Separate multiple items with commas. Leave blank if none.</Text>
+          </View>
+        </Card>
+      </Reveal>
+    </>
   );
 }
 
@@ -678,48 +890,75 @@ function SupportSetup({
   tone: CoachingTone | null;
 }) {
   return (
-    <View>
-      <SectionIntro
-        eyebrow="WHAT USUALLY GETS IN THE WAY"
-        title="Make the advice useful on difficult days."
-        body="Your main challenge determines which gap the app calls out first."
-      />
-      <ChoiceList choices={challengeChoices} onSelect={setChallenge} selected={challenge} />
-      <Text style={styles.groupLabel}>HOW SHOULD THE COACH SPEAK?</Text>
-      <ChoiceList choices={toneChoices} onSelect={setTone} selected={tone} />
-      <View style={styles.formCard}>
-        <TextField
-          label="Injuries or movement limits"
-          onChange={setInjuries}
-          placeholder="e.g. sensitive left knee"
-          value={injuries}
+    <>
+      <Reveal>
+        <StepIntro
+          eyebrow="WHAT USUALLY GETS IN THE WAY"
+          title="Make the advice useful on difficult days."
+          body="Your main challenge determines which gap the app calls out first."
         />
-      </View>
-      <Text style={styles.helperText}>The app avoids suggesting around a noted limitation, but it cannot diagnose or rehabilitate an injury.</Text>
-    </View>
+      </Reveal>
+      <ChoiceList choices={challengeChoices} onSelect={setChallenge} selected={challenge} />
+
+      <Reveal index={6}>
+        <SectionTitle title="How should the coach speak?" />
+      </Reveal>
+      <ChoiceList choices={toneChoices} onSelect={setTone} selected={tone} startIndex={7} />
+
+      <Reveal index={10} style={styles.group}>
+        <Card>
+          <TextField
+            label="Injuries or movement limits"
+            onChange={setInjuries}
+            placeholder="e.g. sensitive left knee"
+            value={injuries}
+          />
+          <View style={styles.noteRow}>
+            <Glyph color={palette.inkLow} name="info" size={14} />
+            <Text style={styles.helperText}>
+              The app avoids suggesting around a noted limitation, but it cannot diagnose or rehabilitate an injury.
+            </Text>
+          </View>
+        </Card>
+      </Reveal>
+    </>
   );
 }
 
 function Calibration({ bowl, setBowl }: { bowl: string; setBowl: (value: string) => void }) {
   return (
-    <View>
-      <SectionIntro
-        eyebrow="ONE USEFUL MEASUREMENT"
-        title="Make home-food estimates less random."
-        body="Your usual bowl size changes calculations for dal, rajma, rice and other foods logged by volume."
-      />
-      <View style={styles.formCard}>
-        <NumberField label="Your usual bowl" unit="ml" value={bowl} onChange={setBowl} placeholder="200" />
-      </View>
-      <View style={styles.tip}>
-        <Glyph name="water" color={palette.limeDark} size={19} />
-        <Text style={styles.tipText}>Fill the bowl with water once and pour it into a measuring jug. You can skip this and add it later.</Text>
-      </View>
-      <View style={styles.whyCard}>
-        <Text style={styles.whyTitle}>What will stay approximate?</Text>
-        <Text style={styles.whyBody}>Oil, recipes and restaurant portions still vary. The app shows a range and its assumptions before saving.</Text>
-      </View>
-    </View>
+    <>
+      <Reveal>
+        <StepIntro
+          eyebrow="ONE USEFUL MEASUREMENT"
+          title="Make home-food estimates less random."
+          body="Your usual bowl size changes calculations for dal, rajma, rice and other foods logged by volume."
+        />
+      </Reveal>
+
+      <Reveal index={1}>
+        <Card>
+          <View style={styles.grid}>
+            <NumberField label="Your usual bowl" onChange={setBowl} placeholder="200" unit="ml" value={bowl} />
+          </View>
+          <Well style={styles.tip}>
+            <Glyph color={palette.lime} name="water" size={17} />
+            <Text style={styles.tipText}>
+              Fill the bowl with water once and pour it into a measuring jug. You can skip this and add it later.
+            </Text>
+          </Well>
+        </Card>
+      </Reveal>
+
+      <Reveal index={2} style={styles.group}>
+        <Card>
+          <Text style={styles.cardTitle}>What will stay approximate?</Text>
+          <Text style={styles.cardBody}>
+            Oil, recipes and restaurant portions still vary. The app shows a range and its assumptions before saving.
+          </Text>
+        </Card>
+      </Reveal>
+    </>
   );
 }
 
@@ -749,60 +988,102 @@ function PlanPreview({
   voiceMessage: string;
 }) {
   return (
-    <View>
-      <SectionIntro
-        eyebrow="YOUR STARTING PLAN"
-        title={`${goalLabel(goal ?? undefined)}—with numbers that have a reason.`}
-        body="These are starting estimates. Your 2–4 week trend, energy and training performance should guide later adjustments."
-      />
-      <View style={styles.planCard}>
-        <Text style={styles.planKicker}>DAILY TARGETS</Text>
-        <Text style={styles.planCalories}>{goals.calories.toLocaleString()} <Text style={styles.planUnit}>kcal</Text></Text>
-        <Text style={styles.planBasis}>{plan.summary}</Text>
-        <View style={styles.metricGrid}>
-          <PlanMetric label="Protein" value={`${goals.protein} g`} />
-          <PlanMetric label="Water" value={`${(goals.waterMl / 1000).toFixed(1)} L`} />
-          <PlanMetric label="Steps" value={goals.steps.toLocaleString()} />
-          <PlanMetric label="Training" value={`${goals.weeklyWorkoutMinutes} min/wk`} />
-        </View>
-        <View style={styles.methodRow}>
-          <Text style={styles.methodLabel}>METHOD</Text>
-          <Text style={styles.methodText}>{plan.method} · maintenance ~{plan.maintenanceCalories} kcal</Text>
-        </View>
-      </View>
-      {plan.warnings.map((warning) => <Text key={warning} style={styles.warningText}>• {warning}</Text>)}
+    <>
+      <Reveal>
+        <StepIntro
+          eyebrow="YOUR STARTING PLAN"
+          title={`${goalLabel(goal ?? undefined)}—with numbers that have a reason.`}
+          body="These are starting estimates. Your 2–4 week trend, energy and training performance should guide later adjustments."
+        />
+      </Reveal>
 
-      <Text style={styles.groupLabel}>OPTIONAL CONNECTION CHECKS</Text>
-      <SetupCard
-        body={setupDetail}
-        busy={healthBusy}
-        button="Connect"
-        icon="heart"
-        message={healthMessage}
-        onPress={onConnectHealth}
-        title={setupTitle}
-      />
-      <SetupCard
-        body={Platform.OS === 'ios' && !Device.isDevice
-          ? 'The iOS Simulator cannot record voice. Typed logging works here; test voice on an iPhone.'
-          : 'Checks microphone permission and whether the local AI service is ready.'}
-        busy={voiceBusy}
-        button="Test voice"
-        icon="mic"
-        message={voiceMessage}
-        onPress={onTestVoice}
-        title="Voice logging"
-      />
-    </View>
-  );
-}
+      <Reveal index={1}>
+        <Card glow raised>
+          <Text style={styles.planLabel}>DAILY TARGETS</Text>
+          <View style={styles.planValueRow}>
+            <CountUp style={styles.planValue} value={goals.calories} />
+            <Text style={styles.planUnit}>kcal</Text>
+          </View>
+          <Text style={styles.planSummary}>{plan.summary}</Text>
 
-function PlanMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.planMetric}>
-      <Text style={styles.planMetricValue}>{value}</Text>
-      <Text style={styles.planMetricLabel}>{label}</Text>
-    </View>
+          <View style={styles.macros}>
+            <MacroChip color={macroColor.protein} goal={goals.protein} label="Protein" value={goals.protein} />
+            <MacroChip color={macroColor.carbs} goal={goals.carbs} label="Carbs" value={goals.carbs} />
+            <MacroChip color={macroColor.fat} goal={goals.fat} label="Fat" value={goals.fat} />
+          </View>
+
+          <Well style={styles.method}>
+            <Text style={styles.methodLabel}>METHOD</Text>
+            <Text style={styles.methodText}>
+              {plan.method} · maintenance ~{plan.maintenanceCalories} kcal
+            </Text>
+          </Well>
+        </Card>
+      </Reveal>
+
+      <Reveal index={2} style={styles.metrics}>
+        <Metric
+          accent={palette.info}
+          detail="Daily target"
+          icon="water"
+          label="Water"
+          value={`${(goals.waterMl / 1000).toFixed(1)} L`}
+        />
+        <Metric
+          accent={palette.lime}
+          detail="Daily target"
+          icon="steps"
+          label="Steps"
+          value={goals.steps.toLocaleString()}
+        />
+        <Metric
+          accent={palette.fat}
+          detail="Per week"
+          icon="timer"
+          label="Training"
+          value={`${goals.weeklyWorkoutMinutes} min`}
+        />
+      </Reveal>
+
+      {plan.warnings.length ? (
+        <Reveal index={3} style={styles.group}>
+          <Card>
+            {plan.warnings.map((warning, index) => (
+              <View key={warning} style={[styles.warningRow, index > 0 && styles.warningSpacing]}>
+                <Glyph color={palette.warn} name="info" size={14} />
+                <Text style={styles.warningText}>{warning}</Text>
+              </View>
+            ))}
+          </Card>
+        </Reveal>
+      ) : null}
+
+      <Reveal index={4}>
+        <SectionTitle title="Optional connection checks" />
+      </Reveal>
+      <Reveal index={5}>
+        <SetupCard
+          body={setupDetail}
+          busy={healthBusy}
+          button="Connect"
+          icon="heart"
+          message={healthMessage}
+          onPress={onConnectHealth}
+          title={setupTitle}
+        />
+      </Reveal>
+      <Reveal index={6} style={styles.group}>
+        <SetupCard
+          body="Checks microphone and speech permission. Dictation is transcribed on this device, so voice logging is free and needs no account."
+          busy={voiceBusy}
+          button="Test voice"
+          icon="mic"
+          message={voiceMessage}
+          onPress={onTestVoice}
+          title="Voice logging"
+        />
+      </Reveal>
+    </>
   );
 }
 
@@ -824,21 +1105,38 @@ function SetupCard({
   title: string;
 }) {
   return (
-    <View style={styles.setupCard}>
-      <View style={styles.setupRow}>
-        <View style={styles.setupIcon}><Glyph name={icon} color={palette.forest} size={20} /></View>
+    <Card>
+      <View style={styles.setupHead}>
+        <View style={styles.setupIcon}>
+          <Glyph color={palette.lime} name={icon} size={18} />
+        </View>
         <View style={styles.choiceCopy}>
           <Text style={styles.choiceTitle}>{title}</Text>
           <Text style={styles.choiceBody}>{body}</Text>
         </View>
       </View>
-      {message ? <Text style={styles.setupMessage}>{message}</Text> : null}
-      <Pressable disabled={busy} onPress={onPress} style={({ pressed }) => [styles.setupButton, pressed && styles.pressed]}>
-        {busy ? <ActivityIndicator color={palette.forest} size="small" /> : <Text style={styles.setupButtonText}>{button}</Text>}
-      </Pressable>
-    </View>
+      {message ? (
+        <Well style={styles.setupMessage}>
+          <Text style={styles.setupMessageText}>{message}</Text>
+        </Well>
+      ) : null}
+      <Tap
+        accessibilityLabel={button}
+        disabled={busy}
+        onPress={onPress}
+        scaleTo={0.975}
+        style={styles.setupAction}>
+        {busy
+          ? <ActivityIndicator color={palette.lime} size="small" />
+          : <Text style={styles.setupActionLabel}>{button}</Text>}
+      </Tap>
+    </Card>
   );
 }
+
+/* ------------------------------------------------------------------ *
+ * Fields
+ * ------------------------------------------------------------------ */
 
 function NumberField({
   label,
@@ -853,20 +1151,25 @@ function NumberField({
   unit: string;
   value: string;
 }) {
+  const [focused, setFocused] = useState(false);
   return (
     <View style={styles.field}>
-      <Text style={styles.fieldLabel}>{label}</Text>
-      <View style={styles.inputRow}>
+      <Text style={styles.fieldLabel}>{label.toUpperCase()}</Text>
+      <View style={[styles.shell, focused && styles.shellOn]}>
         <TextInput
+          accessibilityLabel={label}
           keyboardType="decimal-pad"
+          onBlur={() => setFocused(false)}
           onChangeText={(next) => onChange(next.replace(/[^\d.]/g, ''))}
+          onFocus={() => setFocused(true)}
           placeholder={placeholder}
-          placeholderTextColor="#929A93"
+          placeholderTextColor={palette.inkLow}
+          selectionColor={palette.lime}
           selectTextOnFocus
           style={styles.numberInput}
           value={value}
         />
-        <Text style={styles.fieldUnit}>{unit}</Text>
+        <Text numberOfLines={1} style={styles.fieldUnit}>{unit}</Text>
       </View>
     </View>
   );
@@ -883,20 +1186,31 @@ function TextField({
   placeholder: string;
   value: string;
 }) {
+  const [focused, setFocused] = useState(false);
   return (
     <View style={styles.textField}>
-      <Text style={styles.fieldLabel}>{label}</Text>
-      <TextInput
-        autoCapitalize="sentences"
-        onChangeText={onChange}
-        placeholder={placeholder}
-        placeholderTextColor="#929A93"
-        style={styles.textInput}
-        value={value}
-      />
+      <Text style={styles.fieldLabel}>{label.toUpperCase()}</Text>
+      <View style={[styles.shell, focused && styles.shellOn]}>
+        <TextInput
+          accessibilityLabel={label}
+          autoCapitalize="sentences"
+          onBlur={() => setFocused(false)}
+          onChangeText={onChange}
+          onFocus={() => setFocused(true)}
+          placeholder={placeholder}
+          placeholderTextColor={palette.inkLow}
+          selectionColor={palette.lime}
+          style={styles.textInput}
+          value={value}
+        />
+      </View>
     </View>
   );
 }
+
+/* ------------------------------------------------------------------ *
+ * Validation helpers — unchanged
+ * ------------------------------------------------------------------ */
 
 function numeric(value: string) {
   const parsed = Number(value);
@@ -924,79 +1238,171 @@ function list(value: string) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: palette.canvas },
   fill: { flex: 1 },
-  loading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.canvas },
-  topBar: { height: 52, paddingHorizontal: space.md, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  back: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
-  backText: { color: palette.ink, fontFamily: type.demi, fontSize: 22 },
-  progressTrack: { flex: 1, height: 4, borderRadius: 2, backgroundColor: palette.line, overflow: 'hidden' },
-  progressFill: { height: '100%', borderRadius: 2, backgroundColor: palette.limeDark },
-  stepCount: { width: 38, color: palette.muted, fontFamily: type.demi, fontSize: 9, textAlign: 'right' },
-  content: { flexGrow: 1, paddingHorizontal: space.lg, paddingTop: 18, paddingBottom: 30 },
-  footer: { paddingHorizontal: space.lg, paddingTop: 10, paddingBottom: 12, backgroundColor: palette.canvas },
-  primary: { height: 56, borderRadius: radius.md, backgroundColor: palette.forest, alignItems: 'center', justifyContent: 'center' },
-  primaryText: { color: palette.lime, fontFamily: type.demi, fontSize: 14 },
-  disabled: { opacity: 0.35 },
-  pressed: { opacity: 0.84, transform: [{ scale: 0.99 }] },
-  footerHint: { color: palette.muted, fontFamily: type.regular, fontSize: 9.5, textAlign: 'center', marginTop: 7 },
-  welcome: { paddingTop: 28 },
-  brandMark: { width: 62, height: 62, borderRadius: 21, backgroundColor: palette.forest, alignItems: 'center', justifyContent: 'center', marginBottom: 22 },
-  welcomeKicker: { color: palette.limeDark, fontFamily: type.demi, fontSize: 9, letterSpacing: 1.8 },
-  welcomeTitle: { color: palette.ink, fontFamily: type.demi, fontSize: 35, lineHeight: 39, letterSpacing: -1.5, marginTop: 8, maxWidth: 340 },
-  welcomeBody: { color: palette.muted, fontFamily: type.regular, fontSize: 13, lineHeight: 20, marginTop: 13, maxWidth: 350 },
-  promise: { marginTop: 30, gap: 12 },
-  promiseRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  promiseIcon: { width: 38, height: 38, borderRadius: 13, backgroundColor: palette.softLime, alignItems: 'center', justifyContent: 'center' },
-  promiseText: { flex: 1, color: palette.ink, fontFamily: type.medium, fontSize: 12, lineHeight: 17 },
-  safetyCopy: { color: palette.muted, fontFamily: type.regular, fontSize: 9.5, lineHeight: 15, marginTop: 28 },
-  eyebrow: { color: palette.limeDark, fontFamily: type.demi, fontSize: 9, letterSpacing: 1.5 },
-  questionTitle: { color: palette.ink, fontFamily: type.demi, fontSize: 29, lineHeight: 33, letterSpacing: -1, marginTop: 8 },
-  questionBody: { color: palette.muted, fontFamily: type.regular, fontSize: 12.5, lineHeight: 19, marginTop: 9, marginBottom: 18 },
-  choices: { gap: 9 },
-  choice: { minHeight: 70, padding: 14, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, flexDirection: 'row', alignItems: 'center', gap: 11 },
-  choiceActive: { borderColor: palette.limeDark, backgroundColor: '#F1F8E5' },
-  choiceIcon: { width: 38, height: 38, borderRadius: 13, backgroundColor: '#EEF1EA', alignItems: 'center', justifyContent: 'center' },
-  choiceIconActive: { backgroundColor: palette.softLime },
+  loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+
+  /* header + progress */
+  topBar: {
+    height: 46,
+    paddingHorizontal: space.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+  },
+  back: {
+    width: 36,
+    height: 36,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepCount: { ...text.label, ...tabular, flex: 1, color: palette.inkLow, textAlign: 'center' },
+  trackWrap: { paddingHorizontal: space.md, paddingBottom: space.md },
+  track: { height: 4, justifyContent: 'center' },
+  trackHead: {
+    ...shadow.glowSoft,
+    position: 'absolute',
+    top: -2.5,
+    left: 0,
+    width: THUMB,
+    height: THUMB,
+    borderRadius: THUMB / 2,
+    backgroundColor: palette.lime,
+  },
+
+  content: { paddingHorizontal: space.md, paddingBottom: space.tabClearance },
+
+  /* step intro */
+  intro: { marginBottom: space.lg },
+  eyebrow: { ...text.label, color: palette.lime, marginBottom: 10 },
+  title: { ...text.title, color: palette.ink },
+  body: { ...text.body, color: palette.inkMid, marginTop: 10 },
+  group: { marginTop: space.md },
+
+  /* welcome */
+  brandRow: { marginTop: space.sm, marginBottom: space.lg },
+  promiseCard: { paddingHorizontal: 14 },
+  promiseRow: { minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 },
+  promiseBorder: { borderBottomWidth: 1, borderBottomColor: palette.line },
+  promiseIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    backgroundColor: palette.limeSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  promiseText: { ...text.body, flex: 1, color: palette.ink },
+  fineprint: { ...text.caption, fontSize: 10.5, color: palette.inkLow },
+
+  /* choice cards */
+  choices: { gap: 10 },
+  choice: {
+    minHeight: 78,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 14,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: palette.surface,
+  },
+  choiceOn: { borderColor: palette.lime, backgroundColor: palette.limeSoft },
+  choiceIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: palette.surfaceLo,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  choiceIconOn: { borderColor: palette.lime, backgroundColor: palette.lime },
   choiceCopy: { flex: 1 },
-  choiceTitle: { color: palette.ink, fontFamily: type.demi, fontSize: 12.5 },
-  choiceBody: { color: palette.muted, fontFamily: type.regular, fontSize: 10.5, lineHeight: 15, marginTop: 3 },
-  radio: { width: 18, height: 18, borderRadius: 9, borderWidth: 1.5, borderColor: '#AFB7B0', alignItems: 'center', justifyContent: 'center' },
-  radioActive: { borderColor: palette.limeDark },
-  radioDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: palette.limeDark },
-  groupLabel: { color: palette.muted, fontFamily: type.demi, fontSize: 9, letterSpacing: 1.3, marginTop: 24, marginBottom: 9 },
-  formCard: { marginTop: 18, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, paddingHorizontal: 15 },
-  field: { minHeight: 66, borderBottomWidth: 1, borderBottomColor: palette.line, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  fieldLabel: { color: palette.ink, fontFamily: type.medium, fontSize: 12 },
-  inputRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
-  numberInput: { minWidth: 76, color: palette.ink, fontFamily: type.demi, fontSize: 18, textAlign: 'right', paddingVertical: 9 },
-  fieldUnit: { width: 48, color: palette.muted, fontFamily: type.regular, fontSize: 9.5 },
-  textField: { minHeight: 74, justifyContent: 'center' },
-  textInput: { color: palette.ink, fontFamily: type.regular, fontSize: 12, paddingVertical: 7 },
-  helperText: { color: palette.muted, fontFamily: type.regular, fontSize: 9.5, lineHeight: 15, marginTop: 8, paddingHorizontal: 3 },
-  errorText: { color: palette.coral, fontFamily: type.medium, fontSize: 9.5, lineHeight: 15, marginTop: 8, paddingHorizontal: 3 },
-  tip: { flexDirection: 'row', gap: 11, backgroundColor: palette.softLime, padding: 14, borderRadius: radius.md, marginTop: 14 },
-  tipText: { flex: 1, color: palette.ink, fontFamily: type.regular, fontSize: 10.5, lineHeight: 16 },
-  whyCard: { backgroundColor: palette.paper, borderRadius: radius.md, padding: 16, marginTop: 12 },
-  whyTitle: { color: palette.ink, fontFamily: type.demi, fontSize: 12 },
-  whyBody: { color: palette.muted, fontFamily: type.regular, fontSize: 10.5, lineHeight: 16, marginTop: 5 },
-  planCard: { backgroundColor: palette.forest, borderRadius: radius.lg, padding: 19 },
-  planKicker: { color: palette.lime, fontFamily: type.demi, fontSize: 9, letterSpacing: 1.4 },
-  planCalories: { color: palette.white, fontFamily: type.demi, fontSize: 39, letterSpacing: -1.5, marginTop: 3 },
-  planUnit: { color: '#AEB9B0', fontFamily: type.medium, fontSize: 12 },
-  planBasis: { color: '#C7CEC8', fontFamily: type.regular, fontSize: 10.5, lineHeight: 16, marginTop: 3 },
-  metricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 17 },
-  planMetric: { width: '48%', backgroundColor: '#243029', borderRadius: radius.sm, padding: 11 },
-  planMetricValue: { color: palette.white, fontFamily: type.demi, fontSize: 14 },
-  planMetricLabel: { color: '#AEB9B0', fontFamily: type.regular, fontSize: 9, marginTop: 2 },
-  methodRow: { borderTopWidth: 1, borderTopColor: '#344138', marginTop: 16, paddingTop: 12 },
-  methodLabel: { color: palette.lime, fontFamily: type.demi, fontSize: 8, letterSpacing: 1.1 },
-  methodText: { color: '#AEB9B0', fontFamily: type.regular, fontSize: 9.5, lineHeight: 14, marginTop: 3 },
-  warningText: { color: palette.muted, fontFamily: type.regular, fontSize: 9.5, lineHeight: 15, marginTop: 8, paddingHorizontal: 3 },
-  setupCard: { backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, padding: 14, marginBottom: 10 },
-  setupRow: { flexDirection: 'row', alignItems: 'center', gap: 11 },
-  setupIcon: { width: 40, height: 40, borderRadius: 14, backgroundColor: palette.softLime, alignItems: 'center', justifyContent: 'center' },
-  setupMessage: { color: palette.muted, fontFamily: type.regular, fontSize: 9.5, lineHeight: 15, marginTop: 10 },
-  setupButton: { height: 39, borderRadius: radius.sm, backgroundColor: '#EDF2E7', alignItems: 'center', justifyContent: 'center', marginTop: 11 },
-  setupButtonText: { color: palette.forest, fontFamily: type.demi, fontSize: 11 },
+  choiceTitle: { ...text.row, color: palette.ink },
+  choiceBody: { ...text.caption, color: palette.inkMid, marginTop: 3 },
+  mark: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  /* fields */
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  field: { flexBasis: '44%', flexGrow: 1, gap: 8 },
+  textField: { gap: 8 },
+  stacked: { marginTop: 14 },
+  fieldLabel: { ...text.label, color: palette.inkLow },
+  shell: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 58,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: palette.surfaceLo,
+    paddingHorizontal: 14,
+  },
+  shellOn: { borderColor: palette.lime },
+  numberInput: { ...text.headline, ...tabular, flex: 1, color: palette.ink, paddingVertical: 14 },
+  fieldUnit: { ...text.caption, fontSize: 11, color: palette.inkLow },
+  textInput: { ...text.body, flex: 1, color: palette.ink, paddingVertical: 14 },
+
+  /* inline notes */
+  noteRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 14 },
+  warningRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  helperText: { ...text.caption, flex: 1, color: palette.inkLow },
+  errorText: { ...text.caption, flex: 1, color: palette.danger },
+  warningText: { ...text.caption, flex: 1, color: palette.inkMid },
+  warningSpacing: { marginTop: 12 },
+
+  /* calibration */
+  tip: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginTop: 14 },
+  tipText: { ...text.caption, flex: 1, color: palette.inkMid },
+  cardTitle: { ...text.section, color: palette.ink },
+  cardBody: { ...text.caption, color: palette.inkMid, marginTop: 6 },
+
+  /* plan payoff */
+  planLabel: { ...text.label, color: palette.lime },
+  planValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 12 },
+  planValue: { ...text.hero, ...tabular, color: palette.ink },
+  planUnit: { ...text.caption, color: palette.inkMid },
+  planSummary: { ...text.caption, color: palette.inkMid, marginTop: 8 },
+  macros: { flexDirection: 'row', gap: 7, marginTop: 18 },
+  method: { marginTop: 14 },
+  methodLabel: { ...text.label, fontSize: 8.5, letterSpacing: 1.2, color: palette.inkLow },
+  methodText: { ...text.caption, fontSize: 11, color: palette.inkMid, marginTop: 4 },
+  metrics: { flexDirection: 'row', gap: 8, marginTop: 10 },
+
+  /* permission cards */
+  setupHead: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  setupIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: palette.limeSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  setupMessage: { marginTop: 12 },
+  setupMessageText: { ...text.caption, color: palette.inkMid },
+  setupAction: {
+    minHeight: 46,
+    marginTop: 14,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: palette.lineHi,
+    backgroundColor: palette.surfaceHi,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  setupActionLabel: { ...text.value, color: palette.lime },
+
+  footerHint: { ...text.caption, fontSize: 11, color: palette.inkLow, textAlign: 'center' },
 });

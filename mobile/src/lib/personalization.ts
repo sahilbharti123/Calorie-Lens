@@ -183,7 +183,7 @@ export function personalDailyNudge(data: AppData, day: DayLog) {
     const uncertainMeal = [...day.meals].reverse().find((meal) => meal.confidence === 'low');
     if (uncertainMeal) {
       return {
-        title: `Tighten the ${uncertainMeal.name} estimate`,
+        title: `Tighten the ${inlineFoodName(uncertainMeal.name)} estimate`,
         body: 'Its range is wide. Add a gram weight, measured bowl volume or recipe detail before changing what you eat.',
       };
     }
@@ -277,6 +277,17 @@ export function personalOfflineReply(message: string, data: AppData, day: DayLog
   }
   const nudge = personalDailyNudge(data, day);
   return coachTone(profile, `${nudge.title}. ${nudge.body}`);
+}
+
+/**
+ * Food names arrive sentence-cased from the catalog — "Cooked kidney beans" —
+ * which reads as a proper noun once it sits mid-sentence. Lowercase the first
+ * letter, but leave anything carrying its own capitals ("Amul Dahi", "MTR
+ * Poha") exactly as the user or the catalog wrote it.
+ */
+function inlineFoodName(name: string) {
+  const rest = name.slice(1);
+  return rest === rest.toLowerCase() ? `${name.charAt(0).toLowerCase()}${rest}` : name;
 }
 
 function proteinSuggestion(profile: PersonalProfile, proteinGap: number) {

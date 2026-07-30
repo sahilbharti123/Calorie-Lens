@@ -2,13 +2,25 @@
 
 Calorie Lens separates language understanding from measurement:
 
-1. Gemini transcribes speech and extracts facts such as food, amount, unit,
-   preparation, activity, duration, speed, and intensity.
-2. A deterministic engine maps those facts to reviewed references.
-3. The app shows the midpoint, plausible low–high range, assumptions,
+1. The operating system transcribes speech on the device — Apple's Speech
+   framework on iOS, the platform recogniser on Android. No audio is uploaded,
+   and typed input skips this step entirely.
+2. A deterministic parser extracts facts from that text: food, amount, unit,
+   preparation, activity, duration, speed, and intensity. It is ordinary
+   pattern matching against a reviewed catalog, not a model.
+3. A deterministic engine maps those facts to reviewed references.
+4. The app shows the midpoint, plausible low–high range, assumptions,
    confidence, and source before anything is saved.
 
-The model is explicitly prohibited from generating calories or macros.
+No model generates calories or macros. In the shipped default configuration no
+model is involved at any point: remote AI parsing is opt-in behind
+`EXPO_PUBLIC_ENABLE_AI_PARSING=1` and is off. When the parser cannot recognize
+a food it asks for the label calories or the main parts with amounts, rather
+than guessing.
+
+Turning the flag on changes only which component reads the *language*. Even
+then the model is prohibited from generating calories or macros — it returns
+facts, and the same deterministic engine produces every number.
 
 ## Food estimates
 
@@ -129,6 +141,39 @@ photos, and a linked technique video:
   such as a known speed.
 - **Low:** a bowl, a home recipe with unknown oil, or an activity whose effort
   varies substantially.
+
+## Coach insights
+
+The Coach tab shows the day's focus, the current plan, and a short list of
+insights. All of it is computed on the device — the insights by
+`mobile/src/lib/insights.ts`, the day's focus by
+`mobile/src/lib/personalization.ts` — as arithmetic and fixed rules over the
+user's own entries and stated profile. Nothing is sent anywhere, no model is
+involved, and no service is called.
+
+Each insight is a mean or a difference over a stated window, and it names the
+number it came from so the reader can check it:
+
+- **Protein and calorie adherence** — the average across the last seven days
+  that actually have a logged meal, compared with the plan target. Days with no
+  meals are excluded, because averaging them in would understate intake.
+  Calorie drift is only flagged past 12% of target.
+- **Training volume** — logged workout minutes over the last seven days against
+  the planned weekly minutes, with the session count.
+- **Hydration** — the average over days where water was actually tracked, shown
+  only when it falls below three quarters of target.
+- **Estimate quality** — the share of the last seven days' entries that carry a
+  low confidence label, surfaced when it exceeds 40%. This is the app checking
+  its own precision back to the user.
+- **Weight trend** — the change across up to the last eight weigh-ins, with the
+  reminder that only direction over weeks is signal.
+- **Logging streak** — consecutive days with an entry.
+
+These are descriptive statements about what was logged, not predictions and not
+medical advice. They inherit every limitation of the underlying estimates: an
+average of wide estimates is still a wide estimate, which is why the estimate
+quality insight exists. The conversational AI coach is not part of this
+release.
 
 ## Benchmarks and tests
 

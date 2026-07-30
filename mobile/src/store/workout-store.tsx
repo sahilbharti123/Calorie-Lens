@@ -259,6 +259,9 @@ export function WorkoutProvider({ children }: React.PropsWithChildren) {
     const energy = sessionEnergy({ ...session, exercises }, current, bodyWeight, durationMin);
     const finished: WorkoutSession = {
       ...session,
+      // The live session holds the raw text of the name field, so this is the
+      // one place the fallback has to hold: nothing reaches history unnamed.
+      name: session.name.trim() || 'Workout',
       exercises,
       endedAt: endedAt.toISOString(),
       durationMin,

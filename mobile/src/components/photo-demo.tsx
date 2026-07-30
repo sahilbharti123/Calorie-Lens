@@ -1,15 +1,34 @@
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  Animated,
+  Easing,
+  Image,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 
 import { photosFor } from '@/src/lib/exercise-photos';
-import { palette, radius, type } from '@/src/theme';
+import { alpha, palette, radius, space, tabular, text } from '@/src/theme';
 
 /**
  * Real photo demonstration: crossfades between the start and end position of
  * the movement (public-domain photos from free-exercise-db). Tap to pause on
  * either position.
  */
-export function PhotoDemo({ exerciseId, height = 230 }: { exerciseId: string; height?: number }) {
+export function PhotoDemo({
+  exerciseId,
+  height = 230,
+  style,
+}: {
+  exerciseId: string;
+  height?: number;
+  /** Lets a screen drop the frame's radius/border for a full-bleed hero. */
+  style?: StyleProp<ViewStyle>;
+}) {
   const pair = photosFor(exerciseId);
   const fade = useRef(new Animated.Value(0)).current;
   const [paused, setPaused] = useState(false);
@@ -53,7 +72,7 @@ export function PhotoDemo({ exerciseId, height = 230 }: { exerciseId: string; he
           fade.stopAnimation((value) => fade.setValue(value > 0.5 ? 1 : 0));
         }
       }}
-      style={[styles.frame, { height }]}>
+      style={[styles.frame, { height }, style]}>
       <Image resizeMode="contain" source={pair[0]} style={styles.photo} />
       <Animated.Image resizeMode="contain" source={pair[1]} style={[styles.photo, { opacity: fade }]} />
       <View style={styles.badgeRow}>
@@ -66,10 +85,30 @@ export function PhotoDemo({ exerciseId, height = 230 }: { exerciseId: string; he
 }
 
 const styles = StyleSheet.create({
-  frame: { width: '100%', borderRadius: radius.md, backgroundColor: '#FFFFFF', overflow: 'hidden', borderWidth: 1, borderColor: palette.line },
+  frame: {
+    width: '100%',
+    borderRadius: radius.md,
+    backgroundColor: palette.surface,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
   photo: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%' },
-  badgeRow: { position: 'absolute', left: 10, bottom: 8, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(21,32,25,0.82)', borderRadius: radius.pill, paddingHorizontal: 10, paddingVertical: 5 },
-  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#5A6A5E' },
+  badgeRow: {
+    position: 'absolute',
+    left: space.md,
+    bottom: space.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: alpha.scrim,
+    borderWidth: 1,
+    borderColor: alpha.white12,
+    borderRadius: radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: palette.inkLow },
   dotActive: { backgroundColor: palette.lime },
-  badgeText: { color: palette.lime, fontFamily: type.demi, fontSize: 9, letterSpacing: 1, marginLeft: 3 },
+  badgeText: { ...text.label, fontSize: 9, letterSpacing: 1, color: palette.lime, marginLeft: 3, ...tabular },
 });

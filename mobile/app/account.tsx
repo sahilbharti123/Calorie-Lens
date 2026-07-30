@@ -3,27 +3,37 @@ import { File, Paths } from 'expo-file-system';
 import * as Haptics from 'expo-haptics';
 import { type Href, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
-import { useEffect, useMemo, useState } from 'react';
+import { type ComponentProps, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Glyph, type GlyphName } from '@/src/components/glyph';
+import {
+  Bar,
+  Card,
+  GhostButton,
+  ListRow,
+  Pill,
+  PrimaryButton,
+  Reveal,
+  Screen,
+  SectionTitle,
+  Well,
+} from '@/src/components/ui';
 import { apiRequest } from '@/src/lib/api-client';
 import { readRecoveryCode } from '@/src/lib/session';
 import { mergeAppData, normalizeData, useApp } from '@/src/store/app-store';
 import { useAuth } from '@/src/store/auth-store';
-import { palette, radius, space, type } from '@/src/theme';
+import { palette, radius, space, tabular, text } from '@/src/theme';
 import type { AppData, CoachMemory } from '@/src/types';
 
 type BackupFile = {
@@ -225,233 +235,450 @@ export default function AccountScreen() {
     );
   }
 
+  const initials = (session?.user.displayName ?? 'Offline').slice(0, 2).toUpperCase();
+  const aiRatio = aiUsage && aiUsage.limit > 0 ? aiUsage.used / aiUsage.limit : 0;
+
   return (
-    <SafeAreaView edges={['bottom']} style={styles.safe}>
+    <Screen edges={['bottom']}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={{ flex: 1 }}>
+        style={styles.flex}>
         <ScrollView
           contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled">
-          <View style={styles.identity}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {(session?.user.displayName ?? 'Offline').slice(0, 2).toUpperCase()}
-              </Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.name}>{session?.user.displayName ?? 'Offline profile'}</Text>
-              <Text style={styles.email}>{session?.user.email ?? 'No account connected'}</Text>
-            </View>
-            <View style={[styles.syncDot, syncState === 'error' && styles.syncDotError]} />
-          </View>
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}>
 
-          <View style={styles.syncCard}>
-            <View style={styles.syncIcon}><Glyph name="spark" color={palette.forest} size={19} /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.cardTitle}>{syncLabel}</Text>
-              <Text style={styles.cardBody}>
+          {/* ---------- Identity + sync ---------- */}
+          <Reveal>
+            <Card glow raised>
+              <View style={styles.identity}>
+                <View style={styles.avatar}>
+                  <Text style={styles.avatarText}>{initials}</Text>
+                </View>
+                <View style={styles.identityCopy}>
+                  <Text numberOfLines={1} style={styles.name}>
+                    {session?.user.displayName ?? 'Offline profile'}
+                  </Text>
+                  <Text numberOfLines={1} style={styles.email}>
+                    {session?.user.email ?? 'No account connected'}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.pillRow}>
+                <Pill
+                  icon={session ? 'cloud' : 'lock'}
+                  label={syncLabel}
+                  tone={syncState === 'error' ? 'danger' : 'accent'}
+                />
+              </View>
+
+              <Text style={styles.heroBody}>
                 {session
                   ? 'Automatic encrypted sync is active for this account.'
                   : 'Local records are encrypted with a device-only key.'}
               </Text>
-              {syncError ? <Text style={styles.inlineError}>{syncError}</Text> : null}
-            </View>
-            {session ? (
-              <Pressable disabled={syncState === 'syncing'} onPress={() => void syncNow()} style={styles.smallButton}>
-                <Text style={styles.smallButtonText}>Sync</Text>
-              </Pressable>
-            ) : null}
-          </View>
 
+              {syncError ? (
+                <Notice body={syncError} icon="alert" style={styles.heroNotice} tone="danger" />
+              ) : null}
+
+              {session ? (
+                <PrimaryButton
+                  compact
+                  disabled={syncState === 'syncing'}
+                  icon="cloud"
+                  label="Sync now"
+                  loading={syncState === 'syncing'}
+                  onPress={() => void syncNow()}
+                  style={styles.heroAction}
+                />
+              ) : null}
+            </Card>
+          </Reveal>
+
+          {/* ---------- AI budget ---------- */}
           {session && aiUsage ? (
-            <View style={styles.aiCard}>
-              <View style={styles.syncIcon}><Glyph name="spark" color={palette.forest} size={19} /></View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.cardTitle}>AI budget · {aiUsage.used}/{aiUsage.limit} today</Text>
-                <Text style={styles.cardBody}>
-                  Local logging is unlimited · voice {aiUsage.kinds.audio?.used ?? 0}/{aiUsage.kinds.audio?.limit ?? 0} · online coach {aiUsage.kinds.coach?.used ?? 0}/{aiUsage.kinds.coach?.limit ?? 0}
+            <Reveal index={1} style={styles.gap}>
+              <Card>
+                <View style={styles.aiHead}>
+                  <View style={styles.aiIcon}>
+                    <Glyph color={palette.lime} name="spark" size={16} />
+                  </View>
+                  <View style={styles.flex}>
+                    <Text style={styles.aiTitle}>
+                      AI budget · {aiUsage.used}/{aiUsage.limit} today
+                    </Text>
+                    <Text style={styles.aiBody}>
+                      Local logging is unlimited · voice {aiUsage.kinds.audio?.used ?? 0}/{aiUsage.kinds.audio?.limit ?? 0} · online coach {aiUsage.kinds.coach?.used ?? 0}/{aiUsage.kinds.coach?.limit ?? 0}
+                    </Text>
+                  </View>
+                </View>
+                <Bar style={styles.aiBar} value={aiRatio} />
+              </Card>
+            </Reveal>
+          ) : null}
+
+          {/* ---------- Fitness profile ---------- */}
+          <Reveal index={2}>
+            <SectionTitle title="Fitness profile" />
+            <Card padded={false} style={styles.rowCard}>
+              <Well style={styles.planWell}>
+                <Text style={styles.planLabel}>CURRENT PLAN</Text>
+                <Text style={styles.planValue}>{data.plan.summary}</Text>
+              </Well>
+              <ListRow
+                detail="Adjust targets and bowl size"
+                icon="target"
+                onPress={() => router.push('/settings')}
+                title="Goals & calibration"
+              />
+              <ListRow
+                detail="Recalculate from your goal, body, routine and food"
+                icon="spark"
+                last
+                onPress={() => {
+                  void restartOnboarding().then(
+                    () => router.replace('/onboarding' as Href),
+                  );
+                }}
+                title="Personalize again"
+              />
+            </Card>
+          </Reveal>
+
+          {/* ---------- Coach memory ---------- */}
+          <Reveal index={3}>
+            <SectionTitle title="Coach memory" />
+            <Card>
+              <Text style={styles.cardIntro}>
+                These details follow you across devices and help the coach give relevant advice. Separate items with commas.
+              </Text>
+              <View style={styles.fields}>
+                <Field
+                  label="Dietary preferences"
+                  onChangeText={(value) => setMemory((current) => ({ ...current, dietaryPreferences: value }))}
+                  placeholder="vegetarian, high protein"
+                  value={memory.dietaryPreferences}
+                />
+                <Field
+                  label="Injuries or limits"
+                  onChangeText={(value) => setMemory((current) => ({ ...current, injuries: value }))}
+                  placeholder="sensitive left knee"
+                  value={memory.injuries}
+                />
+                <Field
+                  label="Workout preferences"
+                  onChangeText={(value) => setMemory((current) => ({ ...current, workoutPreferences: value }))}
+                  placeholder="strength, morning walks"
+                  value={memory.workoutPreferences}
+                />
+                <Field
+                  label="Coaching style"
+                  onChangeText={(value) => setMemory((current) => ({ ...current, coachingStyle: value }))}
+                  placeholder="direct but supportive"
+                  value={memory.coachingStyle}
+                />
+                <Field
+                  label="Anything else to remember"
+                  multiline
+                  onChangeText={(value) => setMemory((current) => ({ ...current, notes: value }))}
+                  placeholder="My usual schedule, equipment, or motivation"
+                  value={memory.notes}
+                />
+              </View>
+              <PrimaryButton
+                compact
+                icon="check"
+                label="Save coach memory"
+                onPress={saveMemory}
+                style={styles.cardAction}
+              />
+            </Card>
+          </Reveal>
+
+          {/* ---------- Backup & recovery ---------- */}
+          <Reveal index={4}>
+            <SectionTitle title="Backup & recovery" />
+            <Card padded={false} style={styles.rowCard}>
+              <ListRow
+                detail="Portable JSON copy of all fitness records"
+                icon="download"
+                last={!recoveryCode}
+                onPress={busy === 'export' ? undefined : () => void exportBackup()}
+                right={busy === 'export'
+                  ? <ActivityIndicator color={palette.lime} size="small" />
+                  : undefined}
+                title="Export a backup"
+              />
+              <ListRow
+                detail="Import and merge into this device and account"
+                icon="folder"
+                last
+                onPress={busy === 'import' ? undefined : () => void importBackup()}
+                right={busy === 'import'
+                  ? <ActivityIndicator color={palette.lime} size="small" />
+                  : undefined}
+                title="Restore a backup"
+              />
+            </Card>
+            {recoveryCode ? (
+              <Card style={styles.recovery}>
+                <View style={styles.recoveryHead}>
+                  <Glyph color={palette.lime} name="lock" size={14} />
+                  <Text style={styles.recoveryLabel}>ACCOUNT RECOVERY CODE</Text>
+                </View>
+                <Well style={styles.recoveryWell}>
+                  <Text selectable style={styles.recoveryCode}>{recoveryCode}</Text>
+                </Well>
+                <Text style={styles.recoveryHelp}>
+                  Keep a second copy somewhere private. It is not included in fitness backups.
                 </Text>
-              </View>
-            </View>
-          ) : null}
-
-          <SectionLabel text="FITNESS PROFILE" />
-          <ActionRow
-            icon="chart"
-            title="Goals & calibration"
-            body={`${data.plan.summary} · adjust targets and bowl size`}
-            onPress={() => router.push('/settings')}
-          />
-          <ActionRow
-            icon="spark"
-            title="Personalize again"
-            body="Recalculate from your goal, body, routine, food and constraints"
-            onPress={() => {
-              void restartOnboarding().then(
-                () => router.replace('/onboarding' as Href),
-              );
-            }}
-          />
-
-          <SectionLabel text="COACH MEMORY" />
-          <View style={styles.panel}>
-            <Text style={styles.panelIntro}>
-              These details follow you across devices and help the coach give relevant advice. Separate items with commas.
-            </Text>
-            <MemoryField label="Dietary preferences" value={memory.dietaryPreferences} onValueChange={(value) => setMemory((current) => ({ ...current, dietaryPreferences: value }))} placeholder="vegetarian, high protein" />
-            <MemoryField label="Injuries or limits" value={memory.injuries} onValueChange={(value) => setMemory((current) => ({ ...current, injuries: value }))} placeholder="sensitive left knee" />
-            <MemoryField label="Workout preferences" value={memory.workoutPreferences} onValueChange={(value) => setMemory((current) => ({ ...current, workoutPreferences: value }))} placeholder="strength, morning walks" />
-            <MemoryField label="Coaching style" value={memory.coachingStyle} onValueChange={(value) => setMemory((current) => ({ ...current, coachingStyle: value }))} placeholder="direct but supportive" />
-            <MemoryField label="Anything else to remember" value={memory.notes} onValueChange={(value) => setMemory((current) => ({ ...current, notes: value }))} placeholder="My usual schedule, equipment, or motivation" multiline />
-            <Pressable onPress={saveMemory} style={styles.panelButton}><Text style={styles.panelButtonText}>Save coach memory</Text></Pressable>
-          </View>
-
-          <SectionLabel text="BACKUP & RECOVERY" />
-          <View style={styles.actionGroup}>
-            <ActionRow icon="spark" title="Export a backup" body="Portable JSON copy of all fitness records" busy={busy === 'export'} onPress={() => void exportBackup()} />
-            <ActionRow icon="plus" title="Restore a backup" body="Import and merge into this device and account" busy={busy === 'import'} onPress={() => void importBackup()} />
-          </View>
-          {recoveryCode ? (
-            <View style={styles.recovery}>
-              <Text style={styles.recoveryLabel}>ACCOUNT RECOVERY CODE</Text>
-              <Text selectable style={styles.recoveryCode}>{recoveryCode}</Text>
-              <Text style={styles.recoveryHelp}>Keep a second copy somewhere private. It is not included in fitness backups.</Text>
-            </View>
-          ) : null}
-
-          {session ? (
-            <>
-              <SectionLabel text="SECURITY" />
-              <View style={styles.panel}>
-                <MemoryField label="Current password" value={currentPassword} onValueChange={setCurrentPassword} secureTextEntry />
-                <MemoryField label="New password" value={newPassword} onValueChange={setNewPassword} secureTextEntry placeholder="At least 10 characters" />
-                <Pressable disabled={busy === 'password'} onPress={() => void updatePassword()} style={styles.panelButton}>
-                  {busy === 'password' ? <ActivityIndicator color={palette.lime} /> : <Text style={styles.panelButtonText}>Change password</Text>}
-                </Pressable>
-              </View>
-            </>
-          ) : null}
-
-          {message ? <Text style={styles.message}>{message}</Text> : null}
-
-          <SectionLabel text="ACCOUNT ACTIONS" />
-          <View style={styles.actionGroup}>
-            {session ? (
-              <ActionRow icon="chevron" title="Sign out" body="Your local encrypted copy stays on this device" onPress={() => void signOut()} />
-            ) : (
-              <ActionRow icon="chevron" title="Connect an account" body="Enable recovery and cross-device sync" onPress={exitOfflineMode} />
-            )}
-            <ActionRow icon="trash" title="Clear fitness history" body="Erase meals, workouts, water, progress and coach memory" destructive onPress={confirmClear} />
-            {session ? (
-              <ActionRow icon="trash" title="Delete account" body="Permanently remove the account and cloud vault" destructive busy={busy === 'delete'} onPress={confirmDelete} />
+              </Card>
             ) : null}
-          </View>
+          </Reveal>
 
-          <Text style={styles.footnote}>
-            Local fitness data uses authenticated encryption. Account sessions and recovery data are held in the platform secure credential store.
-          </Text>
+          {/* ---------- Security ---------- */}
+          {session ? (
+            <Reveal index={5}>
+              <SectionTitle title="Security" />
+              <Card>
+                <View style={styles.fields}>
+                  <Field
+                    label="Current password"
+                    onChangeText={setCurrentPassword}
+                    secureTextEntry
+                    value={currentPassword}
+                  />
+                  <Field
+                    label="New password"
+                    onChangeText={setNewPassword}
+                    placeholder="At least 10 characters"
+                    secureTextEntry
+                    value={newPassword}
+                  />
+                </View>
+                <PrimaryButton
+                  compact
+                  disabled={busy === 'password'}
+                  icon="lock"
+                  label="Change password"
+                  loading={busy === 'password'}
+                  onPress={() => void updatePassword()}
+                  style={styles.cardAction}
+                />
+              </Card>
+            </Reveal>
+          ) : null}
+
+          {message ? (
+            <Reveal index={6} style={styles.gapLarge}>
+              <Notice body={message} icon="info" tone="info" />
+            </Reveal>
+          ) : null}
+
+          {/* ---------- Account actions ---------- */}
+          <Reveal index={7}>
+            <SectionTitle title="Account actions" />
+            <Card padded={false} style={styles.rowCard}>
+              {session ? (
+                <ListRow
+                  detail="Your local encrypted copy stays on this device"
+                  icon="logout"
+                  last
+                  onPress={() => void signOut()}
+                  title="Sign out"
+                />
+              ) : (
+                <ListRow
+                  detail="Enable recovery and cross-device sync"
+                  icon="cloud"
+                  last
+                  onPress={exitOfflineMode}
+                  title="Connect an account"
+                />
+              )}
+            </Card>
+
+            <View style={styles.danger}>
+              <GhostButton
+                icon="trash"
+                label="Clear fitness history"
+                onPress={confirmClear}
+                tone="danger"
+              />
+              <Text style={styles.dangerNote}>
+                Erase meals, workouts, water, progress and coach memory
+              </Text>
+
+              {session ? (
+                <>
+                  <GhostButton
+                    icon="trash"
+                    label={busy === 'delete' ? 'Deleting…' : 'Delete account'}
+                    onPress={() => {
+                      if (busy === 'delete') return;
+                      confirmDelete();
+                    }}
+                    style={styles.dangerButton}
+                    tone="danger"
+                  />
+                  <Text style={styles.dangerNote}>
+                    Permanently remove the account and cloud vault
+                  </Text>
+                </>
+              ) : null}
+            </View>
+          </Reveal>
+
+          <Reveal index={8}>
+            <Text style={styles.footnote}>
+              Local fitness data uses authenticated encryption. Account sessions and recovery data are held in the platform secure credential store.
+            </Text>
+          </Reveal>
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
-function SectionLabel({ text }: { text: string }) {
-  return <Text style={styles.sectionLabel}>{text}</Text>;
-}
-
-function ActionRow({
-  body,
-  busy,
-  destructive,
-  icon,
-  onPress,
-  title,
-}: {
-  body: string;
-  busy?: boolean;
-  destructive?: boolean;
-  icon: GlyphName;
-  onPress: () => void;
-  title: string;
-}) {
-  return (
-    <Pressable disabled={busy} onPress={onPress} style={styles.actionRow}>
-      <View style={[styles.actionIcon, destructive && styles.actionIconDestructive]}>
-        {busy
-          ? <ActivityIndicator size="small" color={palette.forest} />
-          : <Glyph name={icon} color={destructive ? palette.coral : palette.forest} size={18} />}
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={[styles.actionTitle, destructive && { color: palette.coral }]}>{title}</Text>
-        <Text style={styles.actionBody}>{body}</Text>
-      </View>
-      <Glyph name="chevron" color={palette.muted} size={15} />
-    </Pressable>
-  );
-}
-
-function MemoryField({
+/** Dark text field: inset well, hairline border that lights up on focus. */
+function Field({
   label,
-  onValueChange,
-  value,
   ...props
-}: {
-  label: string;
-  onValueChange: (value: string) => void;
-  value: string;
-} & Omit<React.ComponentProps<typeof TextInput>, 'onChange' | 'onChangeText' | 'value'>) {
+}: ComponentProps<typeof TextInput> & { label: string }) {
+  const [focused, setFocused] = useState(false);
   return (
-    <View style={styles.memoryField}>
-      <Text style={styles.memoryLabel}>{label}</Text>
+    <View style={styles.field}>
+      <Text style={styles.fieldLabel}>{label.toUpperCase()}</Text>
       <TextInput
         {...props}
-        onChangeText={onValueChange}
-        placeholderTextColor="#929A93"
-        style={[styles.memoryInput, props.multiline && { minHeight: 74, textAlignVertical: 'top' }]}
-        value={value}
+        onBlur={() => setFocused(false)}
+        onFocus={() => setFocused(true)}
+        placeholderTextColor={palette.inkLow}
+        style={[
+          styles.input,
+          props.multiline && styles.inputMultiline,
+          focused && styles.inputFocused,
+        ]}
       />
     </View>
   );
 }
 
+/** Inline message card — never a bare line of red text. */
+function Notice({
+  body,
+  icon,
+  style,
+  tone = 'info',
+}: {
+  body: string;
+  icon: GlyphName;
+  style?: ComponentProps<typeof View>['style'];
+  tone?: 'info' | 'danger' | 'accent';
+}) {
+  const hue = tone === 'danger' ? palette.danger : tone === 'accent' ? palette.lime : palette.info;
+  return (
+    <View style={[styles.notice, { borderColor: `${hue}33`, backgroundColor: `${hue}10` }, style]}>
+      <Glyph color={hue} name={icon} size={15} />
+      <Text style={[styles.noticeText, { color: hue }]}>{body}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: palette.canvas },
-  content: { padding: space.md, paddingBottom: 42 },
-  identity: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14 },
-  avatar: { width: 52, height: 52, borderRadius: 18, backgroundColor: palette.forest, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { color: palette.lime, fontFamily: type.demi, fontSize: 14 },
-  name: { color: palette.ink, fontFamily: type.demi, fontSize: 19, letterSpacing: -0.4 },
-  email: { color: palette.muted, fontFamily: type.regular, fontSize: 11, marginTop: 2 },
-  syncDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: palette.limeDark },
-  syncDotError: { backgroundColor: palette.coral },
-  syncCard: { flexDirection: 'row', gap: 11, alignItems: 'center', backgroundColor: palette.softLime, borderRadius: radius.md, padding: 14, marginBottom: 20 },
-  aiCard: { flexDirection: 'row', gap: 11, alignItems: 'center', backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, padding: 14, marginTop: -10, marginBottom: 20 },
-  syncIcon: { width: 38, height: 38, borderRadius: 12, backgroundColor: palette.lime, alignItems: 'center', justifyContent: 'center' },
-  cardTitle: { color: palette.ink, fontFamily: type.demi, fontSize: 13 },
-  cardBody: { color: palette.muted, fontFamily: type.regular, fontSize: 10, lineHeight: 15, marginTop: 2 },
-  inlineError: { color: palette.coral, fontFamily: type.regular, fontSize: 9.5, marginTop: 3 },
-  smallButton: { paddingHorizontal: 13, height: 35, borderRadius: radius.pill, backgroundColor: palette.forest, alignItems: 'center', justifyContent: 'center' },
-  smallButtonText: { color: palette.lime, fontFamily: type.demi, fontSize: 10 },
-  sectionLabel: { color: palette.muted, fontFamily: type.demi, fontSize: 9, letterSpacing: 1.3, marginBottom: 8, marginTop: 8 },
-  panel: { backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, padding: 14, marginBottom: 18 },
-  panelIntro: { color: palette.muted, fontFamily: type.regular, fontSize: 10.5, lineHeight: 16, marginBottom: 7 },
-  memoryField: { marginTop: 10 },
-  memoryLabel: { color: palette.ink, fontFamily: type.medium, fontSize: 11, marginBottom: 6 },
-  memoryInput: { minHeight: 44, borderWidth: 1, borderColor: palette.line, borderRadius: radius.sm, backgroundColor: palette.canvas, paddingHorizontal: 12, paddingVertical: 10, color: palette.ink, fontFamily: type.regular, fontSize: 12 },
-  panelButton: { height: 49, borderRadius: radius.sm, backgroundColor: palette.forest, alignItems: 'center', justifyContent: 'center', marginTop: 14 },
-  panelButtonText: { color: palette.lime, fontFamily: type.demi, fontSize: 12 },
-  actionGroup: { overflow: 'hidden', backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, marginBottom: 18 },
-  actionRow: { minHeight: 70, flexDirection: 'row', alignItems: 'center', gap: 11, paddingHorizontal: 13, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
-  actionIcon: { width: 34, height: 34, borderRadius: 11, backgroundColor: palette.softLime, alignItems: 'center', justifyContent: 'center' },
-  actionIconDestructive: { backgroundColor: palette.softCoral },
-  actionTitle: { color: palette.ink, fontFamily: type.demi, fontSize: 12 },
-  actionBody: { color: palette.muted, fontFamily: type.regular, fontSize: 9.5, lineHeight: 14, marginTop: 2 },
-  recovery: { backgroundColor: palette.forest, borderRadius: radius.md, padding: 16, marginBottom: 18 },
-  recoveryLabel: { color: '#AEB9B0', fontFamily: type.demi, fontSize: 9, letterSpacing: 1.3 },
-  recoveryCode: { color: palette.lime, fontFamily: type.demi, fontSize: 14, marginTop: 9, letterSpacing: 0.7 },
-  recoveryHelp: { color: '#AEB9B0', fontFamily: type.regular, fontSize: 9.5, lineHeight: 14, marginTop: 8 },
-  message: { color: palette.ink, fontFamily: type.medium, fontSize: 11, lineHeight: 16, backgroundColor: palette.softLime, borderRadius: radius.sm, padding: 11, marginBottom: 14 },
-  footnote: { color: palette.muted, fontFamily: type.regular, fontSize: 9, lineHeight: 14, textAlign: 'center', paddingHorizontal: 20, marginTop: 4 },
+  flex: { flex: 1 },
+  content: { paddingHorizontal: space.md, paddingTop: space.sm, paddingBottom: space.xxl },
+  gap: { marginTop: space.sm },
+  gapLarge: { marginTop: space.lg },
+
+  identity: { flexDirection: 'row', alignItems: 'center', gap: 13 },
+  identityCopy: { flex: 1 },
+  avatar: {
+    width: 54,
+    height: 54,
+    borderRadius: 19,
+    backgroundColor: palette.limeSoft,
+    borderWidth: 1,
+    borderColor: `${palette.lime}33`,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: { ...text.headline, fontSize: 17, color: palette.lime },
+  name: { ...text.headline, color: palette.ink },
+  email: { ...text.caption, color: palette.inkMid, marginTop: 3 },
+  pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 16 },
+  heroBody: { ...text.caption, color: palette.inkMid, marginTop: 10 },
+  heroNotice: { marginTop: 12 },
+  heroAction: { marginTop: 16 },
+
+  aiHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 11 },
+  aiIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 11,
+    backgroundColor: palette.limeSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  aiTitle: { ...text.row, color: palette.ink, ...tabular },
+  aiBody: { ...text.caption, fontSize: 11, color: palette.inkLow, marginTop: 3, ...tabular },
+  aiBar: { marginTop: 13 },
+
+  rowCard: { paddingHorizontal: 14 },
+  planWell: { marginTop: 12, marginBottom: 2 },
+  planLabel: { ...text.label, color: palette.inkLow },
+  planValue: { ...text.value, color: palette.ink, marginTop: 6, ...tabular },
+
+  cardIntro: { ...text.caption, color: palette.inkMid },
+  cardAction: { marginTop: 16 },
+
+  fields: { gap: 12, marginTop: 14 },
+  field: { gap: 7 },
+  fieldLabel: { ...text.label, color: palette.inkLow },
+  input: {
+    ...text.row,
+    color: palette.ink,
+    minHeight: 52,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: palette.surfaceLo,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  inputMultiline: { minHeight: 92, textAlignVertical: 'top' },
+  inputFocused: { borderColor: palette.lime },
+
+  recovery: { marginTop: space.sm },
+  recoveryHead: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  recoveryLabel: { ...text.label, color: palette.lime },
+  recoveryWell: { marginTop: 11 },
+  recoveryCode: { ...text.value, fontSize: 14, letterSpacing: 0.7, color: palette.lime, ...tabular },
+  recoveryHelp: { ...text.caption, fontSize: 11, color: palette.inkLow, marginTop: 11 },
+
+  notice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 9,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+  },
+  noticeText: { ...text.caption, flex: 1 },
+
+  danger: { marginTop: space.md, gap: 8 },
+  dangerButton: { marginTop: 10 },
+  dangerNote: { ...text.caption, fontSize: 11, color: palette.inkLow, paddingHorizontal: 4 },
+
+  footnote: {
+    ...text.caption,
+    fontSize: 10.5,
+    color: palette.inkLow,
+    textAlign: 'center',
+    paddingHorizontal: space.md,
+    marginTop: space.xl,
+  },
 });

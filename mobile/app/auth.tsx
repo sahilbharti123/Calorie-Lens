@@ -1,25 +1,37 @@
-import { useCallback, useEffect, useState } from 'react';
+import { type ComponentProps, useCallback, useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Glyph } from '@/src/components/glyph';
+import { BrandMark } from '@/src/components/brand-mark';
+import { Glyph, type GlyphName } from '@/src/components/glyph';
+import {
+  GhostButton,
+  PrimaryButton,
+  Reveal,
+  Screen,
+  Segmented,
+  Tap,
+} from '@/src/components/ui';
 import { apiUrl, readServiceHealth } from '@/src/lib/api-client';
 import { useAuth } from '@/src/store/auth-store';
-import { palette, radius, space, type } from '@/src/theme';
+import { palette, radius, space, text } from '@/src/theme';
 
 type Mode = 'login' | 'signup' | 'recover';
 type ServiceProbe = 'checking' | 'online' | 'offline';
+
+const MODES: { value: Mode; label: string }[] = [
+  { value: 'login', label: 'Sign in' },
+  { value: 'signup', label: 'Create' },
+  { value: 'recover', label: 'Recover' },
+];
 
 export default function AuthScreen() {
   const {
@@ -107,184 +119,252 @@ export default function AuthScreen() {
       ? 'Build your private fitness vault.'
       : 'Recover your account.';
 
+  const probeTone = probe === 'online'
+    ? palette.lime
+    : probe === 'offline'
+      ? palette.danger
+      : palette.inkMid;
+  const probeIcon: GlyphName = probe === 'online' ? 'shield' : probe === 'offline' ? 'alert' : 'cloud';
+
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen edges={['top', 'bottom']}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.flex}>
         <ScrollView
           contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled">
-          <View style={styles.brandRow}>
-            <View style={styles.mark}><Glyph name="spark" color={palette.lime} size={24} /></View>
-            <Text style={styles.brand}>CALORIE LENS</Text>
-          </View>
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}>
+          <Reveal>
+            <View style={styles.brandRow}>
+              <BrandMark size={64} />
+              <View style={styles.brandCopy}>
+                <Text style={styles.wordmark}>CALORIE LENS</Text>
+                <Text style={styles.kicker}>PRIVATE · LIGHT · YOURS</Text>
+              </View>
+            </View>
+          </Reveal>
 
-          <View style={styles.intro}>
-            <Text style={styles.kicker}>PRIVATE · LIGHT · YOURS</Text>
+          <Reveal index={1} style={styles.intro}>
             <Text style={styles.title}>{title}</Text>
             <Text style={styles.subtitle}>
               Log food, workouts, water and health data in seconds. Your account keeps it synced across your devices.
             </Text>
-          </View>
+          </Reveal>
 
-          <View style={styles.modePicker}>
-            <ModeButton active={mode === 'login'} label="Sign in" onPress={() => setMode('login')} />
-            <ModeButton active={mode === 'signup'} label="Create" onPress={() => setMode('signup')} />
-            <ModeButton active={mode === 'recover'} label="Recover" onPress={() => setMode('recover')} />
-          </View>
+          <Reveal index={2}>
+            <Segmented onChange={setMode} options={MODES} value={mode} />
+          </Reveal>
 
-          <View style={styles.form}>
+          <Reveal index={3} style={styles.form}>
             {mode === 'signup' ? (
-              <AuthField
+              <Field
                 autoCapitalize="words"
                 label="Your name"
+                onChangeText={setDisplayName}
                 placeholder="Sahil"
                 value={displayName}
-                onChangeText={setDisplayName}
               />
             ) : null}
-            <AuthField
+            <Field
               autoCapitalize="none"
               keyboardType="email-address"
               label="Email"
+              onChangeText={setEmail}
               placeholder="you@example.com"
               value={email}
-              onChangeText={setEmail}
             />
             {mode === 'recover' ? (
-              <AuthField
+              <Field
                 autoCapitalize="none"
                 label="Recovery code"
+                onChangeText={setRecoveryCode}
                 placeholder="xxxxxx-xxxxxx-xxxxxx-xxxxxx"
                 value={recoveryCode}
-                onChangeText={setRecoveryCode}
               />
             ) : null}
-            <AuthField
+            <Field
               autoCapitalize="none"
               label={mode === 'recover' ? 'New password' : 'Password'}
+              onChangeText={setPassword}
               placeholder="At least 10 characters"
               secureTextEntry
               value={password}
-              onChangeText={setPassword}
             />
-          </View>
+          </Reveal>
 
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-          {!serviceConfigured ? (
-            <Text style={[styles.serviceNote, styles.serviceNoteAlone]}>
-              Account service is not configured in this release. You can keep using the encrypted offline vault.
+          <Reveal index={4} style={styles.status}>
+            {error ? <Notice body={error} icon="alert" tone="danger" /> : null}
+
+            {!serviceConfigured ? (
+              <Notice
+                body="Account service is not configured in this release. You can keep using the encrypted offline vault."
+                icon="info"
+                tone="info"
+              />
+            ) : (
+              <Tap
+                accessibilityLabel="Check the account service again"
+                haptic="none"
+                onPress={() => void checkService()}
+                scaleTo={0.99}>
+                <Notice
+                  body={probe === 'checking'
+                    ? `Checking the account service at ${apiUrl()}…`
+                    : probe === 'online'
+                      ? 'Account service is reachable.'
+                      : `Can’t reach the service at ${apiUrl()}. ${__DEV__
+                        ? 'Start it with `uvicorn api:app --host 0.0.0.0 --port 8000` on your computer, keep both devices on the same Wi-Fi, then tap to retry.'
+                        : 'Check your connection, then tap to retry.'}`}
+                  color={probeTone}
+                  icon={probeIcon}
+                />
+              </Tap>
+            )}
+          </Reveal>
+
+          <Reveal index={5} style={styles.actions}>
+            <PrimaryButton
+              disabled={busy || !serviceConfigured}
+              icon={mode === 'login' ? 'lock' : mode === 'signup' ? 'spark' : 'shield'}
+              label={mode === 'login' ? 'Sign in securely' : mode === 'signup' ? 'Create my account' : 'Reset password'}
+              loading={busy}
+              onPress={() => void submit()}
+            />
+
+            <View style={styles.divider}>
+              <View style={styles.rule} />
+              <Text style={styles.dividerLabel}>OR</Text>
+              <View style={styles.rule} />
+            </View>
+
+            <GhostButton
+              icon="shield"
+              label="Continue without an account"
+              onPress={continueOffline}
+            />
+            <Text style={styles.offlineNote}>
+              Everything stays encrypted on this device — an account is only needed to sync across devices.
             </Text>
-          ) : (
-            <Pressable onPress={() => void checkService()} style={styles.serviceRow}>
-              <View style={[
-                styles.serviceDot,
-                probe === 'online' && styles.serviceDotOnline,
-                probe === 'offline' && styles.serviceDotOffline,
-              ]} />
-              <Text style={styles.serviceNote}>
-                {probe === 'checking'
-                  ? `Checking the account service at ${apiUrl()}…`
-                  : probe === 'online'
-                    ? 'Account service is reachable.'
-                    : `Can’t reach the service at ${apiUrl()}. ${__DEV__
-                      ? 'Start it with `uvicorn api:app --host 0.0.0.0 --port 8000` on your computer, keep both devices on the same Wi-Fi, then tap to retry.'
-                      : 'Check your connection, then tap to retry.'}`}
-              </Text>
-            </Pressable>
-          )}
+          </Reveal>
 
-          <Pressable
-            accessibilityRole="button"
-            disabled={busy || !serviceConfigured}
-            onPress={submit}
-            style={({ pressed }) => [
-              styles.primary,
-              (busy || !serviceConfigured) && styles.disabled,
-              pressed && styles.pressed,
-            ]}>
-            {busy
-              ? <ActivityIndicator color={palette.lime} />
-              : <Text style={styles.primaryText}>
-                  {mode === 'login' ? 'Sign in securely' : mode === 'signup' ? 'Create my account' : 'Reset password'}
-                </Text>}
-          </Pressable>
-
-          <Pressable onPress={continueOffline} style={styles.offline}>
-            <Text style={styles.offlineText}>Continue with encrypted offline mode</Text>
-          </Pressable>
-          <Text style={styles.privacy}>
-            Calorie Lens is a fitness tracker, not medical care. Food and exercise values are estimates.
-          </Text>
+          <Reveal index={6} style={styles.privacyWrap}>
+            <Text style={styles.privacy}>
+              Calorie Lens is a fitness tracker, not medical care. Food and exercise values are estimates.
+            </Text>
+          </Reveal>
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
-function ModeButton({
-  active,
+/** Dark text field: inset well, hairline border that lights up on focus. */
+function Field({
   label,
-  onPress,
-}: {
-  active: boolean;
-  label: string;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable onPress={onPress} style={[styles.modeButton, active && styles.modeButtonActive]}>
-      <Text style={[styles.modeText, active && styles.modeTextActive]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function AuthField(props: React.ComponentProps<typeof TextInput> & { label: string }) {
-  const { label, ...inputProps } = props;
+  ...props
+}: ComponentProps<typeof TextInput> & { label: string }) {
+  const [focused, setFocused] = useState(false);
   return (
     <View style={styles.field}>
-      <Text style={styles.label}>{label}</Text>
+      <Text style={styles.fieldLabel}>{label.toUpperCase()}</Text>
       <TextInput
-        {...inputProps}
-        placeholderTextColor="#929A93"
-        style={styles.input}
+        {...props}
+        onBlur={() => setFocused(false)}
+        onFocus={() => setFocused(true)}
+        placeholderTextColor={palette.inkLow}
+        style={[styles.input, focused && styles.inputFocused]}
       />
+    </View>
+  );
+}
+
+/** Inline message card — never a bare line of red text. */
+function Notice({
+  body,
+  color,
+  icon,
+  tone = 'info',
+}: {
+  body: string;
+  color?: string;
+  icon: GlyphName;
+  tone?: 'info' | 'danger' | 'accent';
+}) {
+  const hue = color
+    ?? (tone === 'danger' ? palette.danger : tone === 'accent' ? palette.lime : palette.info);
+  return (
+    <View style={[styles.notice, { borderColor: `${hue}33`, backgroundColor: `${hue}10` }]}>
+      <Glyph color={hue} name={icon} size={15} />
+      <Text style={[styles.noticeText, { color: hue }]}>{body}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  safe: { flex: 1, backgroundColor: palette.canvas },
-  content: { flexGrow: 1, paddingHorizontal: space.lg, paddingTop: 12, paddingBottom: 32 },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  mark: { width: 42, height: 42, borderRadius: 15, backgroundColor: palette.forest, alignItems: 'center', justifyContent: 'center' },
-  brand: { color: palette.ink, fontFamily: type.demi, fontSize: 11, letterSpacing: 1.8 },
-  intro: { marginTop: 54, marginBottom: 28 },
-  kicker: { color: palette.limeDark, fontFamily: type.demi, fontSize: 10, letterSpacing: 1.6, marginBottom: 10 },
-  title: { color: palette.ink, fontFamily: type.demi, fontSize: 38, lineHeight: 43, letterSpacing: -1.6, maxWidth: 330 },
-  subtitle: { color: palette.muted, fontFamily: type.regular, fontSize: 13, lineHeight: 20, marginTop: 12, maxWidth: 335 },
-  modePicker: { flexDirection: 'row', backgroundColor: '#E8ECE3', borderRadius: radius.pill, padding: 4, marginBottom: 14 },
-  modeButton: { flex: 1, height: 39, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center' },
-  modeButtonActive: { backgroundColor: palette.paper },
-  modeText: { color: palette.muted, fontFamily: type.medium, fontSize: 12 },
-  modeTextActive: { color: palette.ink, fontFamily: type.demi },
-  form: { backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, paddingHorizontal: 16 },
-  field: { paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
-  label: { color: palette.muted, fontFamily: type.demi, fontSize: 9, letterSpacing: 1.1, textTransform: 'uppercase', marginBottom: 5 },
-  input: { color: palette.ink, fontFamily: type.medium, fontSize: 15, paddingVertical: 4 },
-  error: { color: palette.coral, fontFamily: type.medium, fontSize: 11, lineHeight: 16, marginTop: 10, paddingHorizontal: 3 },
-  serviceRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 7, marginTop: 10, paddingHorizontal: 3 },
-  serviceDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#C9CFC6', marginTop: 4 },
-  serviceDotOnline: { backgroundColor: palette.limeDark },
-  serviceDotOffline: { backgroundColor: palette.coral },
-  serviceNote: { flex: 1, color: palette.muted, fontFamily: type.regular, fontSize: 11, lineHeight: 16 },
-  serviceNoteAlone: { flex: 0, marginTop: 10, paddingHorizontal: 3 },
-  primary: { height: 56, borderRadius: radius.md, backgroundColor: palette.forest, alignItems: 'center', justifyContent: 'center', marginTop: 16 },
-  primaryText: { color: palette.lime, fontFamily: type.demi, fontSize: 14 },
-  disabled: { opacity: 0.48 },
-  pressed: { transform: [{ scale: 0.99 }] },
-  offline: { height: 48, alignItems: 'center', justifyContent: 'center', marginTop: 5 },
-  offlineText: { color: palette.ink, fontFamily: type.medium, fontSize: 12 },
-  privacy: { color: palette.muted, fontFamily: type.regular, fontSize: 9.5, lineHeight: 14, textAlign: 'center', marginTop: 'auto', paddingTop: 28 },
+  content: {
+    flexGrow: 1,
+    paddingHorizontal: space.md,
+    paddingTop: space.sm,
+    paddingBottom: space.xxl,
+  },
+
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  brandCopy: { flex: 1 },
+  wordmark: { ...text.label, fontSize: 11, letterSpacing: 2.2, color: palette.ink },
+  kicker: { ...text.label, color: palette.lime, marginTop: 6 },
+
+  intro: { marginTop: space.xl, marginBottom: space.lg },
+  title: { ...text.title, color: palette.ink, maxWidth: 320 },
+  subtitle: { ...text.body, color: palette.inkMid, marginTop: space.sm, maxWidth: 330 },
+
+  form: { gap: 12, marginTop: space.md },
+  field: { gap: 7 },
+  fieldLabel: { ...text.label, color: palette.inkLow },
+  input: {
+    ...text.row,
+    color: palette.ink,
+    minHeight: 52,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: palette.surfaceLo,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  inputFocused: { borderColor: palette.lime },
+
+  status: { gap: 10, marginTop: space.md },
+  notice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 9,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+  },
+  noticeText: { ...text.caption, flex: 1 },
+
+  actions: { gap: 12, marginTop: space.lg },
+  divider: { flexDirection: 'row', alignItems: 'center', gap: 12, marginVertical: 2 },
+  rule: { flex: 1, height: 1, backgroundColor: palette.line },
+  dividerLabel: { ...text.label, color: palette.inkLow },
+  offlineNote: {
+    ...text.caption,
+    fontSize: 11,
+    color: palette.inkLow,
+    textAlign: 'center',
+    paddingHorizontal: space.sm,
+  },
+
+  privacyWrap: { marginTop: 'auto', paddingTop: space.xl },
+  privacy: {
+    ...text.caption,
+    fontSize: 10.5,
+    color: palette.inkLow,
+    textAlign: 'center',
+    paddingHorizontal: space.sm,
+  },
 });

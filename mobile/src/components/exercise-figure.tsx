@@ -365,8 +365,8 @@ export function ExerciseFigure({
   template,
   gear = 'none',
   size = 200,
-  tint = palette.forest,
-  accent = palette.limeDark,
+  tint = palette.ink,
+  accent = palette.lime,
   paused = false,
 }: {
   template: FigureTemplate;
@@ -444,73 +444,73 @@ export function ExerciseFigure({
   return (
     <Svg width={size} height={size} viewBox="0 0 100 100">
       {/* stage */}
-      <Line x1={6} y1={GROUND} x2={94} y2={GROUND} stroke={palette.line} strokeWidth={2.4} strokeLinecap="round" />
+      <Line x1={6} y1={GROUND} x2={94} y2={GROUND} stroke={palette.lineHi} strokeWidth={2.4} strokeLinecap="round" />
       {spec2.bench === 'flat' ? (
-        <Rect x={24} y={72} width={50} height={7} rx={3} fill={palette.line} />
+        <Rect x={24} y={72} width={50} height={7} rx={3} fill={palette.lineHi} />
       ) : null}
       {spec2.bench === 'incline' ? (
-        <Path d="M30 92 L46 92 L64 58 L58 53 Z" fill={palette.line} />
+        <Path d="M30 92 L46 92 L64 58 L58 53 Z" fill={palette.lineHi} />
       ) : null}
       {spec2.bench === 'low' ? (
         <>
-          <Rect x={58} y={78} width={30} height={6} rx={3} fill={palette.line} />
-          <Line x1={62} y1={84} x2={62} y2={GROUND} stroke={palette.line} strokeWidth={2.2} />
-          <Line x1={84} y1={84} x2={84} y2={GROUND} stroke={palette.line} strokeWidth={2.2} />
+          <Rect x={58} y={78} width={30} height={6} rx={3} fill={palette.lineHi} />
+          <Line x1={62} y1={84} x2={62} y2={GROUND} stroke={palette.lineHi} strokeWidth={2.2} />
+          <Line x1={84} y1={84} x2={84} y2={GROUND} stroke={palette.lineHi} strokeWidth={2.2} />
         </>
       ) : null}
       {props.includes('box') ? (
-        <Rect x={52} y={79} width={32} height={GROUND - 79} fill={palette.line} rx={1.5} />
+        <Rect x={52} y={79} width={32} height={GROUND - 79} fill={palette.lineHi} rx={1.5} />
       ) : null}
       {props.includes('steps') ? (
         <>
-          <Rect x={54} y={80} width={40} height={GROUND - 80} fill={palette.line} />
-          <Rect x={70} y={66} width={24} height={GROUND - 66} fill={palette.line} />
+          <Rect x={54} y={80} width={40} height={GROUND - 80} fill={palette.lineHi} />
+          <Rect x={70} y={66} width={24} height={GROUND - 66} fill={palette.lineHi} />
         </>
       ) : null}
       {props.includes('dip-bars') ? (
         <>
           <Line x1={36} y1={49} x2={64} y2={49} stroke={accent} strokeWidth={2.6} strokeLinecap="round" />
-          <Line x1={40} y1={49} x2={40} y2={GROUND} stroke={palette.line} strokeWidth={2.2} />
-          <Line x1={60} y1={49} x2={60} y2={GROUND} stroke={palette.line} strokeWidth={2.2} />
+          <Line x1={40} y1={49} x2={40} y2={GROUND} stroke={palette.lineHi} strokeWidth={2.2} />
+          <Line x1={60} y1={49} x2={60} y2={GROUND} stroke={palette.lineHi} strokeWidth={2.2} />
         </>
       ) : null}
       {props.includes('sled') ? (
-        <Line x1={82} y1={38} x2={56} y2={80} stroke={palette.line} strokeWidth={5} strokeLinecap="round" />
+        <Line x1={82} y1={38} x2={56} y2={80} stroke={palette.lineHi} strokeWidth={5} strokeLinecap="round" />
       ) : null}
       {props.includes('seat') ? (
-        <Rect x={hip[0] - 9} y={hip[1] + 3} width={18} height={Math.max(4, GROUND - hip[1] - 3)} fill={palette.line} rx={1.5} />
+        <Rect x={hip[0] - 9} y={hip[1] + 3} width={18} height={Math.max(4, GROUND - hip[1] - 3)} fill={palette.lineHi} rx={1.5} />
       ) : null}
       {props.includes('pedals') ? (
         <>
-          <Circle cx={57} cy={83} r={8.5} fill="none" stroke={palette.line} strokeWidth={2} />
-          <Line x1={78} y1={46} x2={72} y2={78} stroke={palette.line} strokeWidth={2.4} strokeLinecap="round" />
-          <Line x1={74} y1={44} x2={82} y2={48} stroke={palette.line} strokeWidth={2.6} strokeLinecap="round" />
+          <Circle cx={57} cy={83} r={8.5} fill="none" stroke={palette.lineHi} strokeWidth={2} />
+          <Line x1={78} y1={46} x2={72} y2={78} stroke={palette.lineHi} strokeWidth={2.4} strokeLinecap="round" />
+          <Line x1={74} y1={44} x2={82} y2={48} stroke={palette.lineHi} strokeWidth={2.6} strokeLinecap="round" />
         </>
       ) : null}
       {props.includes('pad-45') ? (
-        <Path d={`M26 ${GROUND} L52 ${GROUND} L52 80 L38 80 Z`} fill={palette.line} />
+        <Path d={`M26 ${GROUND} L52 ${GROUND} L52 80 L38 80 Z`} fill={palette.lineHi} />
       ) : null}
       {props.includes('rope') ? (
         <Path d={`M ${hip[0] - 21} 84 Q ${hip[0]} ${GROUND + 4.5} ${hip[0] + 21} 84`} fill="none" stroke={accent} strokeWidth={1.6} />
       ) : null}
       {props.includes('arm-pad') ? (
-        <Line x1={52} y1={63} x2={64} y2={72} stroke={palette.line} strokeWidth={5.5} strokeLinecap="round" />
+        <Line x1={52} y1={63} x2={64} y2={72} stroke={palette.lineHi} strokeWidth={5.5} strokeLinecap="round" />
       ) : null}
       {props.includes('foot-block') ? (
-        <Rect x={62} y={86.5} width={16} height={GROUND - 86.5} fill={palette.line} rx={1} />
+        <Rect x={62} y={86.5} width={16} height={GROUND - 86.5} fill={palette.lineHi} rx={1} />
       ) : null}
       {gear === 'bar-overhead' ? (
         <Line x1={16} y1={13} x2={84} y2={13} stroke={accent} strokeWidth={3} strokeLinecap="round" />
       ) : null}
       {gear === 'cable-high' ? (
         <>
-          <Rect x={88} y={6} width={7} height={10} rx={2} fill={palette.line} />
+          <Rect x={88} y={6} width={7} height={10} rx={2} fill={palette.lineHi} />
           <Line x1={91} y1={12} x2={wristF[0]} y2={wristF[1]} stroke={accent} {...thin} strokeWidth={1.6} />
         </>
       ) : null}
       {gear === 'cable-low' ? (
         <>
-          <Rect x={88} y={84} width={7} height={10} rx={2} fill={palette.line} />
+          <Rect x={88} y={84} width={7} height={10} rx={2} fill={palette.lineHi} />
           <Line x1={91} y1={88} x2={wristF[0]} y2={wristF[1]} stroke={accent} {...thin} strokeWidth={1.6} />
         </>
       ) : null}
@@ -539,7 +539,7 @@ export function ExerciseFigure({
       {Math.abs(pose.armF[0] - pose.armF[1]) > 3 ? <Circle cx={elbowF[0]} cy={elbowF[1]} r={1.4} fill={tint} /> : null}
 
       {/* head last, filled — masks overhead limbs so the face stays clean */}
-      <Circle cx={headCenter[0]} cy={headCenter[1]} r={L.head} fill={palette.canvas} stroke={tint} strokeWidth={3} />
+      <Circle cx={headCenter[0]} cy={headCenter[1]} r={L.head} fill={palette.surface} stroke={tint} strokeWidth={3} />
 
       {/* gear at hands */}
       {props.includes('wheel') ? (
@@ -581,7 +581,7 @@ export function ExerciseFigure({
         </>
       ) : null}
       {gear === 'machine' && !props.length ? (
-        <Rect x={12} y={86} width={20} height={4} rx={2} fill={palette.line} />
+        <Rect x={12} y={86} width={20} height={4} rx={2} fill={palette.lineHi} />
       ) : null}
     </Svg>
   );

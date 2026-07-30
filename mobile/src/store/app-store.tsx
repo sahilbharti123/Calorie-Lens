@@ -7,6 +7,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { AppState } from 'react-native';
 
 import { ApiError, apiRequest } from '@/src/lib/api-client';
 import { dateKey } from '@/src/lib/date';
@@ -33,6 +34,8 @@ import type {
 
 const LEGACY_STORAGE_KEY = 'calorie-lens.app-data.v1';
 const STORAGE_PREFIX = 'calorie-lens.encrypted-app-data.v2';
+/** Coalesces a burst of keystrokes into one encrypt + write. See flushLocalWrite. */
+const LOCAL_WRITE_DEBOUNCE_MS = 300;
 
 type StoredEnvelope = {
   data: AppData;
@@ -292,6 +295,8 @@ export function AppProvider({ children }: React.PropsWithChildren) {
   const dataRef = useRef(data);
   const versionRef = useRef(cloudVersion);
   const syncingRef = useRef(false);
+  /** Newest vault snapshot still owed to disk, or null when nothing is pending. */
+  const pendingWriteRef = useRef<{ key: string; envelope: StoredEnvelope } | null>(null);
 
   useEffect(() => {
     dataRef.current = data;
@@ -395,10 +400,50 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     }
   }, [session, hydrated]);
 
+  /** Writes the newest pending snapshot, if any. Safe to call any number of times. */
+  const flushLocalWrite = useCallback(() => {
+    const pending = pendingWriteRef.current;
+    if (!pending) return;
+    pendingWriteRef.current = null;
+    void writeEncryptedJson(pending.key, pending.envelope);
+  }, []);
+
+  /**
+   * Local persistence, debounced. Every keystroke in a weight, reps or workout
+   * name field replaces `data`, and an undebounced write re-encrypts the entire
+   * vault (stringify → AES-GCM → hex → SQLite) on the JS thread each time.
+   *
+   * The debounce can delay a write but never drop one. `pendingWriteRef` always
+   * holds the newest snapshot, and because `data` is one immutable object every
+   * snapshot is a superset of the ones it replaced — skipping intermediate
+   * snapshots loses nothing. It is flushed on all four exits:
+   *   1. the debounce timer fires (the normal path);
+   *   2. the storage key changes (sign in/out), before the ref is repointed;
+   *   3. the provider unmounts (cleanup of the AppState effect below);
+   *   4. the app leaves the foreground — AppState 'inactive'/'background' are
+   *      delivered while JS is still running, before iOS/Android can kill the
+   *      process, so swiping the app away mid-workout still lands the last set.
+   * `clearLocalData` drops the pending snapshot so a stale write cannot
+   * resurrect a vault the user just erased.
+   */
   useEffect(() => {
     if (!hydrated) return;
-    void writeEncryptedJson(storageKey(scope), { data, cloudVersion });
-  }, [data, cloudVersion, hydrated, scope]);
+    const key = storageKey(scope);
+    if (pendingWriteRef.current && pendingWriteRef.current.key !== key) flushLocalWrite();
+    pendingWriteRef.current = { key, envelope: { data, cloudVersion } };
+    const timer = setTimeout(flushLocalWrite, LOCAL_WRITE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [data, cloudVersion, hydrated, scope, flushLocalWrite]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'background' || state === 'inactive') flushLocalWrite();
+    });
+    return () => {
+      subscription.remove();
+      flushLocalWrite();
+    };
+  }, [flushLocalWrite]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -593,6 +638,7 @@ export function AppProvider({ children }: React.PropsWithChildren) {
   }, []);
 
   const clearLocalData = useCallback(async () => {
+    pendingWriteRef.current = null;
     await removeEncryptedJson(storageKey(scope));
     setData(initialData);
     dataRef.current = initialData;

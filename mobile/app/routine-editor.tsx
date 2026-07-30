@@ -4,16 +4,26 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Glyph } from '@/src/components/glyph';
+import { Glyph, type GlyphName } from '@/src/components/glyph';
+import {
+  Card,
+  GhostButton,
+  GlassFooter,
+  Pill,
+  PrimaryButton,
+  Reveal,
+  Screen,
+  SectionTitle,
+  Tap,
+  Well,
+} from '@/src/components/ui';
 import { onNextExercisePick } from '@/src/lib/exercise-pick-bus';
 import {
   REST_CHOICES,
@@ -26,7 +36,7 @@ import {
 } from '@/src/lib/training';
 import { useApp } from '@/src/store/app-store';
 import { useWorkouts } from '@/src/store/workout-store';
-import { palette, radius, space, type } from '@/src/theme';
+import { alpha, palette, radius, space, tabular, text } from '@/src/theme';
 import type { Routine, RoutineExercise } from '@/src/types';
 
 export default function RoutineEditorScreen() {
@@ -102,212 +112,298 @@ export default function RoutineEditorScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={['bottom']}>
-      <KeyboardAvoidingView style={styles.fill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <Screen edges={['bottom']}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.fill}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <View style={styles.nameCard}>
-            <Text style={styles.label}>ROUTINE NAME</Text>
-            <TextInput
-              placeholder="e.g. Push Day"
-              placeholderTextColor="#8A938B"
-              style={styles.nameInput}
-              value={draft.name}
-              onChangeText={(name) => setDraft((current) => ({ ...current, name }))}
-            />
-            <Text style={styles.label}>FOLDER (OPTIONAL)</Text>
-            <TextInput
-              placeholder="e.g. Push · Pull · Legs"
-              placeholderTextColor="#8A938B"
-              style={styles.folderInput}
-              value={draft.folder ?? ''}
-              onChangeText={(folder) => setDraft((current) => ({ ...current, folder: folder || undefined }))}
-            />
-          </View>
+          {/* ---------- Identity ---------- */}
+          <Reveal>
+            <Card glow raised>
+              <Text style={styles.label}>ROUTINE NAME</Text>
+              <TextInput
+                accessibilityLabel="Routine name"
+                onChangeText={(name) => setDraft((current) => ({ ...current, name }))}
+                placeholder="e.g. Push Day"
+                placeholderTextColor={palette.inkLow}
+                selectionColor={palette.lime}
+                style={styles.nameInput}
+                value={draft.name}
+              />
+              <View style={styles.folderBlock}>
+                <Text style={styles.label}>FOLDER (OPTIONAL)</Text>
+                <View style={styles.folderRow}>
+                  <Glyph color={palette.inkLow} name="folder" size={15} />
+                  <TextInput
+                    accessibilityLabel="Routine folder"
+                    onChangeText={(folder) => setDraft((current) => ({ ...current, folder: folder || undefined }))}
+                    placeholder="e.g. Push · Pull · Legs"
+                    placeholderTextColor={palette.inkLow}
+                    selectionColor={palette.lime}
+                    style={styles.folderInput}
+                    value={draft.folder ?? ''}
+                  />
+                </View>
+              </View>
+            </Card>
+          </Reveal>
+
+          <SectionTitle title="Exercises" />
 
           {draft.exercises.map((entry, index) => {
             const info = exerciseInfo(data.training, entry.exerciseId);
             const inSuperset = Boolean(entry.supersetId);
             const linkedWithAbove = index > 0 && inSuperset && draft.exercises[index - 1].supersetId === entry.supersetId;
             return (
-              <View key={entry.id} style={[styles.exercise, linkedWithAbove && styles.exerciseLinked]}>
-                <View style={styles.exerciseHead}>
-                  <Pressable style={{ flex: 1 }} onPress={() => router.push({ pathname: '/exercise/[id]', params: { id: entry.exerciseId } })}>
-                    <Text style={styles.exerciseName}>{info.name}</Text>
-                    <Text style={styles.exerciseMeta}>{info.primaryMuscle} · {info.equipment}</Text>
-                  </Pressable>
-                  <View style={styles.headActions}>
-                    <HeadButton label="↑" onPress={() => move(entry.id, -1)} />
-                    <HeadButton label="↓" onPress={() => move(entry.id, 1)} />
-                    <HeadButton label="✕" onPress={() => removeExercise(entry.id)} />
+              <Reveal
+                index={Math.min(1 + index, 5)}
+                key={entry.id}
+                style={[styles.exerciseSlot, linkedWithAbove && styles.exerciseSlotLinked]}>
+                <Card padded={false} style={[styles.exerciseCard, linkedWithAbove && styles.exerciseCardLinked]}>
+                  <View style={styles.exerciseHead}>
+                    <View style={styles.exerciseHeadCopy}>
+                      <Tap
+                        accessibilityLabel={`How to do ${info.name}`}
+                        onPress={() => router.push({ pathname: '/exercise/[id]', params: { id: entry.exerciseId } })}
+                        scaleTo={0.99}>
+                        <Text numberOfLines={1} style={styles.exerciseName}>{info.name}</Text>
+                        <Text numberOfLines={1} style={styles.exerciseMeta}>{info.primaryMuscle} · {info.equipment}</Text>
+                      </Tap>
+                    </View>
+                    <View style={styles.headActions}>
+                      <HeadButton
+                        icon="arrowUp"
+                        label={`Move ${info.name} up`}
+                        onPress={() => move(entry.id, -1)}
+                      />
+                      <HeadButton
+                        icon="arrowDown"
+                        label={`Move ${info.name} down`}
+                        onPress={() => move(entry.id, 1)}
+                      />
+                      <HeadButton
+                        danger
+                        icon="close"
+                        label={`Remove ${info.name}`}
+                        onPress={() => removeExercise(entry.id)}
+                      />
+                    </View>
                   </View>
-                </View>
 
-                {inSuperset ? (
-                  <View style={styles.supersetTag}><Text style={styles.supersetTagText}>SUPERSET</Text></View>
-                ) : null}
-
-                <View style={styles.setHeader}>
-                  <Text style={[styles.setHeaderText, styles.colSet]}>SET</Text>
-                  {info.kind === 'weight-reps' ? <Text style={[styles.setHeaderText, styles.colInput]}>KG</Text> : null}
-                  <Text style={[styles.setHeaderText, styles.colInput]}>
-                    {info.kind === 'duration' ? 'SECONDS' : 'REPS (OR RANGE)'}
-                  </Text>
-                  <View style={styles.colRemove} />
-                </View>
-                {entry.sets.map((set, setIndex) => (
-                  <View key={set.id} style={styles.setRow}>
-                    <Pressable
-                      onPress={() => patchExercise(entry.id, (current) => ({
-                        ...current,
-                        sets: current.sets.map((candidate) => candidate.id === set.id
-                          ? { ...candidate, type: nextSetType(candidate.type) }
-                          : candidate),
-                      }))}
-                      style={[styles.setBadge, set.type !== 'normal' && styles.setBadgeSpecial]}>
-                      <Text style={[styles.setBadgeText, set.type !== 'normal' && styles.setBadgeTextSpecial]}>
-                        {SET_TYPE_LABEL[set.type] || String(setIndex + 1)}
-                      </Text>
-                    </Pressable>
-                    {info.kind === 'weight-reps' ? (
-                      <TextInput
-                        // defaultValue keeps decimal typing intact ("62." stays visible).
-                        key={`kg-${set.id}`}
-                        keyboardType="decimal-pad"
-                        placeholder="—"
-                        placeholderTextColor="#A8B0A6"
-                        style={styles.setInput}
-                        defaultValue={set.weightKg != null ? String(set.weightKg) : ''}
-                        onChangeText={(text) => {
-                          const weightKg = Number.parseFloat(text.replace(',', '.'));
-                          patchExercise(entry.id, (current) => ({
-                            ...current,
-                            sets: current.sets.map((candidate) => candidate.id === set.id
-                              ? { ...candidate, weightKg: Number.isFinite(weightKg) ? weightKg : undefined }
-                              : candidate),
-                          }));
-                        }}
-                      />
-                    ) : null}
-                    {info.kind === 'duration' ? (
-                      <TextInput
-                        key={`sec-${set.id}`}
-                        keyboardType="number-pad"
-                        placeholder="40"
-                        placeholderTextColor="#A8B0A6"
-                        style={styles.setInput}
-                        defaultValue={set.durationSec != null ? String(set.durationSec) : ''}
-                        onChangeText={(text) => {
-                          const durationSec = Number.parseInt(text, 10);
-                          patchExercise(entry.id, (current) => ({
-                            ...current,
-                            sets: current.sets.map((candidate) => candidate.id === set.id
-                              ? { ...candidate, durationSec: Number.isFinite(durationSec) ? durationSec : undefined }
-                              : candidate),
-                          }));
-                        }}
-                      />
-                    ) : (
-                      <TextInput
-                        // defaultValue lets a range like "8-12" be typed without the
-                        // parser rewriting the field mid-keystroke.
-                        key={`reps-${set.id}`}
-                        keyboardType="numbers-and-punctuation"
-                        placeholder="8-12"
-                        placeholderTextColor="#A8B0A6"
-                        style={styles.setInput}
-                        defaultValue={formatRepTarget(set.repsMin, set.repsMax, set.reps)}
-                        onChangeText={(text) => {
-                          const range = parseRepTarget(text);
-                          patchExercise(entry.id, (current) => ({
-                            ...current,
-                            sets: current.sets.map((candidate) => candidate.id === set.id
-                              ? { ...candidate, ...range }
-                              : candidate),
-                          }));
-                        }}
-                      />
-                    )}
-                    <Pressable
-                      hitSlop={8}
-                      onPress={() => patchExercise(entry.id, (current) => ({
-                        ...current,
-                        sets: current.sets.filter((candidate) => candidate.id !== set.id),
-                      }))}
-                      style={styles.colRemove}>
-                      <Glyph name="trash" color={palette.muted} size={15} />
-                    </Pressable>
-                  </View>
-                ))}
-                <Pressable
-                  onPress={() => patchExercise(entry.id, (current) => ({
-                    ...current,
-                    sets: [...current.sets, makeRoutineSet({
-                      repsMin: current.sets.at(-1)?.repsMin,
-                      repsMax: current.sets.at(-1)?.repsMax,
-                      reps: current.sets.at(-1)?.reps,
-                      weightKg: current.sets.at(-1)?.weightKg,
-                      durationSec: current.sets.at(-1)?.durationSec,
-                    })],
-                  }))}
-                  style={styles.addSet}>
-                  <Text style={styles.addSetText}>+ Add set</Text>
-                </Pressable>
-
-                <View style={styles.exerciseFooter}>
-                  <Pressable
-                    onPress={() => {
-                      const currentIndex = REST_CHOICES.indexOf(entry.restSec);
-                      const nextRest = REST_CHOICES[(currentIndex + 1) % REST_CHOICES.length];
-                      patchExercise(entry.id, (current) => ({ ...current, restSec: nextRest }));
-                    }}
-                    style={styles.restChip}>
-                    <Text style={styles.restChipText}>
-                      Rest: {entry.restSec ? `${entry.restSec}s` : 'off'}
-                    </Text>
-                  </Pressable>
-                  {index > 0 ? (
-                    <Pressable onPress={() => toggleSuperset(entry.id)} style={styles.supersetChip}>
-                      <Text style={styles.supersetChipText}>
-                        {linkedWithAbove ? 'Unlink superset' : 'Superset with above'}
-                      </Text>
-                    </Pressable>
+                  {inSuperset ? (
+                    <View style={styles.supersetTag}>
+                      <Pill icon="link" label="Superset" tone="accent" />
+                    </View>
                   ) : null}
-                </View>
-                <TextInput
-                  placeholder="Routine note for this exercise (form cue, setup…)"
-                  placeholderTextColor="#A8B0A6"
-                  style={styles.noteInput}
-                  value={entry.note ?? ''}
-                  onChangeText={(text) => patchExercise(entry.id, (current) => ({ ...current, note: text || undefined }))}
-                />
-              </View>
+
+                  <View style={styles.setHeader}>
+                    <Text style={[styles.setHeaderText, styles.colSet]}>SET</Text>
+                    {info.kind === 'weight-reps' ? <Text style={[styles.setHeaderText, styles.colInput]}>KG</Text> : null}
+                    <Text style={[styles.setHeaderText, styles.colInput]}>
+                      {info.kind === 'duration' ? 'SECONDS' : 'REPS (OR RANGE)'}
+                    </Text>
+                    <View style={styles.colRemove} />
+                  </View>
+
+                  {entry.sets.map((set, setIndex) => (
+                    <View key={set.id} style={styles.setRow}>
+                      <Tap
+                        accessibilityLabel={`Set ${setIndex + 1}, change set type`}
+                        hitSlop={4}
+                        onPress={() => patchExercise(entry.id, (current) => ({
+                          ...current,
+                          sets: current.sets.map((candidate) => candidate.id === set.id
+                            ? { ...candidate, type: nextSetType(candidate.type) }
+                            : candidate),
+                        }))}
+                        scaleTo={0.9}
+                        style={[styles.setBadge, set.type !== 'normal' && styles.setBadgeSpecial]}>
+                        <Text style={[styles.setBadgeText, set.type !== 'normal' && styles.setBadgeTextSpecial]}>
+                          {SET_TYPE_LABEL[set.type] || String(setIndex + 1)}
+                        </Text>
+                      </Tap>
+                      {info.kind === 'weight-reps' ? (
+                        <TextInput
+                          // defaultValue keeps decimal typing intact ("62." stays visible).
+                          key={`kg-${set.id}`}
+                          keyboardType="decimal-pad"
+                          placeholder="—"
+                          placeholderTextColor={palette.inkLow}
+                          selectionColor={palette.lime}
+                          style={styles.setInput}
+                          defaultValue={set.weightKg != null ? String(set.weightKg) : ''}
+                          onChangeText={(value) => {
+                            const weightKg = Number.parseFloat(value.replace(',', '.'));
+                            patchExercise(entry.id, (current) => ({
+                              ...current,
+                              sets: current.sets.map((candidate) => candidate.id === set.id
+                                ? { ...candidate, weightKg: Number.isFinite(weightKg) ? weightKg : undefined }
+                                : candidate),
+                            }));
+                          }}
+                        />
+                      ) : null}
+                      {info.kind === 'duration' ? (
+                        <TextInput
+                          key={`sec-${set.id}`}
+                          keyboardType="number-pad"
+                          placeholder="40"
+                          placeholderTextColor={palette.inkLow}
+                          selectionColor={palette.lime}
+                          style={styles.setInput}
+                          defaultValue={set.durationSec != null ? String(set.durationSec) : ''}
+                          onChangeText={(value) => {
+                            const durationSec = Number.parseInt(value, 10);
+                            patchExercise(entry.id, (current) => ({
+                              ...current,
+                              sets: current.sets.map((candidate) => candidate.id === set.id
+                                ? { ...candidate, durationSec: Number.isFinite(durationSec) ? durationSec : undefined }
+                                : candidate),
+                            }));
+                          }}
+                        />
+                      ) : (
+                        <TextInput
+                          // defaultValue lets a range like "8-12" be typed without the
+                          // parser rewriting the field mid-keystroke.
+                          key={`reps-${set.id}`}
+                          keyboardType="numbers-and-punctuation"
+                          placeholder="8-12"
+                          placeholderTextColor={palette.inkLow}
+                          selectionColor={palette.lime}
+                          style={styles.setInput}
+                          defaultValue={formatRepTarget(set.repsMin, set.repsMax, set.reps)}
+                          onChangeText={(value) => {
+                            const range = parseRepTarget(value);
+                            patchExercise(entry.id, (current) => ({
+                              ...current,
+                              sets: current.sets.map((candidate) => candidate.id === set.id
+                                ? { ...candidate, ...range }
+                                : candidate),
+                            }));
+                          }}
+                        />
+                      )}
+                      <Tap
+                        accessibilityLabel={`Remove set ${setIndex + 1}`}
+                        hitSlop={8}
+                        onPress={() => patchExercise(entry.id, (current) => ({
+                          ...current,
+                          sets: current.sets.filter((candidate) => candidate.id !== set.id),
+                        }))}
+                        scaleTo={0.88}
+                        style={styles.removeSet}>
+                        <Glyph color={palette.inkLow} name="trash" size={15} />
+                      </Tap>
+                    </View>
+                  ))}
+
+                  <View style={styles.addSetSlot}>
+                    <Tap
+                      accessibilityLabel={`Add a set to ${info.name}`}
+                      onPress={() => patchExercise(entry.id, (current) => ({
+                        ...current,
+                        sets: [...current.sets, makeRoutineSet({
+                          repsMin: current.sets.at(-1)?.repsMin,
+                          repsMax: current.sets.at(-1)?.repsMax,
+                          reps: current.sets.at(-1)?.reps,
+                          weightKg: current.sets.at(-1)?.weightKg,
+                          durationSec: current.sets.at(-1)?.durationSec,
+                        })],
+                      }))}
+                      scaleTo={0.96}
+                      style={styles.addSet}>
+                      <Glyph color={palette.lime} name="plus" size={14} />
+                      <Text style={styles.addSetText}>Add set</Text>
+                    </Tap>
+                  </View>
+
+                  <View style={styles.exerciseFooter}>
+                    <Tap
+                      accessibilityLabel="Change rest time"
+                      onPress={() => {
+                        const currentIndex = REST_CHOICES.indexOf(entry.restSec);
+                        const nextRest = REST_CHOICES[(currentIndex + 1) % REST_CHOICES.length];
+                        patchExercise(entry.id, (current) => ({ ...current, restSec: nextRest }));
+                      }}
+                      scaleTo={0.93}
+                      style={styles.footChip}>
+                      <Glyph color={entry.restSec ? palette.lime : palette.inkLow} name="timer" size={13} />
+                      <Text style={styles.footChipText}>
+                        Rest: {entry.restSec ? `${entry.restSec}s` : 'off'}
+                      </Text>
+                    </Tap>
+                    {index > 0 ? (
+                      <Tap
+                        accessibilityLabel={linkedWithAbove ? 'Unlink superset' : 'Superset with the exercise above'}
+                        onPress={() => toggleSuperset(entry.id)}
+                        scaleTo={0.93}
+                        style={[styles.footChip, linkedWithAbove && styles.footChipOn]}>
+                        <Glyph color={palette.lime} name="link" size={13} />
+                        <Text style={[styles.footChipText, styles.footChipTextOn]}>
+                          {linkedWithAbove ? 'Unlink superset' : 'Superset with above'}
+                        </Text>
+                      </Tap>
+                    ) : null}
+                  </View>
+
+                  <Well style={styles.noteWell}>
+                    <TextInput
+                      accessibilityLabel={`Note for ${info.name}`}
+                      onChangeText={(value) => patchExercise(entry.id, (current) => ({ ...current, note: value || undefined }))}
+                      placeholder="Routine note for this exercise (form cue, setup…)"
+                      placeholderTextColor={palette.inkLow}
+                      selectionColor={palette.lime}
+                      style={styles.noteInput}
+                      value={entry.note ?? ''}
+                    />
+                  </Well>
+                </Card>
+              </Reveal>
             );
           })}
 
-          <Pressable onPress={addExercises} style={({ pressed }) => [styles.addExercise, pressed && styles.pressed]}>
-            <Glyph name="plus" color={palette.forest} size={18} />
-            <Text style={styles.addExerciseText}>Add exercises</Text>
-          </Pressable>
+          <Reveal index={6} style={styles.addExerciseSlot}>
+            <Tap
+              accessibilityLabel="Add exercises"
+              haptic="medium"
+              onPress={addExercises}
+              scaleTo={0.98}
+              style={styles.addExercise}>
+              <Glyph color={palette.lime} name="plus" size={18} />
+              <Text style={styles.addExerciseText}>Add exercises</Text>
+            </Tap>
+          </Reveal>
         </ScrollView>
 
-        <View style={styles.footer}>
-          <Pressable onPress={() => router.back()} style={({ pressed }) => [styles.cancel, pressed && styles.pressed]}>
-            <Text style={styles.cancelText}>Cancel</Text>
-          </Pressable>
-          <Pressable onPress={save} style={({ pressed }) => [styles.save, pressed && styles.pressed]}>
-            <Text style={styles.saveText}>Save routine</Text>
-          </Pressable>
-        </View>
+        <GlassFooter>
+          <View style={styles.footerRow}>
+            <View style={styles.footerCancel}>
+              <GhostButton icon="close" label="Cancel" onPress={() => router.back()} />
+            </View>
+            <View style={styles.footerSave}>
+              <PrimaryButton icon="check" label="Save routine" onPress={save} />
+            </View>
+          </View>
+        </GlassFooter>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
-function HeadButton({ label, onPress }: { label: string; onPress: () => void }) {
+function HeadButton({
+  icon,
+  label,
+  onPress,
+  danger,
+}: {
+  icon: GlyphName;
+  label: string;
+  onPress: () => void;
+  danger?: boolean;
+}) {
   return (
-    <Pressable hitSlop={6} onPress={onPress} style={styles.headButton}>
-      <Text style={styles.headButtonText}>{label}</Text>
-    </Pressable>
+    <Tap accessibilityLabel={label} hitSlop={4} onPress={onPress} scaleTo={0.88} style={styles.headButton}>
+      <Glyph color={danger ? palette.danger : palette.inkMid} name={icon} size={15} />
+    </Tap>
   );
 }
 
@@ -317,8 +413,8 @@ function formatRepTarget(repsMin?: number, repsMax?: number, reps?: number) {
   return '';
 }
 
-function parseRepTarget(text: string): { reps?: number; repsMin?: number; repsMax?: number } {
-  const cleaned = text.trim();
+function parseRepTarget(input: string): { reps?: number; repsMin?: number; repsMax?: number } {
+  const cleaned = input.trim();
   if (!cleaned) return { reps: undefined, repsMin: undefined, repsMax: undefined };
   const range = cleaned.match(/^(\d+)\s*[-–]\s*(\d+)$/);
   if (range) {
@@ -333,48 +429,116 @@ function parseRepTarget(text: string): { reps?: number; repsMin?: number; repsMa
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: palette.canvas },
   fill: { flex: 1 },
-  content: { padding: space.md, paddingBottom: 24, gap: 10 },
-  pressed: { opacity: 0.85 },
-  nameCard: { backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, padding: 14 },
-  label: { color: palette.muted, fontFamily: type.demi, fontSize: 9, letterSpacing: 1.1, marginBottom: 4 },
-  nameInput: { color: palette.ink, fontFamily: type.demi, fontSize: 17, paddingVertical: 6, marginBottom: 10 },
-  folderInput: { color: palette.ink, fontFamily: type.medium, fontSize: 13, paddingVertical: 4 },
-  exercise: { backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, padding: 13 },
-  exerciseLinked: { borderColor: palette.limeDark, marginTop: -4 },
+  content: { paddingHorizontal: space.md, paddingTop: 8, paddingBottom: space.lg },
+
+  label: { ...text.label, color: palette.inkLow, marginBottom: 6 },
+  nameInput: { ...text.title, color: palette.ink, padding: 0, paddingVertical: 2 },
+  folderBlock: { marginTop: 18, borderTopWidth: 1, borderTopColor: palette.line, paddingTop: 14 },
+  folderRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  folderInput: { flex: 1, ...text.row, color: palette.ink, padding: 0, paddingVertical: 2 },
+
+  exerciseSlot: { marginTop: 10 },
+  exerciseSlotLinked: { marginTop: 4 },
+  exerciseCard: { padding: 13 },
+  exerciseCardLinked: { borderColor: `${palette.lime}33` },
   exerciseHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  exerciseName: { color: palette.ink, fontFamily: type.demi, fontSize: 14 },
-  exerciseMeta: { color: palette.muted, fontFamily: type.regular, fontSize: 10, marginTop: 2, textTransform: 'capitalize' },
+  exerciseHeadCopy: { flex: 1 },
+  exerciseName: { ...text.row, color: palette.ink },
+  exerciseMeta: { ...text.caption, fontSize: 10.5, color: palette.inkLow, marginTop: 3, textTransform: 'capitalize' },
   headActions: { flexDirection: 'row', gap: 6 },
-  headButton: { width: 30, height: 30, borderRadius: 10, borderWidth: 1, borderColor: palette.line, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.canvas },
-  headButtonText: { color: palette.ink, fontFamily: type.medium, fontSize: 12 },
-  supersetTag: { alignSelf: 'flex-start', backgroundColor: palette.softLime, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 3, marginTop: 8 },
-  supersetTagText: { color: palette.limeDark, fontFamily: type.demi, fontSize: 8.5, letterSpacing: 1 },
-  setHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12, marginBottom: 5 },
-  setHeaderText: { color: palette.muted, fontFamily: type.demi, fontSize: 8.5, letterSpacing: 0.8 },
-  colSet: { width: 34 },
+  headButton: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: palette.lineHi,
+    backgroundColor: palette.surfaceLo,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  supersetTag: { flexDirection: 'row', marginTop: 10 },
+
+  setHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 14, marginBottom: 6 },
+  setHeaderText: { ...text.label, fontSize: 8, letterSpacing: 1, color: palette.inkLow },
+  colSet: { width: 36, textAlign: 'center' },
   colInput: { flex: 1 },
-  colRemove: { width: 26, alignItems: 'center' },
-  setRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 7 },
-  setBadge: { width: 34, height: 34, borderRadius: 11, backgroundColor: palette.canvas, borderWidth: 1, borderColor: palette.line, alignItems: 'center', justifyContent: 'center' },
-  setBadgeSpecial: { backgroundColor: palette.softLime, borderColor: palette.limeDark },
-  setBadgeText: { color: palette.ink, fontFamily: type.demi, fontSize: 12 },
-  setBadgeTextSpecial: { color: palette.limeDark },
-  setInput: { flex: 1, height: 38, borderWidth: 1, borderColor: palette.line, borderRadius: radius.sm, backgroundColor: palette.canvas, color: palette.ink, fontFamily: type.medium, fontSize: 13, paddingHorizontal: 10 },
-  addSet: { alignSelf: 'flex-start', paddingVertical: 6 },
-  addSetText: { color: palette.forest, fontFamily: type.demi, fontSize: 11.5 },
-  exerciseFooter: { flexDirection: 'row', gap: 8, marginTop: 6 },
-  restChip: { height: 30, paddingHorizontal: 11, borderRadius: radius.pill, backgroundColor: palette.canvas, borderWidth: 1, borderColor: palette.line, alignItems: 'center', justifyContent: 'center' },
-  restChipText: { color: palette.ink, fontFamily: type.medium, fontSize: 10.5 },
-  supersetChip: { height: 30, paddingHorizontal: 11, borderRadius: radius.pill, backgroundColor: palette.canvas, borderWidth: 1, borderColor: palette.line, alignItems: 'center', justifyContent: 'center' },
-  supersetChipText: { color: palette.limeDark, fontFamily: type.demi, fontSize: 10.5 },
-  noteInput: { marginTop: 8, minHeight: 34, borderWidth: 1, borderColor: palette.line, borderRadius: radius.sm, backgroundColor: palette.canvas, color: palette.ink, fontFamily: type.regular, fontSize: 11.5, paddingHorizontal: 10, paddingVertical: 8 },
-  addExercise: { height: 52, borderRadius: radius.md, borderWidth: 1.5, borderColor: palette.forest, borderStyle: 'dashed', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  addExerciseText: { color: palette.forest, fontFamily: type.demi, fontSize: 13 },
-  footer: { flexDirection: 'row', gap: 10, padding: space.md, borderTopWidth: 1, borderTopColor: palette.line, backgroundColor: palette.canvas },
-  cancel: { flex: 1, height: 50, borderRadius: radius.md, borderWidth: 1, borderColor: palette.line, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.paper },
-  cancelText: { color: palette.ink, fontFamily: type.medium, fontSize: 13 },
-  save: { flex: 2, height: 50, borderRadius: radius.md, backgroundColor: palette.forest, alignItems: 'center', justifyContent: 'center' },
-  saveText: { color: palette.lime, fontFamily: type.demi, fontSize: 14 },
+  colRemove: { width: 28, alignItems: 'center' },
+  setRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  setBadge: {
+    width: 36,
+    height: 44,
+    borderRadius: radius.sm,
+    backgroundColor: palette.surfaceLo,
+    borderWidth: 1,
+    borderColor: palette.line,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  setBadgeSpecial: { backgroundColor: palette.limeSoft, borderColor: `${palette.lime}44` },
+  setBadgeText: { ...text.value, fontSize: 13, color: palette.inkMid, ...tabular },
+  setBadgeTextSpecial: { color: palette.lime },
+  setInput: {
+    flex: 1,
+    height: 44,
+    borderWidth: 1,
+    borderColor: palette.line,
+    borderRadius: radius.sm,
+    backgroundColor: palette.surfaceLo,
+    color: palette.ink,
+    ...text.value,
+    fontSize: 14,
+    paddingHorizontal: 12,
+    ...tabular,
+  },
+  removeSet: { width: 28, height: 44, alignItems: 'center', justifyContent: 'center' },
+
+  addSetSlot: { alignSelf: 'flex-start' },
+  addSet: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minHeight: 40,
+    paddingRight: 12,
+  },
+  addSetText: { ...text.value, fontSize: 12.5, color: palette.lime },
+
+  exerciseFooter: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 },
+  footChip: {
+    minHeight: 34,
+    paddingHorizontal: 11,
+    borderRadius: radius.pill,
+    backgroundColor: palette.surfaceLo,
+    borderWidth: 1,
+    borderColor: palette.lineHi,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  footChipOn: { borderColor: `${palette.lime}44`, backgroundColor: palette.limeSoft },
+  footChipText: { ...text.micro, fontFamily: text.value.fontFamily, fontSize: 11, color: palette.ink, ...tabular },
+  footChipTextOn: { color: palette.lime },
+
+  noteWell: { marginTop: 10, paddingVertical: 8 },
+  noteInput: { ...text.caption, minHeight: 34, color: palette.ink, padding: 0 },
+
+  addExerciseSlot: { marginTop: 14 },
+  addExercise: {
+    minHeight: 56,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: `${palette.lime}55`,
+    borderStyle: 'dashed',
+    backgroundColor: alpha.limeFaint,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  addExerciseText: { ...text.row, fontSize: 14, color: palette.lime },
+
+  footerRow: { flexDirection: 'row', gap: 10 },
+  footerCancel: { flex: 1 },
+  footerSave: { flex: 2 },
 });
