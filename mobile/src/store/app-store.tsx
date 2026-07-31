@@ -12,7 +12,12 @@ import { AppState } from 'react-native';
 import { ApiError, apiRequest } from '@/src/lib/api-client';
 import { dateKey } from '@/src/lib/date';
 import { calculatePersonalTargets } from '@/src/lib/personalization';
-import { readEncryptedJson, removeEncryptedJson, writeEncryptedJson } from '@/src/lib/secure-storage';
+import {
+  readEncryptedJson,
+  removeEncryptedJson,
+  takeUnreadableRecords,
+  writeEncryptedJson,
+} from '@/src/lib/secure-storage';
 import { initialTraining, mergeTraining, normalizeTraining } from '@/src/lib/training';
 import { useAuth } from '@/src/store/auth-store';
 import type {
@@ -258,6 +263,9 @@ type AppContextValue = {
   data: AppData;
   today: DayLog;
   hydrated: boolean;
+  /** Local data existed but this device could not decrypt it, so it was reset. */
+  vaultReset: boolean;
+  dismissVaultReset: () => void;
   syncState: SyncState;
   syncError: string;
   applyOperations: (operations: LogOperation[]) => void;
@@ -289,6 +297,8 @@ export function AppProvider({ children }: React.PropsWithChildren) {
   const scope = session?.user.id ?? 'guest';
   const [data, setData] = useState<AppData>(initialData);
   const [hydrated, setHydrated] = useState(false);
+  /** True when this launch found local data it could not decrypt and reset it. */
+  const [vaultReset, setVaultReset] = useState(false);
   const [cloudVersion, setCloudVersion] = useState(0);
   const [syncState, setSyncState] = useState<SyncState>('offline');
   const [syncError, setSyncError] = useState('');
@@ -343,13 +353,30 @@ export function AppProvider({ children }: React.PropsWithChildren) {
       setData(nextData);
       setCloudVersion(nextVersion);
       await writeEncryptedJson(key, { data: nextData, cloudVersion: nextVersion });
-      if (active) setHydrated(true);
     }
-    void load();
+
+    // Hydration must always finish. Anything thrown here — an unreadable local
+    // vault, a storage failure — would otherwise leave the app on its loading
+    // state forever, which is a worse outcome than starting empty.
+    void load()
+      .catch((error) => {
+        if (!active) return;
+        setSyncState('error');
+        setSyncError(
+          error instanceof Error ? error.message : 'Local data could not be opened.',
+        );
+      })
+      .finally(() => {
+        if (!active) return;
+        setVaultReset(takeUnreadableRecords().length > 0);
+        setHydrated(true);
+      });
     return () => {
       active = false;
     };
   }, [scope, session, justCreated]);
+
+  const dismissVaultReset = useCallback(() => setVaultReset(false), []);
 
   const syncNow = useCallback(async () => {
     if (!session || !hydrated || syncingRef.current) {
@@ -653,6 +680,8 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     data,
     today,
     hydrated,
+    vaultReset,
+    dismissVaultReset,
     syncState,
     syncError,
     applyOperations,
@@ -673,6 +702,8 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     data,
     today,
     hydrated,
+    vaultReset,
+    dismissVaultReset,
     syncState,
     syncError,
     applyOperations,

@@ -5,6 +5,7 @@ import { Glyph } from '@/src/components/glyph';
 import {
   Card,
   CountUp,
+  GhostButton,
   ListRow,
   MacroChip,
   Metric,
@@ -59,7 +60,7 @@ function streakOutlook(streak: number, best: number, todayLogged: boolean) {
 export default function TodayScreen() {
   const router = useRouter();
   const { session } = useAuth();
-  const { data, today, addWater } = useApp();
+  const { data, today, addWater, vaultReset, dismissVaultReset } = useApp();
 
   const totals = dayTotals(today);
   const burned = workoutTotals(today);
@@ -91,6 +92,35 @@ export default function TodayScreen() {
           eyebrow={friendlyDay()}
           title={greeting()}
         />
+
+        {/* ---------- Local data this device could not unlock ----------
+            The device key is deliberately excluded from backups, but the
+            database is not, so a restored phone arrives holding data it can
+            never read. Saying so plainly beats appearing to have lost it. */}
+        {vaultReset ? (
+          <Reveal>
+            <Card style={styles.notice}>
+              <View style={styles.noticeHead}>
+                <Glyph color={palette.warn} name="alert" size={16} />
+                <Text style={styles.noticeTitle}>Local history was reset</Text>
+              </View>
+              <Text style={styles.noticeBody}>
+                This device found saved data it could not unlock. That happens when a backup is
+                restored onto a new phone, because the encryption key never leaves the device that
+                made it.{' '}
+                {session
+                  ? 'Your account copy is syncing back now.'
+                  : 'Signing in restores anything you had backed up.'}
+              </Text>
+              <GhostButton
+                compact
+                label="Got it"
+                onPress={dismissVaultReset}
+                style={styles.noticeButton}
+              />
+            </Card>
+          </Reveal>
+        ) : null}
 
         {/* ---------- Hero ----------
             One number with one meaning. The ring and the figure inside it now
@@ -240,6 +270,12 @@ export default function TodayScreen() {
 
 const styles = StyleSheet.create({
   content: { paddingHorizontal: space.md, paddingBottom: space.tabClearance },
+
+  notice: { borderColor: `${palette.warn}44`, marginBottom: space.sm },
+  noticeHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 7 },
+  noticeTitle: { ...text.row, color: palette.ink },
+  noticeBody: { ...text.body, fontSize: 12.5, color: palette.inkMid },
+  noticeButton: { marginTop: 12, alignSelf: 'flex-start' },
 
   avatar: {
     width: 40,
