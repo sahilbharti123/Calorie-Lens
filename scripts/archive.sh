@@ -29,18 +29,78 @@ if [ ! -d "$WORKSPACE" ]; then
   exit 1
 fi
 
+# Prints "<team name> | <team id>" for every provisioning profile on this Mac.
+# Certificate common names are unreliable for this: an Apple Development cert is
+# named after the developer, so its bracketed code can belong to a personal team.
+# Profiles carry TeamName explicitly, which is the only way to be sure which
+# bracketed code is Advaice Limited.
+list_teams() {
+  local dir="$HOME/Library/MobileDevice/Provisioning Profiles"
+  [ -d "$dir" ] || return 0
+  local found=0
+  for profile in "$dir"/*.mobileprovision; do
+    [ -e "$profile" ] || continue
+    local plist name team tid
+    plist="$(security cms -D -i "$profile" 2>/dev/null)" || continue
+    name="$(printf '%s' "$plist" | plutil -extract Name raw - 2>/dev/null || true)"
+    team="$(printf '%s' "$plist" | plutil -extract TeamName raw - 2>/dev/null || true)"
+    tid="$(printf '%s' "$plist" | plutil -extract TeamIdentifier.0 raw - 2>/dev/null || true)"
+    [ -n "$tid" ] && { printf '  %-28s  %-24s  %s\n' "$team" "$tid" "$name"; found=1; }
+  done
+  [ "$found" = 1 ] || echo "  (no provisioning profiles installed yet)"
+}
+
+has_distribution_cert() {
+  security find-identity -v -p codesigning | grep -q "Apple Distribution"
+}
+
 if [ -z "$TEAM_ID" ]; then
   echo
-  echo "Code-signing identities installed on this Mac:"
+  echo "Signing identities on this Mac:"
   echo
   security find-identity -v -p codesigning | sed -n 's/^ *[0-9]*) [A-F0-9]* "\(.*\)"$/  \1/p'
   echo
-  echo "Your team ID is the 10 characters in brackets above."
-  echo "Re-run with it set, for example:"
+  echo "Teams, from the provisioning profiles (team | team ID | profile):"
   echo
-  echo "  TEAM_ID=ABCDE12345 $0"
+  list_teams
+  echo
+
+  if has_distribution_cert; then
+    echo "An Apple Distribution certificate is installed."
+  else
+    echo "NOTE: no Apple Distribution certificate is installed — only Development."
+    echo "      App Store builds must be signed with a distribution certificate."
+    echo "      xcodebuild will try to create one for the team you pass below;"
+    echo "      that needs your Apple ID signed in to Xcode with Account Holder,"
+    echo "      Admin or App Manager on that team."
+  fi
+
+  echo
+  echo "Find the row that says Advaice Limited and use ITS team ID:"
+  echo
+  echo "  TEAM_ID=XXXXXXXXXX $0"
+  echo
+  echo "If no Advaice Limited row appears, the Mac has never signed for that"
+  echo "team. Sign in under Xcode > Settings > Accounts first, or read the ID"
+  echo "from developer.apple.com > Membership details."
   echo
   exit 1
+fi
+
+# Refuse to sign for a team that is not the one the release belongs to.
+TEAM_NAME="$(list_teams | awk -v id="$TEAM_ID" '$0 ~ id { $NF=""; print $1" "$2" "$3 }' | head -1 | xargs || true)"
+if [ -n "$TEAM_NAME" ]; then
+  echo "==> Team $TEAM_ID resolves to: $TEAM_NAME"
+  case "$TEAM_NAME" in
+    *Advaice*) : ;;
+    *) echo
+       echo "That is not Advaice Limited. Stopping — signing a release with the"
+       echo "wrong team puts the app under the wrong developer account."
+       echo "Set ALLOW_ANY_TEAM=1 to override deliberately."
+       [ "${ALLOW_ANY_TEAM:-}" = "1" ] || exit 1 ;;
+  esac
+else
+  echo "==> No local profile matches $TEAM_ID yet; xcodebuild will request one."
 fi
 
 echo "==> Archiving $SCHEME for team $TEAM_ID"
