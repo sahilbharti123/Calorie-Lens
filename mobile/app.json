@@ -13,7 +13,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.advaice.calorielens",
-      "buildNumber": "1",
+      "buildNumber": "2",
       "icon": {
         "light": "./assets/images/icon.png",
         "dark": "./assets/images/icon-dark.png",
@@ -21,7 +21,10 @@
       },
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "UIViewControllerBasedStatusBarAppearance": false
+        "UIViewControllerBasedStatusBarAppearance": false,
+        "NSPhotoLibraryUsageDescription": "Vigorly does not read your photo library. iOS requires this notice because a bundled framework links the photo APIs.",
+        "NSPhotoLibraryAddUsageDescription": "Vigorly does not save anything to your photo library. Backups are written as files you choose a location for.",
+        "NSFaceIDUsageDescription": "Face ID unlocks the encryption key protecting your locally stored fitness data."
       },
       "privacyManifests": {
         "NSPrivacyAccessedAPITypes": [
@@ -54,7 +57,7 @@
     },
     "android": {
       "package": "com.advaice.calorielens",
-      "versionCode": 1,
+      "versionCode": 2,
       "permissions": [
         "android.permission.health.READ_STEPS",
         "android.permission.health.READ_ACTIVE_CALORIES_BURNED",

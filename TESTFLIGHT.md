@@ -18,6 +18,7 @@ and waits.
 | Version / build | `1.0.0` (`1`) |
 | Encryption declaration | `ITSAppUsesNonExemptEncryption: false` in `Info.plist` — see the note at the end |
 | Privacy manifest | `PrivacyInfo.xcprivacy`, four required API reasons declared |
+| Purpose strings | Microphone, speech, HealthKit, photo library, Face ID — see the note below |
 | Backend | None. `EXPO_PUBLIC_API_URL` is empty, so the app runs entirely on-device |
 | Account deletion | In-app, under Account & privacy — required by guideline 5.1.1(v) |
 
@@ -182,6 +183,22 @@ Then `npx expo prebuild --clean`, archive, upload. Bump `version` (`1.0.1`,
 `1.1.0`) only when the release itself changes, not per upload.
 
 ---
+
+## Purpose strings you did not ask for
+
+`NSPhotoLibraryUsageDescription`, `NSPhotoLibraryAddUsageDescription` and
+`NSFaceIDUsageDescription` are declared even though Vigorly never opens a photo
+picker or a Face ID prompt.
+
+Apple's static scan (`ITMS-90683`) rejects a binary that *links* a protected API
+regardless of whether the app calls it, and React Native's image loader plus
+`expo-document-picker` both reference the Photos frameworks. The strings say
+plainly that the app does not use them, which is the truth and is what a user
+would read if a bundled framework ever did prompt.
+
+If a future build genuinely adds photo attachments or biometric unlock, rewrite
+these to describe the real feature — a purpose string that misdescribes what the
+app does is a review problem.
 
 ## Two things worth your judgement
 
