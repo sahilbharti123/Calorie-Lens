@@ -263,7 +263,7 @@ npx eas build --profile development --platform ios
 npx eas build --profile development --platform android
 ```
 
-App identifiers are configured as `com.sahilbharti.calorielens`. Store release
+App identifiers are configured as `com.advaice.calorielens`. Store release
 builds still require your Apple Developer and Google Play accounts, signing
 credentials, privacy disclosures, and Health Connect declaration.
 

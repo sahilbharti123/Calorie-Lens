@@ -5,7 +5,7 @@ counts are shown as `(used/limit)`. Anything in `ANGLE BRACKETS` is a
 placeholder only you can fill in.
 
 - **App**: Calorie Lens
-- **Bundle ID**: `com.sahilbharti.calorielens`
+- **Bundle ID**: `com.advaice.calorielens`
 - **Version**: 1.0.0 (build 1)
 - **Developer**: Sahil Bharti (individual), sahil.bharti97@gmail.com
 
@@ -454,7 +454,7 @@ Only you can do these.
 - [ ] Agreements, Tax, and Banking complete in App Store Connect, even for a
       free app; the Free Apps agreement must show "Active".
 - [ ] App record created in App Store Connect with bundle ID
-      `com.sahilbharti.calorielens`.
+      `com.advaice.calorielens`.
 
 **Assets you must produce**
 
