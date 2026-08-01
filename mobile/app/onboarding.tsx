@@ -23,6 +23,7 @@ import {
   Bar,
   Card,
   CountUp,
+  GhostButton,
   GlassFooter,
   MacroChip,
   Metric,
@@ -33,7 +34,8 @@ import {
   Tap,
   Well,
 } from '@/src/components/ui';
-import { healthSetupCopy, syncNativeHealth } from '@/src/lib/health';
+import { healthSetupCopy, healthSnapshotHasSamples, syncNativeHealth } from '@/src/lib/health';
+import { useReducedMotion } from '@/src/lib/accessibility';
 import { calculatePersonalTargets, goalLabel } from '@/src/lib/personalization';
 import { ensureSpeechPermission, speechAvailable } from '@/src/lib/speech';
 import { useApp } from '@/src/store/app-store';
@@ -52,7 +54,12 @@ import type {
   WorkoutPreference,
 } from '@/src/types';
 
-const TOTAL_STEPS = 10;
+/**
+ * First run is deliberately short: promise -> goal -> essentials -> plan.
+ * Everything else in this file remains available as progressive profile
+ * setup, but none of it is allowed to delay the first useful log.
+ */
+const TOTAL_STEPS = 4;
 const THUMB = 9;
 
 type Choice<T extends string> = {
@@ -76,31 +83,12 @@ const sexChoices: Choice<EquationSex>[] = [
   { value: 'neutral', title: 'Use a midpoint', body: 'Less precise, but does not require choosing either equation.', icon: 'scale' },
 ];
 
-const paceChoices: Choice<GoalPace>[] = [
-  { value: 'gentle', title: 'Gentle', body: 'Smaller calorie change; easiest to sustain and assess.', icon: 'steps' },
-  { value: 'steady', title: 'Steady', body: 'A practical middle ground for most routines.', icon: 'trend' },
-  { value: 'ambitious', title: 'Ambitious', body: 'Larger change; monitor hunger, recovery and performance.', icon: 'flame' },
-];
-
-const activityChoices: Choice<ActivityLevel>[] = [
-  { value: 'mostly-seated', title: 'Mostly seated', body: 'Desk-based day with little walking outside planned exercise.', icon: 'keyboard' },
-  { value: 'lightly-active', title: 'Some daily movement', body: 'Regular errands or walking, but much of the day is seated.', icon: 'steps' },
-  { value: 'active', title: 'Active most days', body: 'A mobile job, frequent walking or regular training.', icon: 'trend' },
-  { value: 'very-active', title: 'Very active', body: 'Physical work, long training sessions or high daily movement.', icon: 'flame' },
-];
-
 const workoutChoices: Choice<WorkoutPreference>[] = [
   { value: 'gym', title: 'Gym training', body: 'Weights, machines or structured classes.', icon: 'dumbbell' },
   { value: 'walking', title: 'Walking and cardio', body: 'Steps and simple aerobic sessions fit best.', icon: 'steps' },
   { value: 'home', title: 'Home workouts', body: 'Bodyweight, yoga or dumbbells at home.', icon: 'home' },
   { value: 'mixed', title: 'A flexible mix', body: 'Use whichever option fits the day.', icon: 'spark' },
   { value: 'restarting', title: 'I am restarting', body: 'Begin below the standard target and build momentum.', icon: 'restart' },
-];
-
-const experienceChoices: Choice<ExperienceLevel>[] = [
-  { value: 'new', title: 'New', body: 'I need clear, simple starting points.', icon: 'book' },
-  { value: 'some', title: 'Some experience', body: 'I know the basics but want consistency.', icon: 'muscle' },
-  { value: 'experienced', title: 'Experienced', body: 'I track performance and can handle more detail.', icon: 'trophy' },
 ];
 
 const dietChoices: Choice<DietStyle>[] = [
@@ -119,20 +107,6 @@ const challengeChoices: Choice<MainChallenge>[] = [
   { value: 'consistency', title: 'Staying consistent', body: 'I start well and then stop tracking.', icon: 'calendar' },
 ];
 
-const toneChoices: Choice<CoachingTone>[] = [
-  { value: 'gentle', title: 'Gentle', body: 'Encourage me without guilt or pressure.', icon: 'heart' },
-  { value: 'direct', title: 'Direct', body: 'Give me the clearest next action.', icon: 'target' },
-  { value: 'data-led', title: 'Data-led', body: 'Explain the numbers and tradeoffs briefly.', icon: 'chart' },
-];
-
-const goalNotes: Record<PrimaryGoal, string> = {
-  'lose-fat': 'Your target begins below estimated maintenance and should be reviewed against a 2–4 week weight trend.',
-  'build-muscle': 'Your target begins slightly above estimated maintenance, with strength training and protein prioritized.',
-  maintain: 'Your target stays near estimated maintenance while consistency and body-weight trend guide adjustments.',
-  'improve-fitness': 'Your target stays near maintenance while weekly movement and recovery become the primary signals.',
-  'build-habits': 'Your target stays conservative so the routine can become stable before adding difficulty.',
-};
-
 export default function OnboardingScreen() {
   const router = useRouter();
   const {
@@ -142,27 +116,27 @@ export default function OnboardingScreen() {
     savePersonalization,
     updateCoachMemory,
   } = useApp();
-  const { completeOnboarding } = useAuth();
+  const { completeOnboarding, continueOffline } = useAuth();
   const [step, setStep] = useState(0);
   const [primaryGoal, setPrimaryGoal] = useState<PrimaryGoal | null>(data.profile.primaryGoal ?? null);
   const [equationSex, setEquationSex] = useState<EquationSex | null>(data.profile.equationSex ?? null);
   const [age, setAge] = useState(data.profile.age ? String(data.profile.age) : '');
   const [height, setHeight] = useState(data.profile.heightCm ? String(data.profile.heightCm) : '');
   const [weight, setWeight] = useState(data.profile.weightKg ? String(data.profile.weightKg) : '');
-  const [targetWeight, setTargetWeight] = useState(data.profile.targetWeightKg ? String(data.profile.targetWeightKg) : '');
-  const [goalPace, setGoalPace] = useState<GoalPace | null>(data.profile.goalPace ?? null);
-  const [activityLevel, setActivityLevel] = useState<ActivityLevel | null>(data.profile.activityLevel ?? null);
-  const [workoutPreference, setWorkoutPreference] = useState<WorkoutPreference | null>(data.profile.workoutPreference ?? null);
-  const [experienceLevel, setExperienceLevel] = useState<ExperienceLevel | null>(data.profile.experienceLevel ?? null);
-  const [trainingDays, setTrainingDays] = useState(String(data.profile.trainingDays ?? 3));
-  const [availableMinutes, setAvailableMinutes] = useState(String(data.profile.availableMinutes ?? 30));
-  const [dietStyle, setDietStyle] = useState<DietStyle | null>(data.profile.dietStyle ?? null);
-  const [mealsPerDay, setMealsPerDay] = useState(String(data.profile.mealsPerDay ?? 3));
-  const [allergies, setAllergies] = useState(data.profile.allergies.join(', '));
-  const [injuries, setInjuries] = useState(data.profile.injuries.join(', '));
-  const [mainChallenge, setMainChallenge] = useState<MainChallenge | null>(data.profile.mainChallenge ?? null);
-  const [coachingTone, setCoachingTone] = useState<CoachingTone | null>(data.profile.coachingTone ?? null);
-  const [bowl, setBowl] = useState(data.estimation.bowlMl ? String(data.estimation.bowlMl) : '');
+  const [targetWeight] = useState(data.profile.targetWeightKg ? String(data.profile.targetWeightKg) : '');
+  const [goalPace] = useState<GoalPace | null>(data.profile.goalPace ?? null);
+  const [activityLevel] = useState<ActivityLevel | null>(data.profile.activityLevel ?? null);
+  const [workoutPreference] = useState<WorkoutPreference | null>(data.profile.workoutPreference ?? null);
+  const [experienceLevel] = useState<ExperienceLevel | null>(data.profile.experienceLevel ?? null);
+  const [trainingDays] = useState(String(data.profile.trainingDays ?? 3));
+  const [availableMinutes] = useState(String(data.profile.availableMinutes ?? 30));
+  const [dietStyle] = useState<DietStyle | null>(data.profile.dietStyle ?? null);
+  const [mealsPerDay] = useState(String(data.profile.mealsPerDay ?? 3));
+  const [allergies] = useState(data.profile.allergies.join(', '));
+  const [injuries] = useState(data.profile.injuries.join(', '));
+  const [mainChallenge] = useState<MainChallenge | null>(data.profile.mainChallenge ?? null);
+  const [coachingTone] = useState<CoachingTone | null>(data.profile.coachingTone ?? null);
+  const [bowl] = useState(data.estimation.bowlMl ? String(data.estimation.bowlMl) : '');
   const [healthBusy, setHealthBusy] = useState(false);
   const [healthMessage, setHealthMessage] = useState('');
   const [voiceBusy, setVoiceBusy] = useState(false);
@@ -219,16 +193,7 @@ export default function OnboardingScreen() {
       && inRange(age, 18, 90)
       && inRange(height, 125, 230)
       && inRange(weight, 35, 250))
-    || (step === 3 && Boolean(goalPace) && validTarget(primaryGoal, weight, targetWeight))
-    || (step === 4 && Boolean(activityLevel))
-    || (step === 5
-      && Boolean(workoutPreference)
-      && Boolean(experienceLevel)
-      && inRange(trainingDays, 1, 7)
-      && inRange(availableMinutes, 10, 120))
-    || (step === 6 && Boolean(dietStyle) && inRange(mealsPerDay, 2, 6))
-    || (step === 7 && Boolean(mainChallenge) && Boolean(coachingTone))
-    || step >= 8;
+    || step >= 3;
 
   useEffect(() => {
     scroller.current?.scrollTo({ y: 0, animated: false });
@@ -265,9 +230,7 @@ export default function OnboardingScreen() {
     try {
       const snapshot = await syncNativeHealth();
       applyHealthSnapshot(snapshot);
-      const hasSamples = Boolean(
-        snapshot.steps || snapshot.activeCalories || snapshot.sleepHours || snapshot.weightKg,
-      );
+      const hasSamples = healthSnapshotHasSamples(snapshot);
       setHealthMessage(
         hasSamples
           ? `Connected to ${snapshot.source} and imported today’s approved data.`
@@ -305,7 +268,8 @@ export default function OnboardingScreen() {
       ].filter(Boolean).join(' '),
     });
     await completeOnboarding();
-    router.replace('/auth' as Href);
+    continueOffline();
+    router.replace('/(tabs)' as Href);
   }
 
   if (!hydrated) {
@@ -366,55 +330,6 @@ export default function OnboardingScreen() {
                   setWeight={setWeight}
                   weight={weight}
                 />
-              ) : step === 3 ? (
-                <GoalDirection
-                  currentWeight={weight}
-                  goal={primaryGoal}
-                  pace={goalPace}
-                  setPace={setGoalPace}
-                  setTargetWeight={setTargetWeight}
-                  targetWeight={targetWeight}
-                />
-              ) : step === 4 ? (
-                <Question
-                  eyebrow="A NORMAL DAY"
-                  title="How active are you outside planned workouts?"
-                  body="Choose your real routine. Workout sessions are handled separately on the next screen."
-                  choices={activityChoices}
-                  selected={activityLevel}
-                  onSelect={setActivityLevel}
-                />
-              ) : step === 5 ? (
-                <TrainingSetup
-                  availableMinutes={availableMinutes}
-                  experience={experienceLevel}
-                  preference={workoutPreference}
-                  setAvailableMinutes={setAvailableMinutes}
-                  setExperience={setExperienceLevel}
-                  setPreference={setWorkoutPreference}
-                  setTrainingDays={setTrainingDays}
-                  trainingDays={trainingDays}
-                />
-              ) : step === 6 ? (
-                <FoodSetup
-                  allergies={allergies}
-                  dietStyle={dietStyle}
-                  mealsPerDay={mealsPerDay}
-                  setAllergies={setAllergies}
-                  setDietStyle={setDietStyle}
-                  setMealsPerDay={setMealsPerDay}
-                />
-              ) : step === 7 ? (
-                <SupportSetup
-                  challenge={mainChallenge}
-                  injuries={injuries}
-                  setChallenge={setMainChallenge}
-                  setInjuries={setInjuries}
-                  setTone={setCoachingTone}
-                  tone={coachingTone}
-                />
-              ) : step === 8 ? (
-                <Calibration bowl={bowl} setBowl={setBowl} />
               ) : (
                 <PlanPreview
                   goal={primaryGoal}
@@ -435,16 +350,23 @@ export default function OnboardingScreen() {
 
         <GlassFooter>
           {step < TOTAL_STEPS - 1 ? (
-            <PrimaryButton
-              disabled={!canContinue}
-              icon={step === 0 ? 'spark' : 'chevron'}
-              label={step === 0 ? 'Build my plan' : 'Continue'}
-              onPress={() => setStep((current) => current + 1)}
-            />
+            <>
+              <PrimaryButton
+                disabled={!canContinue}
+                icon={step === 0 ? 'spark' : 'chevron'}
+                label={step === 0 ? 'Build my plan' : 'Continue'}
+                onPress={() => setStep((current) => current + 1)}
+              />
+              {step === 0 ? (
+                <GhostButton compact label="Log now, set up later" onPress={() => void finish()} />
+              ) : null}
+            </>
           ) : (
-            <PrimaryButton icon="check" label="Save plan and continue" onPress={() => void finish()} />
+            <PrimaryButton icon="check" label="Start with this plan" onPress={() => void finish()} />
           )}
-          {step === 8 ? <Text style={styles.footerHint}>Bowl size is optional and can be added later.</Text> : null}
+          {step === TOTAL_STEPS - 1 ? (
+            <Text style={styles.footerHint}>No account required. Refine activity, food and training preferences later.</Text>
+          ) : null}
         </GlassFooter>
       </KeyboardAvoidingView>
     </Screen>
@@ -457,13 +379,14 @@ export default function OnboardingScreen() {
 
 /** Slim track under the header. The lime head springs forward on every step. */
 function StepProgress({ step, total }: { step: number; total: number }) {
+  const reducedMotion = useReducedMotion();
   const [width, setWidth] = useState(0);
   const ratio = (step + 1) / total;
   const position = useSharedValue(0);
 
   useEffect(() => {
-    position.value = withSpring(ratio, motion.enter);
-  }, [position, ratio]);
+    position.value = reducedMotion ? ratio : withSpring(ratio, motion.enter);
+  }, [position, ratio, reducedMotion]);
 
   const head = useAnimatedStyle(() => {
     const limit = Math.max(0, width - THUMB);
@@ -506,7 +429,7 @@ function Welcome() {
         <View style={styles.brandRow}>
           <BrandMark size={54} />
         </View>
-        <Text style={styles.eyebrow}>CALORIE LENS</Text>
+        <Text style={styles.eyebrow}>VIGORLY</Text>
         <Text style={styles.title}>Your plan should know who it is for.</Text>
         <Text style={styles.body}>
           A few honest answers will set your calories, macros, movement targets and coaching priorities. Every answer stays editable.
@@ -621,11 +544,14 @@ function ChoiceCard<T extends string>({
 
 /** The selected-state check. Springs open so picking an answer feels physical. */
 function SelectMark({ active }: { active: boolean }) {
+  const reducedMotion = useReducedMotion();
   const on = useSharedValue(active ? 1 : 0);
 
   useEffect(() => {
-    on.value = withSpring(active ? 1 : 0, motion.bouncy);
-  }, [active, on]);
+    on.value = reducedMotion
+      ? (active ? 1 : 0)
+      : withSpring(active ? 1 : 0, motion.bouncy);
+  }, [active, on, reducedMotion]);
 
   const shell = useAnimatedStyle(() => ({
     backgroundColor: interpolateColor(on.value, [0, 1], [palette.surfaceLo, palette.lime]),
@@ -693,271 +619,6 @@ function BodyBasics({
         <SectionTitle title="Energy equation" />
       </Reveal>
       <ChoiceList choices={sexChoices} onSelect={setEquationSex} selected={equationSex} startIndex={3} />
-    </>
-  );
-}
-
-function GoalDirection({
-  currentWeight,
-  goal,
-  pace,
-  setPace,
-  setTargetWeight,
-  targetWeight,
-}: {
-  currentWeight: string;
-  goal: PrimaryGoal | null;
-  pace: GoalPace | null;
-  setPace: (value: GoalPace) => void;
-  setTargetWeight: (value: string) => void;
-  targetWeight: string;
-}) {
-  const targetError = targetWeight && !validTarget(goal, currentWeight, targetWeight);
-  return (
-    <>
-      <Reveal>
-        <StepIntro
-          eyebrow="DIRECTION, NOT A DEADLINE"
-          title="How quickly should the starting plan move?"
-          body={goal ? goalNotes[goal] : 'The pace controls the starting calorie adjustment.'}
-        />
-      </Reveal>
-
-      <Reveal index={1}>
-        <Card>
-          <View style={styles.grid}>
-            <NumberField
-              label="Target weight"
-              onChange={setTargetWeight}
-              placeholder="Optional"
-              unit="kg"
-              value={targetWeight}
-            />
-          </View>
-          {targetError ? (
-            <View style={styles.noteRow}>
-              <Glyph color={palette.danger} name="alert" size={14} />
-              <Text style={styles.errorText}>
-                For this goal, choose a target in the intended direction or leave it blank.
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.noteRow}>
-              <Glyph color={palette.inkLow} name="info" size={14} />
-              <Text style={styles.helperText}>
-                A target weight helps the coach frame progress, but it does not create a deadline.
-              </Text>
-            </View>
-          )}
-        </Card>
-      </Reveal>
-
-      <Reveal index={2}>
-        <SectionTitle title="Starting pace" />
-      </Reveal>
-      <ChoiceList choices={paceChoices} onSelect={setPace} selected={pace} startIndex={3} />
-    </>
-  );
-}
-
-function TrainingSetup({
-  availableMinutes,
-  experience,
-  preference,
-  setAvailableMinutes,
-  setExperience,
-  setPreference,
-  setTrainingDays,
-  trainingDays,
-}: {
-  availableMinutes: string;
-  experience: ExperienceLevel | null;
-  preference: WorkoutPreference | null;
-  setAvailableMinutes: (value: string) => void;
-  setExperience: (value: ExperienceLevel) => void;
-  setPreference: (value: WorkoutPreference) => void;
-  setTrainingDays: (value: string) => void;
-  trainingDays: string;
-}) {
-  return (
-    <>
-      <Reveal>
-        <StepIntro
-          eyebrow="A PLAN THAT FITS THE WEEK"
-          title="What training can you realistically repeat?"
-          body="These answers set weekly minutes, strength frequency and the kind of suggestions you receive."
-        />
-      </Reveal>
-      <ChoiceList choices={workoutChoices} onSelect={setPreference} selected={preference} />
-
-      <Reveal index={6}>
-        <SectionTitle title="Your experience" />
-      </Reveal>
-      <ChoiceList choices={experienceChoices} onSelect={setExperience} selected={experience} startIndex={7} />
-
-      <Reveal index={10} style={styles.group}>
-        <Card>
-          <View style={styles.grid}>
-            <NumberField
-              label="Days available"
-              onChange={setTrainingDays}
-              placeholder="3"
-              unit="/ week"
-              value={trainingDays}
-            />
-            <NumberField
-              label="Time per session"
-              onChange={setAvailableMinutes}
-              placeholder="30"
-              unit="minutes"
-              value={availableMinutes}
-            />
-          </View>
-        </Card>
-      </Reveal>
-    </>
-  );
-}
-
-function FoodSetup({
-  allergies,
-  dietStyle,
-  mealsPerDay,
-  setAllergies,
-  setDietStyle,
-  setMealsPerDay,
-}: {
-  allergies: string;
-  dietStyle: DietStyle | null;
-  mealsPerDay: string;
-  setAllergies: (value: string) => void;
-  setDietStyle: (value: DietStyle) => void;
-  setMealsPerDay: (value: string) => void;
-}) {
-  return (
-    <>
-      <Reveal>
-        <StepIntro
-          eyebrow="YOUR FOOD, NOT A TEMPLATE"
-          title="What does eating normally look like?"
-          body="The coach uses this to choose relevant protein sources, meal examples and portion advice."
-        />
-      </Reveal>
-      <ChoiceList choices={dietChoices} onSelect={setDietStyle} selected={dietStyle} />
-
-      <Reveal index={6} style={styles.group}>
-        <Card>
-          <View style={styles.grid}>
-            <NumberField
-              label="Meals most days"
-              onChange={setMealsPerDay}
-              placeholder="3"
-              unit="/ day"
-              value={mealsPerDay}
-            />
-          </View>
-          <View style={styles.stacked}>
-            <TextField
-              label="Allergies or foods to avoid"
-              onChange={setAllergies}
-              placeholder="e.g. peanuts, shellfish"
-              value={allergies}
-            />
-          </View>
-          <View style={styles.noteRow}>
-            <Glyph color={palette.inkLow} name="info" size={14} />
-            <Text style={styles.helperText}>Separate multiple items with commas. Leave blank if none.</Text>
-          </View>
-        </Card>
-      </Reveal>
-    </>
-  );
-}
-
-function SupportSetup({
-  challenge,
-  injuries,
-  setChallenge,
-  setInjuries,
-  setTone,
-  tone,
-}: {
-  challenge: MainChallenge | null;
-  injuries: string;
-  setChallenge: (value: MainChallenge) => void;
-  setInjuries: (value: string) => void;
-  setTone: (value: CoachingTone) => void;
-  tone: CoachingTone | null;
-}) {
-  return (
-    <>
-      <Reveal>
-        <StepIntro
-          eyebrow="WHAT USUALLY GETS IN THE WAY"
-          title="Make the advice useful on difficult days."
-          body="Your main challenge determines which gap the app calls out first."
-        />
-      </Reveal>
-      <ChoiceList choices={challengeChoices} onSelect={setChallenge} selected={challenge} />
-
-      <Reveal index={6}>
-        <SectionTitle title="How should the coach speak?" />
-      </Reveal>
-      <ChoiceList choices={toneChoices} onSelect={setTone} selected={tone} startIndex={7} />
-
-      <Reveal index={10} style={styles.group}>
-        <Card>
-          <TextField
-            label="Injuries or movement limits"
-            onChange={setInjuries}
-            placeholder="e.g. sensitive left knee"
-            value={injuries}
-          />
-          <View style={styles.noteRow}>
-            <Glyph color={palette.inkLow} name="info" size={14} />
-            <Text style={styles.helperText}>
-              The app avoids suggesting around a noted limitation, but it cannot diagnose or rehabilitate an injury.
-            </Text>
-          </View>
-        </Card>
-      </Reveal>
-    </>
-  );
-}
-
-function Calibration({ bowl, setBowl }: { bowl: string; setBowl: (value: string) => void }) {
-  return (
-    <>
-      <Reveal>
-        <StepIntro
-          eyebrow="ONE USEFUL MEASUREMENT"
-          title="Make home-food estimates less random."
-          body="Your usual bowl size changes calculations for dal, rajma, rice and other foods logged by volume."
-        />
-      </Reveal>
-
-      <Reveal index={1}>
-        <Card>
-          <View style={styles.grid}>
-            <NumberField label="Your usual bowl" onChange={setBowl} placeholder="200" unit="ml" value={bowl} />
-          </View>
-          <Well style={styles.tip}>
-            <Glyph color={palette.lime} name="water" size={17} />
-            <Text style={styles.tipText}>
-              Fill the bowl with water once and pour it into a measuring jug. You can skip this and add it later.
-            </Text>
-          </Well>
-        </Card>
-      </Reveal>
-
-      <Reveal index={2} style={styles.group}>
-        <Card>
-          <Text style={styles.cardTitle}>What will stay approximate?</Text>
-          <Text style={styles.cardBody}>
-            Oil, recipes and restaurant portions still vary. The app shows a range and its assumptions before saving.
-          </Text>
-        </Card>
-      </Reveal>
     </>
   );
 }
@@ -1175,39 +836,6 @@ function NumberField({
   );
 }
 
-function TextField({
-  label,
-  onChange,
-  placeholder,
-  value,
-}: {
-  label: string;
-  onChange: (value: string) => void;
-  placeholder: string;
-  value: string;
-}) {
-  const [focused, setFocused] = useState(false);
-  return (
-    <View style={styles.textField}>
-      <Text style={styles.fieldLabel}>{label.toUpperCase()}</Text>
-      <View style={[styles.shell, focused && styles.shellOn]}>
-        <TextInput
-          accessibilityLabel={label}
-          autoCapitalize="sentences"
-          onBlur={() => setFocused(false)}
-          onChangeText={onChange}
-          onFocus={() => setFocused(true)}
-          placeholder={placeholder}
-          placeholderTextColor={palette.inkLow}
-          selectionColor={palette.lime}
-          style={styles.textInput}
-          value={value}
-        />
-      </View>
-    </View>
-  );
-}
-
 /* ------------------------------------------------------------------ *
  * Validation helpers — unchanged
  * ------------------------------------------------------------------ */
@@ -1220,17 +848,6 @@ function numeric(value: string) {
 function inRange(value: string, min: number, max: number) {
   const parsed = numeric(value);
   return parsed != null && parsed >= min && parsed <= max;
-}
-
-function validTarget(goal: PrimaryGoal | null, current: string, target: string) {
-  if (!target) return true;
-  if (!inRange(target, 35, 250)) return false;
-  const currentValue = numeric(current);
-  const targetValue = numeric(target);
-  if (!currentValue || !targetValue) return false;
-  if (goal === 'lose-fat') return targetValue < currentValue;
-  if (goal === 'build-muscle') return targetValue >= currentValue * 0.9;
-  return true;
 }
 
 function list(value: string) {

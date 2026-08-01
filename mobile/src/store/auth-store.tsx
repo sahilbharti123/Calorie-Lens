@@ -48,7 +48,12 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
     Promise.all([readSession(), readOnboardingComplete()])
       .then(async ([stored, hasOnboarded]) => {
         setOnboardingComplete(hasOnboarded);
-        if (!stored) return;
+        if (!stored) {
+          // Completing onboarding opts this device into the private offline
+          // vault. Do not turn account creation into a recurring launch gate.
+          setOfflineMode(hasOnboarded);
+          return;
+        }
         setSession(stored);
         try {
           const response = await apiRequest<{ user: AuthSession['user'] }>('/v1/auth/me', {}, stored);

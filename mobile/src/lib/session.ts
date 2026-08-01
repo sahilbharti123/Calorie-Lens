@@ -1,4 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 
 import type { AuthSession } from '@/src/types';
 
@@ -15,35 +16,55 @@ const OPTIONS: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
 };
 
+async function getItem(key: string) {
+  if (Platform.OS === 'web') return globalThis.localStorage?.getItem(key) ?? null;
+  return SecureStore.getItemAsync(key, OPTIONS);
+}
+
+async function setItem(key: string, value: string) {
+  if (Platform.OS === 'web') {
+    globalThis.localStorage?.setItem(key, value);
+    return;
+  }
+  await SecureStore.setItemAsync(key, value, OPTIONS);
+}
+
+async function removeItem(key: string) {
+  if (Platform.OS === 'web') {
+    globalThis.localStorage?.removeItem(key);
+    return;
+  }
+  await SecureStore.deleteItemAsync(key, OPTIONS);
+}
+
 export async function readSession() {
-  const value = await SecureStore.getItemAsync(SESSION_KEY, OPTIONS);
+  const value = await getItem(SESSION_KEY);
   if (!value) return null;
   try {
     return JSON.parse(value) as AuthSession;
   } catch {
-    await SecureStore.deleteItemAsync(SESSION_KEY, OPTIONS);
+    await removeItem(SESSION_KEY);
     return null;
   }
 }
 
 export async function saveSession(session: AuthSession) {
-  await SecureStore.setItemAsync(SESSION_KEY, JSON.stringify(session), OPTIONS);
+  await setItem(SESSION_KEY, JSON.stringify(session));
 }
 
 export async function clearSession() {
-  await SecureStore.deleteItemAsync(SESSION_KEY, OPTIONS);
+  await removeItem(SESSION_KEY);
 }
 
 export async function saveRecoveryCode(userId: string, code: string) {
-  await SecureStore.setItemAsync(
+  await setItem(
     RECOVERY_KEY,
     JSON.stringify({ userId, code }),
-    OPTIONS,
   );
 }
 
 export async function readRecoveryCode(userId?: string) {
-  const value = await SecureStore.getItemAsync(RECOVERY_KEY, OPTIONS);
+  const value = await getItem(RECOVERY_KEY);
   if (!value) return null;
   try {
     const saved = JSON.parse(value) as { userId: string; code: string };
@@ -55,17 +76,17 @@ export async function readRecoveryCode(userId?: string) {
 }
 
 export async function clearRecoveryCode() {
-  await SecureStore.deleteItemAsync(RECOVERY_KEY, OPTIONS);
+  await removeItem(RECOVERY_KEY);
 }
 
 export async function readOnboardingComplete() {
-  return (await SecureStore.getItemAsync(ONBOARDING_KEY, OPTIONS)) === 'true';
+  return (await getItem(ONBOARDING_KEY)) === 'true';
 }
 
 export async function saveOnboardingComplete(complete: boolean) {
   if (complete) {
-    await SecureStore.setItemAsync(ONBOARDING_KEY, 'true', OPTIONS);
+    await setItem(ONBOARDING_KEY, 'true');
   } else {
-    await SecureStore.deleteItemAsync(ONBOARDING_KEY, OPTIONS);
+    await removeItem(ONBOARDING_KEY);
   }
 }

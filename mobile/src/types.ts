@@ -26,6 +26,15 @@ export type MealItem = {
   source: 'usda' | 'label' | 'ai' | 'local' | 'manual';
 };
 
+export type SavedMeal = {
+  id: string;
+  name: string;
+  slot: MealSlot;
+  items: Omit<MealItem, 'id' | 'slot' | 'loggedAt'>[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type Workout = {
   id: string;
   name: string;
@@ -234,8 +243,11 @@ export type AppData = {
   coachMessages: CoachMessage[];
   deletedMealIds: string[];
   deletedWorkoutIds: string[];
+  deletedSavedMealIds: string[];
+  savedMeals: SavedMeal[];
   training: TrainingData;
   lastHealthSync?: string;
+  healthSync?: HealthSyncRecord;
 };
 
 export type AccountUser = {
@@ -301,5 +313,20 @@ export type HealthSnapshot = {
   activeCalories?: number;
   sleepHours?: number;
   weightKg?: number;
+  sampleCount?: number;
+  sampleCounts?: {
+    steps: number;
+    activeCalories: number;
+    sleep: number;
+    weight: number;
+  };
   source: 'Apple Health' | 'Health Connect';
+};
+
+export type HealthSyncRecord = {
+  source?: HealthSnapshot['source'];
+  status: 'current' | 'empty' | 'error';
+  lastAttemptAt: string;
+  lastSuccessAt?: string;
+  message?: string;
 };

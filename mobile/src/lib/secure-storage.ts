@@ -2,7 +2,7 @@ import { gcm } from '@noble/ciphers/aes.js';
 import { bytesToHex, bytesToUtf8, hexToBytes, utf8ToBytes } from '@noble/ciphers/utils.js';
 import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
-import Storage from 'expo-sqlite/kv-store';
+import { Platform } from 'react-native';
 
 /**
  * Persisted-storage keys keep the pre-rename `calorie-lens.` prefix on purpose.
@@ -22,11 +22,48 @@ const SECURE_OPTIONS: SecureStore.SecureStoreOptions = {
  */
 const unreadable = new Set<string>();
 
+async function storageGet(key: string) {
+  if (Platform.OS === 'web') return globalThis.localStorage?.getItem(key) ?? null;
+  const { default: storage } = await import('expo-sqlite/kv-store');
+  return storage.getItem(key);
+}
+
+async function storageSet(key: string, value: string) {
+  if (Platform.OS === 'web') {
+    globalThis.localStorage?.setItem(key, value);
+    return;
+  }
+  const { default: storage } = await import('expo-sqlite/kv-store');
+  await storage.setItem(key, value);
+}
+
+async function storageRemove(key: string) {
+  if (Platform.OS === 'web') {
+    globalThis.localStorage?.removeItem(key);
+    return;
+  }
+  const { default: storage } = await import('expo-sqlite/kv-store');
+  await storage.removeItem(key);
+}
+
+async function secureGet(key: string) {
+  if (Platform.OS === 'web') return globalThis.localStorage?.getItem(key) ?? null;
+  return SecureStore.getItemAsync(key, SECURE_OPTIONS);
+}
+
+async function secureSet(key: string, value: string) {
+  if (Platform.OS === 'web') {
+    globalThis.localStorage?.setItem(key, value);
+    return;
+  }
+  await SecureStore.setItemAsync(key, value, SECURE_OPTIONS);
+}
+
 async function deviceKey() {
-  let encoded = await SecureStore.getItemAsync(DEVICE_KEY_NAME, SECURE_OPTIONS);
+  let encoded = await secureGet(DEVICE_KEY_NAME);
   if (!encoded) {
     encoded = bytesToHex(Crypto.getRandomBytes(32));
-    await SecureStore.setItemAsync(DEVICE_KEY_NAME, encoded, SECURE_OPTIONS);
+    await secureSet(DEVICE_KEY_NAME, encoded);
   }
   return hexToBytes(encoded);
 }
@@ -35,7 +72,7 @@ async function deviceKey() {
 async function discard(storageKey: string) {
   unreadable.add(storageKey);
   try {
-    await Storage.removeItem(storageKey);
+    await storageRemove(storageKey);
   } catch {
     // Leaving the record in place is survivable — the next read discards again.
   }
@@ -56,7 +93,7 @@ async function discard(storageKey: string) {
  * the record is discarded and reported through `takeUnreadableRecords()`.
  */
 export async function readEncryptedJson<T>(storageKey: string): Promise<T | null> {
-  const encoded = await Storage.getItem(storageKey);
+  const encoded = await storageGet(storageKey);
   if (!encoded) return null;
 
   if (!encoded.startsWith('aesgcm1:')) {
@@ -96,7 +133,7 @@ export async function writeEncryptedJson(storageKey: string, value: unknown) {
     nonce,
     utf8ToBytes(storageKey),
   ).encrypt(utf8ToBytes(JSON.stringify(value)));
-  await Storage.setItem(
+  await storageSet(
     storageKey,
     `aesgcm1:${bytesToHex(nonce)}:${bytesToHex(ciphertext)}`,
   );
@@ -105,7 +142,7 @@ export async function writeEncryptedJson(storageKey: string, value: unknown) {
 
 export async function removeEncryptedJson(storageKey: string) {
   unreadable.delete(storageKey);
-  await Storage.removeItem(storageKey);
+  await storageRemove(storageKey);
 }
 
 /**

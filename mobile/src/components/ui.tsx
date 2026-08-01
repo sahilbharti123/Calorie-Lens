@@ -32,6 +32,8 @@ import Svg, {
   Stop,
 } from 'react-native-svg';
 import { Glyph, type GlyphName } from '@/src/components/glyph';
+import { useReducedMotion } from '@/src/lib/accessibility';
+import type { MealSlot } from '@/src/types';
 import {
   alpha,
   gradient,
@@ -104,15 +106,13 @@ export function ScreenHeader({
   style?: StyleProp<ViewStyle>;
 }) {
   return (
-    <Reveal>
-      <View style={[styles.header, style]}>
-        <View style={{ flex: 1 }}>
-          {eyebrow ? <Text style={styles.eyebrow}>{eyebrow.toUpperCase()}</Text> : null}
-          <Text style={styles.headerTitle}>{title}</Text>
-        </View>
-        {action}
+    <View style={[styles.header, style]}>
+      <View style={{ flex: 1 }}>
+        {eyebrow ? <Text style={styles.eyebrow}>{eyebrow.toUpperCase()}</Text> : null}
+        <Text accessibilityRole="header" style={styles.headerTitle}>{title}</Text>
       </View>
-    </Reveal>
+      {action}
+    </View>
   );
 }
 export function SectionTitle({
@@ -144,28 +144,16 @@ export function SectionTitle({
 /* ------------------------------------------------------------------ *
  * Motion primitives
  * ------------------------------------------------------------------ */
-/**
- * Fades and lifts its children in on mount. `index` staggers siblings so a list
- * assembles itself instead of snapping into place.
- */
+/** Compatibility wrapper: content appears immediately without page-load choreography. */
 export function Reveal({
   children,
   index = 0,
   from = 14,
   style,
 }: React.PropsWithChildren<{ index?: number; from?: number; style?: StyleProp<ViewStyle> }>) {
-  const progress = useSharedValue(0);
-  useEffect(() => {
-    progress.value = withDelay(
-      index * motion.stagger,
-      withTiming(1, { duration: motion.base, easing: Easing.out(Easing.cubic) }),
-    );
-  }, [index, progress]);
-  const animated = useAnimatedStyle(() => ({
-    opacity: progress.value,
-    transform: [{ translateY: (1 - progress.value) * from }],
-  }));
-  return <Animated.View style={[style, animated]}>{children}</Animated.View>;
+  void index;
+  void from;
+  return <View style={style}>{children}</View>;
 }
 /**
  * A pressable that springs under the finger and fires a haptic. Use this
@@ -193,6 +181,7 @@ export function Tap({
   accessibilityRole?: 'button' | 'link' | 'tab';
   hitSlop?: number;
 }>) {
+  const reducedMotion = useReducedMotion();
   const pressed = useSharedValue(0);
   const animated = useAnimatedStyle(() => ({
     transform: [{ scale: 1 - pressed.value * (1 - scaleTo) }],
@@ -204,7 +193,7 @@ export function Tap({
       accessibilityRole={accessibilityRole}
       accessibilityState={{ disabled: Boolean(disabled) }}
       disabled={disabled}
-      hitSlop={hitSlop}
+      hitSlop={hitSlop ?? 5}
       onPress={() => {
         if (haptic !== 'none') {
           void Haptics.impactAsync(
@@ -215,10 +204,10 @@ export function Tap({
       }}
       onLongPress={onLongPress}
       onPressIn={() => {
-        pressed.value = withSpring(1, motion.press);
+        pressed.value = reducedMotion ? 0 : withSpring(1, motion.press);
       }}
       onPressOut={() => {
-        pressed.value = withSpring(0, motion.press);
+        pressed.value = reducedMotion ? 0 : withSpring(0, motion.press);
       }}>
       <Animated.View style={[style, animated, disabled && styles.disabled]}>{children}</Animated.View>
     </Pressable>
@@ -257,11 +246,12 @@ export function CountUp({
   numberOfLines?: number;
 }) {
   const target = Number.isFinite(value) ? value : 0;
+  const reducedMotion = useReducedMotion();
   const [shown, setShown] = React.useState(target);
-  const fromRef = React.useRef(0);
+  const fromRef = React.useRef(target);
   useEffect(() => {
     const from = fromRef.current;
-    if (from === target || duration <= 0) {
+    if (from === target || duration <= 0 || reducedMotion) {
       fromRef.current = target;
       setShown(target);
       return;
@@ -282,7 +272,7 @@ export function CountUp({
     };
     frame = requestAnimationFrame(step);
     return () => cancelAnimationFrame(frame);
-  }, [target, duration]);
+  }, [target, duration, reducedMotion]);
   return (
     <Text
       accessibilityLabel={`${prefix}${group(target, decimals)}${suffix}`}
@@ -371,15 +361,15 @@ export function Ring({
   delay?: number;
 }>) {
   const clamped = Math.max(0, Math.min(Number.isFinite(value) ? value : 0, 1));
+  const reducedMotion = useReducedMotion();
   const r = (size - thickness) / 2;
   const circumference = 2 * Math.PI * r;
-  const progress = useSharedValue(0);
+  const progress = useSharedValue(reducedMotion ? clamped : 0);
   useEffect(() => {
-    progress.value = withDelay(
-      delay,
-      withTiming(clamped, { duration: 900, easing: Easing.out(Easing.cubic) }),
-    );
-  }, [clamped, delay, progress]);
+    progress.value = reducedMotion
+      ? clamped
+      : withDelay(delay, withTiming(clamped, { duration: 900, easing: Easing.out(Easing.cubic) }));
+  }, [clamped, delay, progress, reducedMotion]);
   const animatedProps = useAnimatedProps(() => ({
     strokeDashoffset: circumference * (1 - progress.value),
   }));
@@ -433,13 +423,13 @@ export function Bar({
   const safe = Number.isFinite(value) ? value : 0;
   const over = safe > 1.001;
   const clamped = Math.max(0, Math.min(safe, 1));
-  const progress = useSharedValue(0);
+  const reducedMotion = useReducedMotion();
+  const progress = useSharedValue(reducedMotion ? clamped : 0);
   useEffect(() => {
-    progress.value = withDelay(
-      delay,
-      withTiming(clamped, { duration: 700, easing: Easing.out(Easing.cubic) }),
-    );
-  }, [clamped, delay, progress]);
+    progress.value = reducedMotion
+      ? clamped
+      : withDelay(delay, withTiming(clamped, { duration: 700, easing: Easing.out(Easing.cubic) }));
+  }, [clamped, delay, progress, reducedMotion]);
   const animated = useAnimatedStyle(() => ({ width: `${progress.value * 100}%` }));
   return (
     <View style={[{ height, borderRadius: height, backgroundColor: track, overflow: 'hidden' }, style]}>
@@ -554,10 +544,13 @@ export function Chip({
   onPress: () => void;
   icon?: GlyphName;
 }) {
+  const reducedMotion = useReducedMotion();
   const on = useSharedValue(active ? 1 : 0);
   useEffect(() => {
-    on.value = withTiming(active ? 1 : 0, { duration: motion.quick });
-  }, [active, on]);
+    on.value = reducedMotion
+      ? (active ? 1 : 0)
+      : withTiming(active ? 1 : 0, { duration: motion.quick });
+  }, [active, on, reducedMotion]);
   const animated = useAnimatedStyle(() => ({
     backgroundColor: interpolateColor(on.value, [0, 1], [palette.surface, palette.lime]),
     borderColor: interpolateColor(on.value, [0, 1], [palette.lineHi, palette.lime]),
@@ -584,11 +577,12 @@ export function Segmented<T extends string>({
   style?: StyleProp<ViewStyle>;
 }) {
   const index = Math.max(0, options.findIndex((option) => option.value === value));
+  const reducedMotion = useReducedMotion();
   const position = useSharedValue(index);
   const [width, setWidth] = React.useState(0);
   useEffect(() => {
-    position.value = withSpring(index, motion.enter);
-  }, [index, position]);
+    position.value = reducedMotion ? index : withSpring(index, motion.enter);
+  }, [index, position, reducedMotion]);
   const segment = width > 0 ? (width - 6) / options.length : 0;
   const thumb = useAnimatedStyle(() => ({
     transform: [{ translateX: 3 + position.value * segment }],
@@ -717,21 +711,19 @@ export function EmptyState({
 /** The always-visible entry point to logging. */
 export function VoiceBar({
   label = '“Two rotis and a bowl of rajma”',
+  slot,
   title = 'Log with your voice',
 }: {
   label?: string;
+  slot?: MealSlot;
   title?: string;
 }) {
   const router = useRouter();
-  const pulse = useSharedValue(0);
-  useEffect(() => {
-    pulse.value = withTiming(1, { duration: 1400, easing: Easing.inOut(Easing.quad) });
-  }, [pulse]);
   return (
     <Tap
       accessibilityLabel="Open quick log"
       haptic="medium"
-      onPress={() => router.push('/quick-log')}
+      onPress={() => router.push(slot ? { pathname: '/quick-log', params: { slot } } : '/quick-log')}
       scaleTo={0.975}
       style={shadow.glow}>
       <LinearGradient colors={[...gradient.lime]} end={{ x: 1, y: 0.6 }} start={{ x: 0, y: 0 }} style={styles.voiceBar}>
@@ -845,7 +837,7 @@ const styles = StyleSheet.create({
   ghostDanger: { borderColor: `${palette.danger}44`, backgroundColor: `${palette.danger}10` },
   ghostLabel: { ...text.row, fontSize: 14 },
   chip: {
-    height: 34,
+    minHeight: 44,
     paddingHorizontal: 14,
     borderRadius: radius.pill,
     borderWidth: 1,
@@ -863,7 +855,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.line,
     padding: 3,
-    height: 40,
+    height: 44,
   },
   segmentedThumb: {
     position: 'absolute',

@@ -112,11 +112,11 @@ export const text: Record<
   /** 15 — row title. */
   row: { fontFamily: font.semi, fontSize: 14.5, letterSpacing: -0.1, lineHeight: 19 },
   /** 14 — body copy. */
-  body: { fontFamily: font.regular, fontSize: 13.5, lineHeight: 19.5 },
+  body: { fontFamily: font.regular, fontSize: 14.5, lineHeight: 21 },
   /** 13 — value in a row. */
   value: { fontFamily: font.semi, fontSize: 13, letterSpacing: -0.1, lineHeight: 17 },
   /** 12 — caption / supporting. */
-  caption: { fontFamily: font.regular, fontSize: 11.5, lineHeight: 16 },
+  caption: { fontFamily: font.regular, fontSize: 12, lineHeight: 17 },
   /** 10 — ALL-CAPS eyebrow label. Always pair with `letterSpacing`. */
   label: { fontFamily: font.bold, fontSize: 9.5, letterSpacing: 1.5, lineHeight: 12 },
   /** 11 — tab bar + tiny meta. */
@@ -137,30 +137,30 @@ export const space = {
   tabClearance: 104,
 } as const;
 
-export const radius = { xs: 8, sm: 12, md: 18, lg: 24, xl: 30, pill: 999 } as const;
+export const radius = { xs: 8, sm: 12, md: 16, lg: 16, xl: 20, pill: 999 } as const;
 
 /** Shadows. On dark surfaces a glow reads better than a drop shadow. */
 export const shadow = {
   card: {
     shadowColor: '#000',
-    shadowOpacity: 0.4,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 6,
+    shadowOpacity: 0.28,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
   },
   glow: {
     shadowColor: palette.lime,
-    shadowOpacity: 0.3,
-    shadowRadius: 22,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 10,
+    shadowOpacity: 0.22,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 6,
   },
   glowSoft: {
     shadowColor: palette.lime,
-    shadowOpacity: 0.16,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 5,
+    shadowOpacity: 0.12,
+    shadowRadius: 7,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
   },
 } as const;
 

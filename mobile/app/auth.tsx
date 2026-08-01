@@ -139,7 +139,7 @@ export default function AuthScreen() {
             <View style={styles.brandRow}>
               <BrandMark size={64} />
               <View style={styles.brandCopy}>
-                <Text style={styles.wordmark}>CALORIE LENS</Text>
+                <Text style={styles.wordmark}>VIGORLY</Text>
                 <Text style={styles.kicker}>PRIVATE · LIGHT · YOURS</Text>
               </View>
             </View>

@@ -1,5 +1,7 @@
 import { type Href, useRouter } from 'expo-router';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import * as Haptics from 'expo-haptics';
+import { useMemo, useState } from 'react';
+import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Glyph } from '@/src/components/glyph';
 import {
@@ -16,15 +18,15 @@ import {
   SectionTitle,
   Tap,
   VoiceBar,
-  Well,
 } from '@/src/components/ui';
 import { friendlyDay, greeting } from '@/src/lib/date';
+import { mealGroupToOperation, recentMealGroups, savedMealToOperation, type MealGroup } from '@/src/lib/meals';
+import { syncNativeHealth } from '@/src/lib/health';
 import { dayTotals, slotLabels, workoutTotals } from '@/src/lib/stats';
-import { bestStreak, loggingStreak, weekActivity, type IntakeStatus } from '@/src/lib/streak';
 import { useApp } from '@/src/store/app-store';
 import { useAuth } from '@/src/store/auth-store';
 import { macroColor, palette, space, tabular, text } from '@/src/theme';
-import type { MealSlot } from '@/src/types';
+import type { MealSlot, SavedMeal } from '@/src/types';
 
 const SLOTS: { slot: MealSlot; icon: 'sun' | 'bowl' | 'spark' | 'sleep' }[] = [
   { slot: 'breakfast', icon: 'sun' },
@@ -33,45 +35,54 @@ const SLOTS: { slot: MealSlot; icon: 'sun' | 'bowl' | 'spark' | 'sleep' }[] = [
   { slot: 'dinner', icon: 'sleep' },
 ];
 
-/**
- * The week strip carries the shape of the week, not just its presence: dim
- * where nothing was eaten, lime for a day that landed on target, coral for one
- * that ran well past it.
- */
-const DOT_COLOR: Record<IntakeStatus, string> = {
-  none: palette.inkFaint,
-  on: palette.lime,
-  over: palette.danger,
-};
-
-/** One forward-looking line — what today can still do for the streak. */
-function streakOutlook(streak: number, best: number, todayLogged: boolean) {
-  if (!todayLogged) {
-    if (streak > 0) return `Log anything today to make it ${streak + 1} in a row.`;
-    return best > 0
-      ? `One entry today restarts the run — your best is ${best} days.`
-      : 'Log one thing today and the streak starts.';
-  }
-  if (streak >= best) return `Personal best — ${streak} day${streak === 1 ? '' : 's'} and counting.`;
-  const gap = best - streak;
-  return `${gap} more day${gap === 1 ? '' : 's'} to match your best of ${best}.`;
-}
-
 export default function TodayScreen() {
   const router = useRouter();
   const { session } = useAuth();
-  const { data, today, addWater, vaultReset, dismissVaultReset } = useApp();
+  const {
+    data,
+    today,
+    addWater,
+    applyHealthSnapshot,
+    applyOperations,
+    dismissVaultReset,
+    reportHealthSyncError,
+    saveMeal,
+    vaultReset,
+  } = useApp();
+  const [healthBusy, setHealthBusy] = useState(false);
 
   const totals = dayTotals(today);
   const burned = workoutTotals(today);
   const goal = Math.max(1, data.goals.calories);
   const remaining = Math.round(data.goals.calories - totals.calories);
   const ratio = totals.calories / goal;
-  const streak = loggingStreak(data);
-  const best = bestStreak(data);
-  const week = weekActivity(data);
-  const todayLogged = week[week.length - 1].active;
   const over = remaining < 0;
+  const recentMeals = useMemo(() => recentMealGroups(data, 3), [data]);
+  const nextSlot = slotForTime();
+
+  async function syncHealth() {
+    if (healthBusy) return;
+    setHealthBusy(true);
+    try {
+      applyHealthSnapshot(await syncNativeHealth());
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (error) {
+      reportHealthSyncError(error instanceof Error ? error.message : 'Health sync failed. Try again.');
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setHealthBusy(false);
+    }
+  }
+
+  function repeatRecent(group: MealGroup) {
+    applyOperations([mealGroupToOperation(group)]);
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  }
+
+  function repeatSaved(meal: SavedMeal) {
+    applyOperations([savedMealToOperation(meal)]);
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  }
 
   return (
     <Screen>
@@ -89,8 +100,15 @@ export default function TodayScreen() {
               </View>
             </Tap>
           }
-          eyebrow={friendlyDay()}
-          title={greeting()}
+          title="Today"
+        />
+
+        <Text style={styles.dayline}>{friendlyDay()} · {greeting()}</Text>
+
+        <HealthFreshness
+          busy={healthBusy}
+          onPress={() => void syncHealth()}
+          record={data.healthSync}
         />
 
         {/* ---------- Local data this device could not unlock ----------
@@ -128,7 +146,7 @@ export default function TodayScreen() {
             the number is what is left to spend. The percentage is spoken to
             screen readers rather than printed a third time. */}
         <Reveal index={1}>
-          <Card glow raised>
+          <Card>
             <View style={styles.hero}>
               <View
                 accessible
@@ -164,43 +182,47 @@ export default function TodayScreen() {
           </Card>
         </Reveal>
 
-        {/* ---------- Streak ---------- */}
-        <Reveal index={2} style={styles.streakBlock}>
-          <Well>
-            <View style={styles.streakHead}>
-              <Glyph color={streak > 0 ? palette.lime : palette.inkLow} name="flame" size={15} />
-              <Text style={styles.streakText}>
-                {streak > 0 ? `${streak} day${streak === 1 ? '' : 's'} in a row` : 'Start your streak today'}
-              </Text>
-            </View>
-            <View style={styles.week}>
-              {week.map((day) => (
-                <View
-                  accessible
-                  accessibilityLabel={`${day.label}: ${
-                    day.calories > 0 ? `${Math.round(day.calories)} kcal` : 'nothing logged'
-                  }`}
-                  key={day.key}
-                  style={styles.weekDay}>
-                  <View
-                    style={[
-                      styles.weekDot,
-                      { backgroundColor: DOT_COLOR[day.status], borderColor: DOT_COLOR[day.status] },
-                      day.isToday && styles.weekDotToday,
-                    ]}
-                  />
-                  <Text style={[styles.weekLabel, day.isToday && styles.weekLabelToday]}>{day.label}</Text>
-                </View>
-              ))}
-            </View>
-            <Text style={styles.streakNote}>{streakOutlook(streak, best, todayLogged)}</Text>
-          </Well>
+        {/* ---------- Log ---------- */}
+        <Reveal index={2} style={styles.voice}>
+          <VoiceBar
+            label="Say it or type it — review before saving"
+            slot={nextSlot}
+            title={`Log ${slotLabels[nextSlot].toLowerCase()}`}
+          />
         </Reveal>
 
-        {/* ---------- Log ---------- */}
-        <Reveal index={3} style={styles.voice}>
-          <VoiceBar />
-        </Reveal>
+        {data.savedMeals.length || recentMeals.length ? (
+          <View style={styles.repeatSection}>
+            <SectionTitle aside="One tap" title="Repeat a meal" />
+            <View style={styles.repeatList}>
+              {data.savedMeals.slice(0, 2).map((meal) => (
+                <RepeatMealRow
+                  detail="Saved meal"
+                  key={meal.id}
+                  name={meal.name}
+                  onPress={() => repeatSaved(meal)}
+                  totals={meal.items.reduce(
+                    (sum, item) => ({ calories: sum.calories + item.calories, protein: sum.protein + item.protein }),
+                    { calories: 0, protein: 0 },
+                  )}
+                />
+              ))}
+              {recentMeals
+                .filter((group) => !data.savedMeals.some((meal) => savedMatchesGroup(meal, group)))
+                .slice(0, Math.max(1, 3 - data.savedMeals.length))
+                .map((group) => (
+                  <RepeatMealRow
+                    detail={relativeMealDay(group.date)}
+                    key={group.key}
+                    name={group.name}
+                    onFavorite={() => saveMeal(group)}
+                    onPress={() => repeatRecent(group)}
+                    totals={{ calories: group.calories, protein: group.protein }}
+                  />
+                ))}
+            </View>
+          </View>
+        ) : null}
 
         {/* ---------- Metrics ----------
             Deliberately colourless. `macroColor` owns lime / blue / orange for
@@ -208,7 +230,7 @@ export default function TodayScreen() {
             made colour mean two different things on one screen. `Metric` tints
             its icon chip from `accent`, so a neutral accent is what gives the
             inkMid glyph on a quiet chip. */}
-        <Reveal index={4} style={styles.metrics}>
+        <Reveal index={3} style={styles.metrics}>
           <Metric
             accent={palette.inkMid}
             detail="Tap to add 250 ml"
@@ -235,7 +257,7 @@ export default function TodayScreen() {
 
         {/* ---------- Meals ---------- */}
         <SectionTitle title="Today's meals" />
-        <Reveal index={5}>
+        <Reveal index={4}>
           <Card padded={false} style={styles.mealCard}>
             {SLOTS.map(({ slot, icon }, index) => {
               const meals = today.meals.filter((meal) => meal.slot === slot);
@@ -271,6 +293,8 @@ export default function TodayScreen() {
 const styles = StyleSheet.create({
   content: { paddingHorizontal: space.md, paddingBottom: space.tabClearance },
 
+  dayline: { ...text.body, color: palette.inkMid, marginTop: -10, marginBottom: space.md },
+
   notice: { borderColor: `${palette.warn}44`, marginBottom: space.sm },
   noticeHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 7 },
   noticeTitle: { ...text.row, color: palette.ink },
@@ -299,20 +323,138 @@ const styles = StyleSheet.create({
 
   macros: { flexDirection: 'row', gap: space.xs, marginTop: space.md },
 
-  streakBlock: { marginTop: space.sm },
-  streakHead: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginBottom: space.sm },
-  streakText: { ...text.value, color: palette.ink },
-  week: { flexDirection: 'row', justifyContent: 'space-between' },
-  weekDay: { alignItems: 'center', gap: space.xs, flex: 1 },
-  weekDot: { width: 9, height: 9, borderRadius: 5, borderWidth: 1 },
-  weekDotToday: { transform: [{ scale: 1.35 }] },
-  weekLabel: { ...text.micro, fontSize: 9, color: palette.inkLow },
-  weekLabelToday: { color: palette.ink },
-  streakNote: { ...text.caption, color: palette.inkMid, marginTop: space.sm },
-
   voice: { marginTop: space.md },
+
+  healthRow: {
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: palette.line,
+    paddingVertical: 8,
+  },
+  healthIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  healthTitle: { ...text.value, color: palette.ink },
+  healthDetail: { ...text.caption, color: palette.inkMid, marginTop: 2 },
+  repeatSection: { marginTop: space.sm },
+  repeatList: { borderTopWidth: 1, borderBottomWidth: 1, borderColor: palette.line },
+  repeatRow: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  repeatCopy: { flex: 1 },
+  repeatName: { ...text.row, color: palette.ink },
+  repeatDetail: { ...text.caption, color: palette.inkMid, marginTop: 3 },
+  repeatAction: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
 
   metrics: { flexDirection: 'row', gap: space.xs, marginTop: space.md },
 
   mealCard: { paddingHorizontal: 14 },
 });
+
+function HealthFreshness({
+  busy,
+  onPress,
+  record,
+}: {
+  busy: boolean;
+  onPress: () => void;
+  record: ReturnType<typeof useApp>['data']['healthSync'];
+}) {
+  const nativeHealth = Platform.OS === 'ios' || Platform.OS === 'android';
+  const title = record?.source ?? (Platform.OS === 'ios' ? 'Apple Health' : 'Health Connect');
+  const detail = !nativeHealth
+    ? 'Available in iOS and Android builds'
+    : busy
+    ? 'Refreshing approved data…'
+    : record?.status === 'error'
+      ? 'Needs attention · tap to retry'
+      : record?.status === 'empty'
+        ? 'Connected · no shared samples yet'
+        : record?.lastSuccessAt
+          ? `Synced ${relativeTime(record.lastSuccessAt)}`
+          : 'Not connected · tap to set up';
+  const color = record?.status === 'error'
+    ? palette.danger
+    : record?.status === 'current'
+      ? palette.lime
+      : palette.inkMid;
+  const content = (
+    <View style={styles.healthRow}>
+      <View style={[styles.healthIcon, { backgroundColor: `${color}14` }]}>
+        <Glyph color={color} name={record?.status === 'error' ? 'alert' : 'heart'} size={17} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.healthTitle}>{title}</Text>
+        <Text style={styles.healthDetail}>{detail}</Text>
+      </View>
+      {nativeHealth ? <Glyph color={color} name="restart" size={17} /> : null}
+    </View>
+  );
+  return nativeHealth ? (
+    <Tap accessibilityLabel={`${title}. ${detail}`} onPress={onPress} scaleTo={0.985}>{content}</Tap>
+  ) : content;
+}
+
+function RepeatMealRow({
+  detail,
+  name,
+  onFavorite,
+  onPress,
+  totals,
+}: {
+  detail: string;
+  name: string;
+  onFavorite?: () => void;
+  onPress: () => void;
+  totals: { calories: number; protein: number };
+}) {
+  return (
+    <View style={styles.repeatRow}>
+      <Tap accessibilityLabel={`Repeat ${name}`} onPress={onPress} scaleTo={0.985} style={styles.repeatCopy}>
+        <Text numberOfLines={1} style={styles.repeatName}>{name}</Text>
+        <Text style={styles.repeatDetail}>
+          {Math.round(totals.calories)} kcal · {Math.round(totals.protein)} g protein · {detail}
+        </Text>
+      </Tap>
+      {onFavorite ? (
+        <Tap accessibilityLabel={`Save ${name}`} onPress={onFavorite} scaleTo={0.9} style={styles.repeatAction}>
+          <Glyph color={palette.inkMid} name="star" size={18} />
+        </Tap>
+      ) : null}
+      <Tap accessibilityLabel={`Repeat ${name}`} onPress={onPress} scaleTo={0.9} style={styles.repeatAction}>
+        <Glyph color={palette.lime} name="restart" size={18} />
+      </Tap>
+    </View>
+  );
+}
+
+function slotForTime(): MealSlot {
+  const hour = new Date().getHours();
+  if (hour < 11) return 'breakfast';
+  if (hour < 15) return 'lunch';
+  if (hour < 18) return 'snack';
+  return 'dinner';
+}
+
+function relativeTime(iso: string) {
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60_000));
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  return `${Math.floor(hours / 24)} d ago`;
+}
+
+function relativeMealDay(date: string) {
+  const value = new Date(`${date}T12:00:00`);
+  const days = Math.round((new Date().setHours(12, 0, 0, 0) - value.getTime()) / 86_400_000);
+  if (days <= 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  return `${days} days ago`;
+}
+
+function savedMatchesGroup(saved: SavedMeal, group: MealGroup) {
+  const savedNames = saved.items.map((item) => `${item.name}|${item.quantity}`).sort().join('::');
+  const groupNames = group.items.map((item) => `${item.name}|${item.quantity}`).sort().join('::');
+  return savedNames === groupNames;
+}

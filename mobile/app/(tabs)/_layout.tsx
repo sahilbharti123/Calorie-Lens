@@ -8,6 +8,7 @@ import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-na
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Glyph, type GlyphName } from '@/src/components/glyph';
+import { useReducedMotion } from '@/src/lib/accessibility';
 import { motion, palette, radius, text } from '@/src/theme';
 
 const ICONS: Record<string, GlyphName> = {
@@ -81,11 +82,14 @@ function TabButton({
   label: string;
   onPress: () => void;
 }) {
+  const reducedMotion = useReducedMotion();
   const on = useSharedValue(focused ? 1 : 0);
 
   useEffect(() => {
-    on.value = withSpring(focused ? 1 : 0, motion.enter);
-  }, [focused, on]);
+    on.value = reducedMotion
+      ? (focused ? 1 : 0)
+      : withSpring(focused ? 1 : 0, motion.enter);
+  }, [focused, on, reducedMotion]);
 
   const halo = useAnimatedStyle(() => ({
     opacity: on.value,

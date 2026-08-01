@@ -1,4 +1,5 @@
 import { useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Glyph, type GlyphName } from '@/src/components/glyph';
@@ -19,6 +20,7 @@ import {
   Well,
 } from '@/src/components/ui';
 import { dayTotals, slotLabels } from '@/src/lib/stats';
+import { savedMealToOperation } from '@/src/lib/meals';
 import { useApp } from '@/src/store/app-store';
 import { macroColor, palette, radius, space, tabular, text } from '@/src/theme';
 import type { MealItem, MealSlot } from '@/src/types';
@@ -35,7 +37,7 @@ const BAND_HEIGHT = 12;
 
 export default function FoodScreen() {
   const router = useRouter();
-  const { data, today, removeMeal } = useApp();
+  const { applyOperations, data, today, removeMeal, removeSavedMeal } = useApp();
 
   const totals = dayTotals(today);
   const logged = today.meals.length;
@@ -163,6 +165,45 @@ export default function FoodScreen() {
           <VoiceBar label="Say “2 rotis and one bowl dal”" />
         </Reveal>
 
+        {data.savedMeals.length ? (
+          <>
+            <SectionTitle aside={`${data.savedMeals.length} saved`} title="Saved meals" />
+            <Reveal index={3}>
+              <Card padded={false} style={styles.savedCard}>
+                {data.savedMeals.slice(0, 6).map((meal, index) => {
+                  const calories = meal.items.reduce((sum, item) => sum + item.calories, 0);
+                  return (
+                    <ListRow
+                      accent={palette.lime}
+                      detail={`${meal.items.length} item${meal.items.length === 1 ? '' : 's'} · tap to repeat`}
+                      icon="star"
+                      key={meal.id}
+                      last={index === Math.min(data.savedMeals.length, 6) - 1}
+                      onPress={() => {
+                        applyOperations([savedMealToOperation(meal)]);
+                        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                      }}
+                      right={
+                        <Tap
+                          accessibilityLabel={`Delete saved meal ${meal.name}`}
+                          hitSlop={4}
+                          onPress={() => removeSavedMeal(meal.id)}
+                          scaleTo={0.9}
+                          style={styles.savedDelete}>
+                          <Glyph color={palette.inkLow} name="trash" size={16} />
+                        </Tap>
+                      }
+                      title={meal.name}
+                      unit="kcal"
+                      value={Math.round(calories).toLocaleString()}
+                    />
+                  );
+                })}
+              </Card>
+            </Reveal>
+          </>
+        ) : null}
+
         {/* ---------- The day, meal by meal ---------- */}
         <SectionTitle
           aside={logged ? `${logged} item${logged === 1 ? '' : 's'}` : undefined}
@@ -170,7 +211,7 @@ export default function FoodScreen() {
         />
 
         {!logged ? (
-          <Reveal index={3} style={styles.emptyWrap}>
+          <Reveal index={data.savedMeals.length ? 4 : 3} style={styles.emptyWrap}>
             <EmptyState
               action={
                 <PrimaryButton
@@ -355,6 +396,8 @@ const styles = StyleSheet.create({
   tighten: { marginTop: space.md, paddingVertical: 0 },
 
   voice: { marginTop: space.md },
+  savedCard: { paddingHorizontal: 14 },
+  savedDelete: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   emptyWrap: { marginBottom: space.sm },
 
   slotCard: { paddingHorizontal: 14, marginBottom: space.sm },

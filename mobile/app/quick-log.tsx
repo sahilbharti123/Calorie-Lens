@@ -23,6 +23,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { Glyph, type GlyphName } from '@/src/components/glyph';
+import { useReducedMotion } from '@/src/lib/accessibility';
 import {
   Bar,
   Card,
@@ -547,6 +548,7 @@ function RecordControl({
   disabled?: boolean;
   accessibilityLabel?: string;
 }) {
+  const reducedMotion = useReducedMotion();
   const live = useSharedValue(0);
   const rippleA = useSharedValue(0);
   const rippleB = useSharedValue(0);
@@ -556,12 +558,19 @@ function RecordControl({
   const thinking = state === 'thinking';
 
   useEffect(() => {
-    live.value = withTiming(listening ? 1 : 0, { duration: motion.quick });
+    live.value = reducedMotion
+      ? (listening ? 1 : 0)
+      : withTiming(listening ? 1 : 0, { duration: motion.quick });
     if (!listening) {
       cancelAnimation(rippleA);
       cancelAnimation(rippleB);
       rippleA.value = withTiming(0, { duration: motion.quick });
       rippleB.value = withTiming(0, { duration: motion.quick });
+      return;
+    }
+    if (reducedMotion) {
+      rippleA.value = 0;
+      rippleB.value = 0;
       return;
     }
     const sweep = () =>
@@ -570,9 +579,14 @@ function RecordControl({
     rippleA.value = sweep();
     rippleB.value = 0;
     rippleB.value = withDelay(850, sweep());
-  }, [listening, live, rippleA, rippleB]);
+  }, [listening, live, rippleA, rippleB, reducedMotion]);
 
   useEffect(() => {
+    if (reducedMotion) {
+      cancelAnimation(think);
+      think.value = 0;
+      return;
+    }
     if (thinking) {
       think.value = withRepeat(
         withTiming(1, { duration: 760, easing: Easing.inOut(Easing.quad) }),
@@ -583,7 +597,7 @@ function RecordControl({
     }
     cancelAnimation(think);
     think.value = withTiming(0, { duration: motion.quick });
-  }, [thinking, think]);
+  }, [thinking, think, reducedMotion]);
 
   const haloA = useAnimatedStyle(() => ({
     opacity: live.value * (1 - rippleA.value) * 0.85,
@@ -655,23 +669,25 @@ function WaveBar({
   index: number;
   level: number;
 }) {
+  const reducedMotion = useReducedMotion();
   const amount = useSharedValue(0);
 
   useEffect(() => {
     if (!active) {
       cancelAnimation(amount);
-      amount.value = withTiming(0, { duration: motion.base });
+      amount.value = reducedMotion ? 0 : withTiming(0, { duration: motion.base });
       return;
     }
     // Bars nearer the middle react hardest, so the row reads as one shape
     // rather than nine independent meters.
     const middle = (WAVE.length - 1) / 2;
     const weight = 0.5 + 0.5 * (1 - Math.abs(index - middle) / middle);
-    amount.value = withTiming(Math.min(1, level * weight * 1.7), {
+    const next = Math.min(1, level * weight * 1.7);
+    amount.value = reducedMotion ? next : withTiming(next, {
       duration: 130,
       easing: Easing.out(Easing.quad),
     });
-  }, [active, amount, index, level]);
+  }, [active, amount, index, level, reducedMotion]);
 
   const animated = useAnimatedStyle(() => ({
     transform: [{ scaleY: 0.3 + amount.value * 0.7 }],

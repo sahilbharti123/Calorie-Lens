@@ -1,4 +1,4 @@
-"""Small AI API used by the native Calorie Lens apps.
+"""Small AI API used by the native Vigorly apps.
 
 Run locally with:
     uvicorn api:app --reload --host 0.0.0.0 --port 8000
@@ -49,7 +49,7 @@ AI_KIND_LIMITS = {
     "coach": max(1, int(os.getenv("CALORIE_LENS_AI_COACH_DAILY_LIMIT", "2"))),
 }
 
-app = FastAPI(title="Calorie Lens API", version="3.0.0")
+app = FastAPI(title="Vigorly API", version="3.0.0")
 origins = [
     origin.strip()
     for origin in os.getenv("CALORIE_LENS_ALLOWED_ORIGINS", "*").split(",")
@@ -181,7 +181,7 @@ COMMAND_SCHEMA = {
     },
 }
 
-SYSTEM_PROMPT = """You are the private nutrition and fitness logging engine for Calorie Lens.
+SYSTEM_PROMPT = """You are the private nutrition and fitness logging engine for Vigorly.
 Turn the user's short typed or spoken update into structured facts. A deterministic
 reference engine calculates calories after you respond.
 
@@ -209,7 +209,7 @@ Rules:
 - Do not give medical advice.
 """
 
-COACH_PROMPT = """You are Calorie Lens, a supportive personal fitness coach.
+COACH_PROMPT = """You are Vigorly, a supportive personal fitness coach.
 Use the user's saved preferences, limitations, goals, and recent tracking data.
 Be concise, practical, and non-judgmental. Never diagnose, prescribe, or claim
 medical certainty. Encourage professional care for symptoms, eating-disorder

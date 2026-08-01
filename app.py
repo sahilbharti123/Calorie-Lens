@@ -31,7 +31,7 @@ from streamlit.errors import StreamlitSecretNotFoundError
 
 load_dotenv()
 st.set_page_config(
-    page_title="Calorie Lens — daily fitness",
+    page_title="Vigorly — daily fitness",
     page_icon="◉",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -433,7 +433,7 @@ def logout_user(store: Dict[str, Any]) -> None:
 
 
 def render_auth_screen(store: Dict[str, Any]) -> None:
-    st.title("Calorie Lens")
+    st.title("Vigorly")
     st.caption("Create separate accounts for different people, and optionally stay logged in on this device.")
 
     user_count = len(store["users"])
@@ -621,24 +621,20 @@ def estimate_meal_locally(user_text: str, reason: str) -> Dict[str, Any]:
             )
         else:
             unmatched.append(part)
-            items.append(
-                {
-                    "name": part.title(),
-                    "quantity_text": part,
-                    "calories_kcal": round(120 * quantity, 1),
-                    "protein_g": round(4 * quantity, 1),
-                    "carbs_g": round(14 * quantity, 1),
-                    "fat_g": round(4 * quantity, 1),
-                }
-            )
 
     payload = normalize_payload({"items": items})
     if unmatched:
-        payload["notes"] = "Local estimate used. Some foods were approximated: " + ", ".join(unmatched[:3]) + "."
+        unknown = ", ".join(unmatched[:3])
+        payload["notes"] = (
+            f"Not logged yet: I could not verify {unknown}. Add label calories or describe "
+            "the main ingredients and amounts."
+        )
+        payload["needs_clarification"] = True
+        payload["unmatched_items"] = unmatched
     else:
         payload["notes"] = "Local estimate used from common food references."
-    payload["confidence"] = 0.6 if not unmatched else 0.42
-    payload["source"] = "Local fallback"
+    payload["confidence"] = 0.6 if not unmatched else 0.0
+    payload["source"] = "Local references" if not unmatched else "Needs clarification"
     payload["model_used"] = "offline-estimator"
     payload["estimation_error"] = reason
     return payload
@@ -931,6 +927,8 @@ def apply_fitness_command(day_log: Dict[str, Any], payload: Dict[str, Any]) -> L
                 continue
             meal_slot = normalize_meal_slot(str(operation.get("meal_slot", "")))
             result = estimate_meal_from_text(description)
+            if result.get("needs_clarification"):
+                continue
             day_log["meals"][meal_slot].append(
                 {
                     "logged_at": datetime.now().strftime("%H:%M"),
@@ -2213,18 +2211,21 @@ else:
             else:
                 with st.spinner("Estimating calories and macros..."):
                     result = estimate_meal_from_text(meal_text_clean)
-                log["meals"][meal_slot].append(
-                    {
-                        "logged_at": datetime.now().strftime("%H:%M"),
-                        "input_text": meal_text_clean,
-                        **result,
-                    }
-                )
-                touch_log(log)
-                save_store(store)
-                st.session_state["meal_text_next_value"] = ""
-                st.session_state["meal_flash_message"] = f"Added to {meal_slot}."
-                st.rerun()
+                if result.get("needs_clarification"):
+                    st.warning(result["notes"])
+                else:
+                    log["meals"][meal_slot].append(
+                        {
+                            "logged_at": datetime.now().strftime("%H:%M"),
+                            "input_text": meal_text_clean,
+                            **result,
+                        }
+                    )
+                    touch_log(log)
+                    save_store(store)
+                    st.session_state["meal_text_next_value"] = ""
+                    st.session_state["meal_flash_message"] = f"Added to {meal_slot}."
+                    st.rerun()
 
         st.markdown("### Today's meals")
         for slot in MEAL_SLOTS:

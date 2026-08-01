@@ -1,4 +1,4 @@
-"""Evidence-backed food and exercise estimation for Calorie Lens."""
+"""Evidence-backed food and exercise estimation for Vigorly."""
 
 from .engine import estimate_command
 

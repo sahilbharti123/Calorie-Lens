@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from 'react';
 import Svg, { Circle, G, Line, Path, Rect } from 'react-native-svg';
 
 import type { FigureGear, FigureTemplate } from '@/src/lib/exercises';
+import { useReducedMotion } from '@/src/lib/accessibility';
 import { palette } from '@/src/theme';
 
 type ArmPose = [number, number];
@@ -376,6 +377,7 @@ export function ExerciseFigure({
   accent?: string;
   paused?: boolean;
 }) {
+  const reducedMotion = useReducedMotion();
   const spec = TEMPLATES[template] ?? TEMPLATES.squat;
   const [pose, setPose] = useState<Pose>(() => mixPose(spec.frames[0], spec.frames[0], 0));
   const frameRef = useRef<number | null>(null);
@@ -388,7 +390,7 @@ export function ExerciseFigure({
     const count = active.frames.length;
     const total = legDuration * count;
     let start: number | null = null;
-    if (paused) {
+    if (paused || reducedMotion) {
       setPose(mixPose(active.frames[0], active.frames[1] ?? active.frames[0], 0.5));
       return;
     }
@@ -411,7 +413,7 @@ export function ExerciseFigure({
     return () => {
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
     };
-  }, [template, paused]);
+  }, [template, paused, reducedMotion]);
 
   // Forward kinematics ------------------------------------------------------
   const hip = pose.hip;

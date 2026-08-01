@@ -4,6 +4,7 @@ import { Alert, ScrollView, StyleSheet, Text, TextInput, View } from 'react-nati
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 
 import { Glyph } from '@/src/components/glyph';
+import { useReducedMotion } from '@/src/lib/accessibility';
 import {
   Card,
   CountUp,
@@ -216,11 +217,12 @@ export default function WorkoutDetailScreen() {
 }
 
 function Celebration({ meta }: { meta: string }) {
+  const reducedMotion = useReducedMotion();
   const enter = useSharedValue(0);
 
   useEffect(() => {
-    enter.value = withSpring(1, motion.bouncy);
-  }, [enter]);
+    enter.value = reducedMotion ? 1 : withSpring(1, motion.bouncy);
+  }, [enter, reducedMotion]);
 
   const badge = useAnimatedStyle(() => ({
     transform: [

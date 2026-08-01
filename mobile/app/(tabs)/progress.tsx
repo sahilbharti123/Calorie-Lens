@@ -17,7 +17,7 @@ import {
   Well,
 } from '@/src/components/ui';
 import { dateKey } from '@/src/lib/date';
-import { healthSetupCopy, syncNativeHealth } from '@/src/lib/health';
+import { healthSetupCopy, healthSnapshotHasSamples, syncNativeHealth } from '@/src/lib/health';
 import { dayTotals } from '@/src/lib/stats';
 import { loggingStreak } from '@/src/lib/streak';
 import { completedSessions } from '@/src/lib/training';
@@ -46,23 +46,35 @@ const HEALTH_CATEGORIES = 'Steps, activity, sleep and weight';
  * a card reading "Connected" above a panel reading "connection unavailable"
  * teaches the user to distrust both.
  */
-function connectionState(outcome: SyncOutcome, lastSync: string | undefined) {
+function connectionState(outcome: SyncOutcome, record: ReturnType<typeof useApp>['data']['healthSync']) {
   if (!NATIVE_HEALTH) return 'Not available in this build';
   if (outcome === 'synced') return 'Synced just now';
   if (outcome === 'empty') return 'No shared samples yet';
   if (outcome === 'failed') return 'Not syncing';
-  return lastSync ? 'Connected' : 'Not connected yet';
+  if (record?.status === 'error') return 'Needs attention';
+  if (record?.status === 'empty') return 'No shared samples yet';
+  return record?.lastSuccessAt ? `Updated ${relativeTime(record.lastSuccessAt)}` : 'Not connected yet';
+}
+
+function relativeTime(value: string) {
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 60_000));
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 export default function ProgressScreen() {
   const router = useRouter();
-  const { data, today, applyHealthSnapshot } = useApp();
+  const { data, today, applyHealthSnapshot, reportHealthSyncError } = useApp();
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState('');
   /** What the last sync attempt actually reported. '' until one has run. */
   const [outcome, setOutcome] = useState<SyncOutcome>('');
   const [range, setRange] = useState<Range>('30');
-  const provider = Platform.OS === 'ios' ? 'Apple Health + Watch' : 'Health Connect';
+  const provider = data.healthSync?.source
+    ?? (Platform.OS === 'ios' ? 'Apple Health' : 'Health Connect');
   const setup = healthSetupCopy();
   const days = Number(range);
   const rangeLabel = `Last ${range} days`;
@@ -145,12 +157,7 @@ export default function ProgressScreen() {
     try {
       const snapshot = await syncNativeHealth();
       applyHealthSnapshot(snapshot);
-      const hasSamples = Boolean(
-        snapshot.steps
-        || snapshot.activeCalories
-        || snapshot.sleepHours
-        || snapshot.weightKg,
-      );
+      const hasSamples = healthSnapshotHasSamples(snapshot);
       setOutcome(hasSamples ? 'synced' : 'empty');
       setMessage(
         hasSamples
@@ -159,7 +166,9 @@ export default function ProgressScreen() {
       );
     } catch (error) {
       setOutcome('failed');
-      setMessage(error instanceof Error ? error.message : 'Health sync failed.');
+      const nextMessage = error instanceof Error ? error.message : 'Health sync failed.';
+      reportHealthSyncError(nextMessage);
+      setMessage(nextMessage);
     } finally {
       setSyncing(false);
     }
@@ -357,32 +366,41 @@ export default function ProgressScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.providerName}>{provider}</Text>
                 <Text style={styles.providerMeta}>
-                  {connectionState(outcome, data.lastHealthSync)} · {HEALTH_CATEGORIES}
+                  {connectionState(outcome, data.healthSync)} · {HEALTH_CATEGORIES}
                 </Text>
               </View>
               <Tap
                 accessibilityLabel="Sync health data"
-                disabled={syncing}
+                disabled={syncing || !NATIVE_HEALTH}
                 haptic="medium"
                 onPress={() => void sync()}
                 scaleTo={0.94}
                 style={styles.action}>
                 <Glyph color={palette.lime} name="cloud" size={13} />
-                <Text style={styles.actionText}>{syncing ? 'Syncing…' : 'Sync'}</Text>
+                <Text style={styles.actionText}>
+                  {syncing ? 'Syncing…' : NATIVE_HEALTH ? 'Sync' : 'Unavailable'}
+                </Text>
               </Tap>
             </View>
 
-            {message ? (
+            {message || data.healthSync?.message ? (
               <Well style={styles.message}>
                 {/* A failure told in the accent colour reads as a success. */}
-                <Glyph color={outcome === 'failed' ? palette.danger : palette.lime} name="info" size={14} />
-                <Text style={styles.messageText}>{message}</Text>
+                <Glyph
+                  color={outcome === 'failed' || data.healthSync?.status === 'error' ? palette.danger : palette.lime}
+                  name="info"
+                  size={14}
+                />
+                <Text style={styles.messageText}>{message || data.healthSync?.message}</Text>
               </Well>
             ) : null}
 
             <Well style={styles.setup}>
               <Text style={styles.setupTitle}>{setup.title}</Text>
               <Text style={styles.setupBody}>{setup.detail}</Text>
+              <Text style={styles.setupBody}>
+                Phone and wearable providers can reconcile samples after a delay, so totals may change after refresh.
+              </Text>
             </Well>
           </Card>
         </Reveal>

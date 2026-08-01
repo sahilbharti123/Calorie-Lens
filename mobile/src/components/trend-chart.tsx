@@ -20,6 +20,7 @@ import Svg, {
 
 import { Glyph } from '@/src/components/glyph';
 import { CountUp } from '@/src/components/ui';
+import { useReducedMotion } from '@/src/lib/accessibility';
 import type { TrendPoint } from '@/src/lib/training';
 import { motion, palette, radius, shadow, tabular, text } from '@/src/theme';
 
@@ -163,6 +164,7 @@ export function TrendChart({
     };
   }, [enough, width, height, points, reference, showDates, unit]);
 
+  const reducedMotion = useReducedMotion();
   const ready = plot !== null;
   const pathLength = plot?.length ?? 1;
 
@@ -172,7 +174,7 @@ export function TrendChart({
 
   useEffect(() => {
     if (!ready) return;
-    if (!animate) {
+    if (!animate || reducedMotion) {
       draw.value = 1;
       bloom.value = 1;
       marker.value = 1;
@@ -184,7 +186,7 @@ export function TrendChart({
     draw.value = withTiming(1, { duration: 1000, easing: Easing.out(Easing.cubic) });
     bloom.value = withDelay(220, withTiming(1, { duration: motion.slow, easing: Easing.out(Easing.quad) }));
     marker.value = withDelay(780, withSpring(1, motion.bouncy));
-  }, [ready, animate, points, draw, bloom, marker]);
+  }, [ready, animate, points, draw, bloom, marker, reducedMotion]);
 
   const lineProps = useAnimatedProps(() => ({
     strokeDashoffset: pathLength * (1 - draw.value),

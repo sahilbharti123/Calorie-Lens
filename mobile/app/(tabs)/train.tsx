@@ -10,6 +10,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { Glyph } from '@/src/components/glyph';
+import { useReducedMotion } from '@/src/lib/accessibility';
 import {
   Bar,
   Card,
@@ -543,15 +544,20 @@ export default function TrainScreen() {
 
 /** Breathing lime dot that marks the live session card. */
 function LivePulse() {
+  const reducedMotion = useReducedMotion();
   const pulse = useSharedValue(0);
 
   useEffect(() => {
+    if (reducedMotion) {
+      pulse.value = 0;
+      return;
+    }
     pulse.value = withRepeat(
       withTiming(1, { duration: 1100, easing: Easing.inOut(Easing.quad) }),
       -1,
       true,
     );
-  }, [pulse]);
+  }, [pulse, reducedMotion]);
 
   const halo = useAnimatedStyle(() => ({
     opacity: 0.55 - pulse.value * 0.42,

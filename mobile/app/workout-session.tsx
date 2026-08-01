@@ -22,6 +22,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { Glyph } from '@/src/components/glyph';
+import { useReducedMotion } from '@/src/lib/accessibility';
 import {
   Card,
   CountUp,
@@ -475,6 +476,7 @@ function SetRow({
   onPatch: (patch: Partial<WorkoutSet>) => void;
   onToggle: () => void;
 }) {
+  const reducedMotion = useReducedMotion();
   const pop = useSharedValue(0);
   const mounted = useRef(false);
 
@@ -483,13 +485,13 @@ function SetRow({
       mounted.current = true;
       return;
     }
-    if (set.completed) {
+    if (set.completed && !reducedMotion) {
       pop.value = withSequence(
         withSpring(1, motion.bouncy),
         withTiming(0, { duration: motion.base, easing: Easing.out(Easing.cubic) }),
       );
     }
-  }, [set.completed, pop]);
+  }, [set.completed, pop, reducedMotion]);
 
   const rowAnimated = useAnimatedStyle(() => ({ transform: [{ scale: 1 + pop.value * 0.02 }] }));
   const checkAnimated = useAnimatedStyle(() => ({ transform: [{ scale: 1 + pop.value * 0.16 }] }));
@@ -608,11 +610,12 @@ function RestDock({
   onPlus: () => void;
   onSkip: () => void;
 }) {
+  const reducedMotion = useReducedMotion();
   const enter = useSharedValue(0);
 
   useEffect(() => {
-    enter.value = withSpring(1, motion.enter);
-  }, [enter]);
+    enter.value = reducedMotion ? 1 : withSpring(1, motion.enter);
+  }, [enter, reducedMotion]);
 
   const animated = useAnimatedStyle(() => ({
     opacity: enter.value,
@@ -674,11 +677,12 @@ function RestDock({
  * ------------------------------------------------------------------ */
 
 function PrBanner({ label }: { label: string }) {
+  const reducedMotion = useReducedMotion();
   const enter = useSharedValue(0);
 
   useEffect(() => {
-    enter.value = withSpring(1, motion.bouncy);
-  }, [enter]);
+    enter.value = reducedMotion ? 1 : withSpring(1, motion.bouncy);
+  }, [enter, reducedMotion]);
 
   const animated = useAnimatedStyle(() => ({
     opacity: Math.min(1, enter.value * 1.4),
@@ -700,15 +704,20 @@ function PrBanner({ label }: { label: string }) {
 }
 
 function LivePulse() {
+  const reducedMotion = useReducedMotion();
   const pulse = useSharedValue(0);
 
   useEffect(() => {
+    if (reducedMotion) {
+      pulse.value = 0;
+      return;
+    }
     pulse.value = withRepeat(
       withTiming(1, { duration: 1100, easing: Easing.inOut(Easing.quad) }),
       -1,
       true,
     );
-  }, [pulse]);
+  }, [pulse, reducedMotion]);
 
   const animated = useAnimatedStyle(() => ({
     opacity: 0.4 + pulse.value * 0.6,

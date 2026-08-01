@@ -7,10 +7,12 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { AppState } from 'react-native';
+import { ActivityIndicator, AppState, View } from 'react-native';
 
 import { ApiError, apiRequest } from '@/src/lib/api-client';
 import { dateKey } from '@/src/lib/date';
+import { healthMetricHasSamples, healthSnapshotHasSamples } from '@/src/lib/health';
+import { mergeSavedMeals, savedMealFromGroup, type MealGroup } from '@/src/lib/meals';
 import { calculatePersonalTargets } from '@/src/lib/personalization';
 import {
   readEncryptedJson,
@@ -20,6 +22,7 @@ import {
 } from '@/src/lib/secure-storage';
 import { initialTraining, mergeTraining, normalizeTraining } from '@/src/lib/training';
 import { useAuth } from '@/src/store/auth-store';
+import { palette } from '@/src/theme';
 import type {
   AppData,
   CoachMemory,
@@ -93,6 +96,8 @@ export const initialData: AppData = {
   coachMessages: [],
   deletedMealIds: [],
   deletedWorkoutIds: [],
+  deletedSavedMealIds: [],
+  savedMeals: [],
   training: initialTraining,
 };
 
@@ -115,6 +120,14 @@ export function normalizeData(saved?: Partial<AppData> | null): AppData {
     coachMessages: saved?.coachMessages ?? [],
     deletedMealIds: saved?.deletedMealIds ?? [],
     deletedWorkoutIds: saved?.deletedWorkoutIds ?? [],
+    deletedSavedMealIds: saved?.deletedSavedMealIds ?? [],
+    savedMeals: saved?.savedMeals ?? [],
+    healthSync: saved?.healthSync ?? (saved?.lastHealthSync ? {
+      status: 'current',
+      lastAttemptAt: saved.lastHealthSync,
+      lastSuccessAt: saved.lastHealthSync,
+      message: 'Health data was updated on this device.',
+    } : undefined),
     training: normalizeTraining(saved?.training),
   };
 }
@@ -180,6 +193,10 @@ function isPristine(data: AppData) {
     && !data.coachMemory.dietaryPreferences.length
     && !data.coachMemory.injuries.length
     && !data.coachMemory.workoutPreferences.length
+    && !data.deletedMealIds.length
+    && !data.deletedWorkoutIds.length
+    && !data.deletedSavedMealIds.length
+    && !data.savedMeals.length
     && !data.training.routines.length
     && !data.training.sessions.length
     && !data.training.activeSession;
@@ -206,6 +223,10 @@ export function mergeAppData(localInput: Partial<AppData>, remoteInput: Partial<
   const deletedWorkoutIds = [...new Set([
     ...local.deletedWorkoutIds,
     ...remote.deletedWorkoutIds,
+  ])];
+  const deletedSavedMealIds = [...new Set([
+    ...local.deletedSavedMealIds,
+    ...remote.deletedSavedMealIds,
   ])];
   const dates = new Set([...Object.keys(remote.days), ...Object.keys(local.days)]);
   const days: Record<string, DayLog> = {};
@@ -257,10 +278,16 @@ export function mergeAppData(localInput: Partial<AppData>, remoteInput: Partial<
     coachMessages: messages,
     deletedMealIds,
     deletedWorkoutIds,
+    deletedSavedMealIds,
+    savedMeals: mergeSavedMeals(local.savedMeals, remote.savedMeals, deletedSavedMealIds),
     training: mergeTraining(local.training, remote.training),
     lastHealthSync: [local.lastHealthSync, remote.lastHealthSync]
       .filter((value): value is string => Boolean(value))
       .sort()
+      .at(-1),
+    healthSync: [local.healthSync, remote.healthSync]
+      .filter((value): value is NonNullable<AppData['healthSync']> => Boolean(value))
+      .sort((a, b) => a.lastAttemptAt.localeCompare(b.lastAttemptAt))
       .at(-1),
   });
 }
@@ -278,7 +305,10 @@ type AppContextValue = {
   addWater: (amount: number) => void;
   removeMeal: (id: string) => void;
   removeWorkout: (id: string) => void;
+  saveMeal: (group: MealGroup) => void;
+  removeSavedMeal: (id: string) => void;
   applyHealthSnapshot: (snapshot: HealthSnapshot) => void;
+  reportHealthSyncError: (message: string) => void;
   updateGoals: (goals: Partial<Goals>) => void;
   savePersonalization: (profile: PersonalProfile, bowlMl?: number) => void;
   updateEstimationProfile: (profile: Partial<EstimationProfile>, weightKg?: number) => void;
@@ -498,6 +528,7 @@ export function AppProvider({ children }: React.PropsWithChildren) {
 
   const applyOperations = useCallback((operations: LogOperation[]) => {
     const weightPoints: WeightPoint[] = [];
+    const loggedAt = new Date().toISOString();
     updateToday((day) => {
       const next = { ...day, meals: [...day.meals], workouts: [...day.workouts] };
       for (const operation of operations) {
@@ -506,7 +537,7 @@ export function AppProvider({ children }: React.PropsWithChildren) {
             ...item,
             id: id('meal'),
             slot: operation.slot,
-            loggedAt: new Date().toISOString(),
+            loggedAt,
           }));
           next.meals.push(...items);
         } else if (operation.type === 'water') {
@@ -570,18 +601,82 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     }));
   }, [updateToday]);
 
+  const saveMeal = useCallback((group: MealGroup) => {
+    setData((current) => {
+      const existing = current.savedMeals.find((meal) => (
+        meal.slot === group.slot
+        && JSON.stringify(meal.items.map((item) => [item.name, item.quantity]).sort())
+          === JSON.stringify(group.items.map((item) => [item.name, item.quantity]).sort())
+      ));
+      const now = new Date().toISOString();
+      if (existing) {
+        return {
+          ...current,
+          savedMeals: current.savedMeals.map((meal) => (
+            meal.id === existing.id ? { ...meal, updatedAt: now } : meal
+          )),
+        };
+      }
+      return {
+        ...current,
+        savedMeals: [savedMealFromGroup(group, id('saved-meal'), now), ...current.savedMeals]
+          .slice(0, 50),
+      };
+    });
+  }, []);
+
+  const removeSavedMeal = useCallback((savedMealId: string) => {
+    setData((current) => ({
+      ...current,
+      savedMeals: current.savedMeals.filter((meal) => meal.id !== savedMealId),
+      deletedSavedMealIds: [...new Set([...current.deletedSavedMealIds, savedMealId])].slice(-500),
+    }));
+  }, []);
+
   const applyHealthSnapshot = useCallback((snapshot: HealthSnapshot) => {
     updateToday((day) => ({
       ...day,
-      steps: snapshot.steps ?? day.steps,
-      activeCalories: snapshot.activeCalories ?? day.activeCalories,
-      sleepHours: snapshot.sleepHours ?? day.sleepHours,
+      steps: healthMetricHasSamples(snapshot, 'steps') ? (snapshot.steps ?? day.steps) : day.steps,
+      activeCalories: healthMetricHasSamples(snapshot, 'activeCalories')
+        ? (snapshot.activeCalories ?? day.activeCalories)
+        : day.activeCalories,
+      sleepHours: healthMetricHasSamples(snapshot, 'sleep')
+        ? (snapshot.sleepHours ?? day.sleepHours)
+        : day.sleepHours,
     }));
     setData((current) => {
-      const synced = { ...current, lastHealthSync: new Date().toISOString() };
-      return snapshot.weightKg ? withCurrentWeight(synced, snapshot.weightKg) : synced;
+      const now = new Date().toISOString();
+      const hasSamples = healthSnapshotHasSamples(snapshot);
+      const synced = {
+        ...current,
+        lastHealthSync: now,
+        healthSync: {
+          source: snapshot.source,
+          status: hasSamples ? 'current' as const : 'empty' as const,
+          lastAttemptAt: now,
+          lastSuccessAt: now,
+          message: hasSamples
+            ? `Updated from ${snapshot.source}.`
+            : `Connected to ${snapshot.source}, but no shared samples were found.`,
+        },
+      };
+      return healthMetricHasSamples(snapshot, 'weight') && snapshot.weightKg
+        ? withCurrentWeight(synced, snapshot.weightKg)
+        : synced;
     });
   }, [updateToday]);
+
+  const reportHealthSyncError = useCallback((message: string) => {
+    setData((current) => ({
+      ...current,
+      healthSync: {
+        ...current.healthSync,
+        status: 'error',
+        lastAttemptAt: new Date().toISOString(),
+        message,
+      },
+    }));
+  }, []);
 
   const updateGoals = useCallback((goals: Partial<Goals>) => {
     setData((current) => {
@@ -694,7 +789,10 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     addWater,
     removeMeal,
     removeWorkout,
+    saveMeal,
+    removeSavedMeal,
     applyHealthSnapshot,
+    reportHealthSyncError,
     updateGoals,
     savePersonalization,
     updateEstimationProfile,
@@ -716,7 +814,10 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     addWater,
     removeMeal,
     removeWorkout,
+    saveMeal,
+    removeSavedMeal,
     applyHealthSnapshot,
+    reportHealthSyncError,
     updateGoals,
     savePersonalization,
     updateEstimationProfile,
@@ -728,7 +829,15 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     clearLocalData,
   ]);
 
-  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+  return (
+    <AppContext.Provider value={value}>
+      {hydrated ? children : (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.bg }}>
+          <ActivityIndicator color={palette.lime} />
+        </View>
+      )}
+    </AppContext.Provider>
+  );
 }
 
 export function useApp() {

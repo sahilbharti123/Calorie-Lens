@@ -4,6 +4,25 @@ import * as Device from 'expo-device';
 import { startOfLocalDay } from '@/src/lib/date';
 import type { HealthSnapshot } from '@/src/types';
 
+export function healthSnapshotHasSamples(snapshot: HealthSnapshot) {
+  if (snapshot.sampleCount != null) return snapshot.sampleCount > 0;
+  return [snapshot.steps, snapshot.activeCalories, snapshot.sleepHours, snapshot.weightKg]
+    .some((value) => value != null);
+}
+
+export function healthMetricHasSamples(
+  snapshot: HealthSnapshot,
+  metric: 'steps' | 'activeCalories' | 'sleep' | 'weight',
+) {
+  if (snapshot.sampleCounts) return snapshot.sampleCounts[metric] > 0;
+  const value = metric === 'sleep'
+    ? snapshot.sleepHours
+    : metric === 'weight'
+      ? snapshot.weightKg
+      : snapshot[metric];
+  return value != null;
+}
+
 export async function syncNativeHealth(): Promise<HealthSnapshot> {
   if (Platform.OS === 'ios') return syncAppleHealth();
   if (Platform.OS === 'android') return syncHealthConnect();
@@ -96,6 +115,13 @@ async function syncAppleHealth(): Promise<HealthSnapshot> {
     activeCalories: Math.round(calories.reduce((sum, sample) => sum + sample.quantity, 0)),
     weightKg: weights[0]?.quantity,
     sleepHours: Math.round((asleepMs / 3_600_000) * 10) / 10,
+    sampleCount: steps.length + calories.length + weights.length + sleep.length,
+    sampleCounts: {
+      steps: steps.length,
+      activeCalories: calories.length,
+      sleep: sleep.length,
+      weight: weights.length,
+    },
     source: 'Apple Health',
   };
 }
@@ -136,6 +162,13 @@ async function syncHealthConnect(): Promise<HealthSnapshot> {
     ),
     weightKg: weights.records[0]?.weight.inKilograms,
     sleepHours: Math.round((sleepMs / 3_600_000) * 10) / 10,
+    sampleCount: steps.records.length + calories.records.length + weights.records.length + sleep.records.length,
+    sampleCounts: {
+      steps: steps.records.length,
+      activeCalories: calories.records.length,
+      sleep: sleep.records.length,
+      weight: weights.records.length,
+    },
     source: 'Health Connect',
   };
 }
