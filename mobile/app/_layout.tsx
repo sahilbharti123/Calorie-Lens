@@ -14,7 +14,7 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
-import { useCallback, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import 'react-native-reanimated';
 
@@ -37,6 +37,13 @@ const modalScreen = (title: string) => ({
   headerTitleStyle: { fontFamily: font.semi, fontSize: 16, color: palette.ink },
 });
 
+/**
+ * Longest the app will wait for bundled fonts before starting anyway.
+ * A missing typeface is a cosmetic problem; a splash screen that never
+ * leaves is a broken app, so the timeout always wins.
+ */
+const FONT_TIMEOUT_MS = 4000;
+
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,
@@ -48,7 +55,21 @@ export default function RootLayout() {
     SpaceGrotesk_700Bold,
   });
 
-  const ready = fontsLoaded || Boolean(fontError);
+  const [fontsTimedOut, setFontsTimedOut] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setFontsTimedOut(true), FONT_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const ready = fontsLoaded || Boolean(fontError) || fontsTimedOut;
+
+  // Hand off from the native splash as soon as JS can paint, rather than
+  // waiting for the session to resolve — otherwise a slow or failed auth
+  // check leaves the native splash on screen with nothing behind it.
+  useEffect(() => {
+    if (ready) void SplashScreen.hideAsync();
+  }, [ready]);
 
   if (!ready) return <Splash />;
 
@@ -70,14 +91,6 @@ function Splash() {
 
 function SessionRouter() {
   const { loading, offlineMode, onboardingComplete, session } = useAuth();
-
-  const onReady = useCallback(() => {
-    void SplashScreen.hideAsync();
-  }, []);
-
-  useEffect(() => {
-    if (!loading) onReady();
-  }, [loading, onReady]);
 
   if (loading) return <Splash />;
 
