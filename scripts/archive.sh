@@ -35,9 +35,16 @@ fi
 # Profiles carry TeamName explicitly, which is the only way to be sure which
 # bracketed code is Advaice Limited.
 list_teams() {
-  local dir="$HOME/Library/MobileDevice/Provisioning Profiles"
-  [ -d "$dir" ] || return 0
+  # Xcode 16 moved provisioning profiles out of ~/Library/MobileDevice into its
+  # own UserData directory. Scan both, or the table reads empty on a modern
+  # Xcode and the team check silently has nothing to check against.
+  local dirs=(
+    "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+    "$HOME/Library/MobileDevice/Provisioning Profiles"
+  )
   local found=0
+  for dir in "${dirs[@]}"; do
+    [ -d "$dir" ] || continue
   for profile in "$dir"/*.mobileprovision; do
     [ -e "$profile" ] || continue
     local plist name team tid
@@ -46,6 +53,7 @@ list_teams() {
     team="$(printf '%s' "$plist" | plutil -extract TeamName raw - 2>/dev/null || true)"
     tid="$(printf '%s' "$plist" | plutil -extract TeamIdentifier.0 raw - 2>/dev/null || true)"
     [ -n "$tid" ] && { printf '  %-28s  %-24s  %s\n' "$team" "$tid" "$name"; found=1; }
+  done
   done
   [ "$found" = 1 ] || echo "  (no provisioning profiles installed yet)"
 }
