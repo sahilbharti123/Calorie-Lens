@@ -156,14 +156,10 @@ xcodebuild \
 echo
 echo "==> Done"
 echo
-ls -lh "$OUT"/*.ipa 2>/dev/null || echo "No .ipa produced — read the export output above."
-echo
-echo "Version check (should read 1.0.0 / 2):"
-/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
-  "$ARCHIVE/Products/Applications/$SCHEME.app/Info.plist" 2>/dev/null || true
-/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
-  "$ARCHIVE/Products/Applications/$SCHEME.app/Info.plist" 2>/dev/null || true
-echo
-echo "Upload the .ipa with Transporter (free, Mac App Store):"
-echo "  open -a Transporter '$OUT'"
-echo "Sign in as the Advaice Limited account, drag the .ipa in, press Deliver."
+ls -lh "$OUT"/*.ipa 2>/dev/null || { echo "No .ipa produced — read the export output above."; exit 1; }
+
+# Inspect the .ipa rather than trusting the archive log. The archive is signed
+# with whatever the Release configuration resolves to — often a development
+# identity — and the export step re-signs it for distribution. Only the .ipa
+# says what Apple will actually receive.
+exec "$ROOT/scripts/verify-signing.sh" "$OUT/$SCHEME.ipa"

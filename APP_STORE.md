@@ -6,7 +6,7 @@ placeholder only you can fill in.
 
 - **App**: Vigorly
 - **Bundle ID**: `com.advaice.calorielens`
-- **Version**: 1.0.0 (build 1)
+- **Version**: 1.0.0 (build 2)
 - **Developer**: Sahil Bharti (individual), sahil.bharti97@gmail.com
 
 ---
@@ -72,6 +72,21 @@ USDA-sourced food and gym log
 
 (29/30) — Most literal and most keyword-dense. Reads a little dry.
 
+### Pick them as a pair
+
+Apple shows the name and subtitle stacked, so they are read as one line. Use:
+
+```
+Vigorly: Food & Gym Log
+Every estimate shows its range
+```
+
+The name carries the category, which "Vigorly" alone does not — a made-up word
+tells a browsing user nothing — and the subtitle spends its 30 characters on the
+one thing no competitor says. Pairing brand-only with the range line would leave
+nobody able to tell what the app is for; pairing "Calorie Counter" with the range
+line wastes the subtitle restating the category.
+
 ---
 
 ## 2. Promotional text (170 characters max)
@@ -114,9 +129,9 @@ Two rules this copy follows deliberately, worth keeping if you edit it:
 - It never mentions Android or Health Connect. Apple rejects descriptions that
   reference other mobile platforms.
 - It never promises a conversational or AI coach, because the Coach tab in this
-  release is arithmetic. The Coach screen's own "Coming soon" card is the only
-  place a future coach is mentioned, and it says explicitly that it is in
-  development.
+  release is arithmetic. The screen itself makes the same promise: it advertises
+  no unbuilt feature, which keeps it clear of guideline 2.1's rule against
+  shipping placeholders for functionality that does not exist.
 
 ---
 
@@ -485,8 +500,11 @@ Only you can do these.
 - [ ] Bump `buildNumber` for every upload; `version` stays 1.0.0 for the first
       release.
 - [ ] Run `npm run typecheck` and `npm run lint` clean.
-- [ ] `npx eas build --profile production --platform ios`, then submit the build
-      to TestFlight and install it on a physical iPhone.
+- [ ] `TEAM_ID=95R5R7A683 ./scripts/archive.sh`, which archives, exports a signed
+      .ipa and then checks that .ipa is distribution-signed under Advaice
+      Limited. Upload it with Transporter. The build is deliberately made on your
+      own Mac: no third-party build service ever holds the signing certificate.
+      `TESTFLIGHT.md` is the full runbook.
 - [ ] On that physical device, verify: onboarding completes, "Continue without
       an account" reaches the tabs, voice logging asks for microphone and speech
       permission and produces an entry, Apple Health returns real samples,
@@ -494,15 +512,15 @@ Only you can do these.
       Airplane Mode.
 - [ ] Delete and reinstall once to confirm a clean first run.
 
-**Known metadata mismatches to fix before anyone reads the repo**
+**Repo and metadata consistency — done, but re-check if you edit the docs**
 
-- [ ] `README.md` and `mobile/README.md` still describe Gemini-based voice
-      transcription, an AI coach with long-term memory, and a `GOOGLE_API_KEY`
-      requirement. The shipping app does none of that: `speech.ts` uses the
-      operating system's recognizer and `insights.ts` is pure arithmetic. Update
-      those two files so a reviewer comparing your public repo against your
-      privacy answers finds one consistent story.
-- [ ] `ACCURACY.md` opens by saying "Gemini transcribes speech and extracts
-      facts". The rest of that document is accurate and worth linking from your
-      marketing page, but that first line contradicts the app and your privacy
-      policy.
+`README.md`, `mobile/README.md` and `ACCURACY.md` used to describe Gemini-based
+voice transcription and an AI coach with long-term memory. They no longer do:
+`speech.ts` uses the operating system's recognizer and `insights.ts` is pure
+arithmetic, and the docs now say so. The remaining `GOOGLE_API_KEY` mentions in
+`README.md` and `DEPLOY.md` are about the optional Python backend and the
+Streamlit companion, neither of which ships in the iOS app.
+
+This matters because a reviewer, or a journalist, can read your public repository
+alongside your App Privacy answers. Those two must tell the same story. If you
+change what the app does, change the docs in the same commit.
