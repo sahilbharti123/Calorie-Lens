@@ -4,6 +4,12 @@ import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import Storage from 'expo-sqlite/kv-store';
 
+/**
+ * Persisted-storage keys keep the pre-rename `calorie-lens.` prefix on purpose.
+ * They identify data already written to the device — renaming them would
+ * orphan every existing vault, session and backup rather than migrate it.
+ * The name a user sees is set in app.json; these are invisible.
+ */
 const DEVICE_KEY_NAME = 'calorie-lens.device-data-key.v1';
 const SECURE_OPTIONS: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,

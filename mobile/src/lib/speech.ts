@@ -3,7 +3,7 @@
  *
  * Speech is transcribed by the operating system's own recogniser (Apple's
  * Speech framework on iOS, the platform recogniser on Android). Nothing is
- * uploaded to a Calorie Lens server and there is no per-use cost, which is why
+ * uploaded to a Vigorly server and there is no per-use cost, which is why
  * voice logging works without an account, without an API key, and offline
  * wherever the OS has an on-device model installed.
  *
@@ -188,7 +188,7 @@ export function useDictation({ onFinal }: { onFinal?: (transcript: string) => vo
     if (!permission.granted) {
       setError(
         permission.canAskAgain
-          ? 'Calorie Lens needs microphone and speech access to log by voice.'
+          ? 'Vigorly needs microphone and speech access to log by voice.'
           : 'Microphone or speech access is off. Turn it on in Settings to log by voice.',
       );
       return false;

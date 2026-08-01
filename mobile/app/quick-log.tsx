@@ -216,7 +216,7 @@ export default function QuickLogScreen() {
         ready: false,
         title: 'Voice needs microphone access',
         detail: permission.canAskAgain
-          ? 'Calorie Lens needs microphone and speech access to log by voice.'
+          ? 'Vigorly needs microphone and speech access to log by voice.'
           : 'Microphone or speech access is off. Turn it on in Settings to log by voice.',
       };
       setVoiceStatus(blocked);

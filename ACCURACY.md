@@ -1,6 +1,6 @@
-# Calorie Lens estimation method
+# Vigorly estimation method
 
-Calorie Lens separates language understanding from measurement:
+Vigorly separates language understanding from measurement:
 
 1. The operating system transcribes speech on the device — Apple's Speech
    framework on iOS, the platform recogniser on Android. No audio is uploaded,

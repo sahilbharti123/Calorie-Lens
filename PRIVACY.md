@@ -1,13 +1,13 @@
-# Calorie Lens Privacy Policy
+# Vigorly Privacy Policy
 
 **Last updated: 30 July 2026**
 
-Calorie Lens is made by one person, Sahil Bharti. There is no company behind it,
+Vigorly is made by one person, Sahil Bharti. There is no company behind it,
 no investor asking what the data could be worth, and no advertising business
 that the app quietly serves. It is a fitness tracker I built because I wanted to
 use it, and this page describes exactly what it does with your information.
 
-The short version: by default, Calorie Lens collects nothing. Everything you log
+The short version: by default, Vigorly collects nothing. Everything you log
 stays on your phone, encrypted. If you want your history on more than one
 device, you can create an account, and then a copy is stored on a server so it
 can be sent back to you. That is the only situation in which any of your data
@@ -20,7 +20,7 @@ estimates, workouts and sets, routines, water, steps, sleep, weight, your goals
 and targets, your onboarding answers such as age, height and bowl size, and any
 notes you write.
 
-That database is encrypted before it is written. Calorie Lens generates a random
+That database is encrypted before it is written. Vigorly generates a random
 256-bit key the first time you open the app, keeps it in the iOS Keychain marked
 as available only on this device while it is unlocked, and encrypts your records
 with AES-GCM under that key. Your account session token and recovery code, if
@@ -33,7 +33,7 @@ local database and the key go with it.
 
 Nothing.
 
-Calorie Lens is designed to be fully usable without an account. On the sign-in
+Vigorly is designed to be fully usable without an account. On the sign-in
 screen there is a button that says "Continue without an account", and it is not a
 trial or a limited mode. Food logging, voice logging, the estimate engine, the
 entire Train tab, Progress, Coach, Apple Health, backups and export all work
@@ -48,7 +48,7 @@ When you dictate an entry, the microphone is on only while you are speaking, and
 the recording is turned into text by your iPhone's own speech recognition, the
 same system feature that powers dictation on the keyboard.
 
-No audio is written to a file. No audio is uploaded to a Calorie Lens server. I
+No audio is written to a file. No audio is uploaded to a Vigorly server. I
 never receive a recording of your voice, and there is no transcription service,
 subscription or API key involved. The resulting text is handed straight to the
 same on-device parser that typed entries use.
@@ -56,7 +56,7 @@ same on-device parser that typed entries use.
 Speech recognition on iOS may use Apple's own on-device model or, depending on
 your device, language and settings, Apple's servers. That path is governed by
 Apple's privacy policy and your iOS settings, not by me, and it is the same path
-any dictation on your phone takes. Calorie Lens has no access to it beyond
+any dictation on your phone takes. Vigorly has no access to it beyond
 receiving the finished text.
 
 If you would rather not grant microphone or speech permission, you can type
@@ -64,7 +64,7 @@ every entry instead. Nothing in the app is voice-only.
 
 ## Apple Health
 
-With your permission, Calorie Lens reads four things from Apple Health: step
+With your permission, Vigorly reads four things from Apple Health: step
 count, active energy burned, sleep, and body weight. iOS asks you for each
 category and you can grant or refuse any of them, at any time, in the Health
 app.
@@ -116,20 +116,20 @@ the honest recommendation.
 
 ## No analytics, no advertising, no tracking
 
-Calorie Lens contains no analytics SDK, no crash reporting service, no
+Vigorly contains no analytics SDK, no crash reporting service, no
 attribution or install-tracking library, and no advertising network. I do not
 know how many times you opened the app, which tab you use most, how long you
 stayed, or whether you have logged anything today.
 
 Nothing in the app tracks you across other apps or websites. No advertising
 identifier is requested or read, so you will never see an App Tracking
-Transparency prompt from Calorie Lens. Your data is not combined with data from
+Transparency prompt from Vigorly. Your data is not combined with data from
 any other source, and it is not used to build a profile of you.
 
 The one thing that leaves the app on purpose, apart from sync, is a link: tapping
 a technique video in the Train tab opens it in your browser or video app. From
 that moment you are on someone else's website and their privacy policy applies,
-not mine. Calorie Lens does not tell them anything about you.
+not mine. Vigorly does not tell them anything about you.
 
 ## Backups and export
 
@@ -148,7 +148,7 @@ account**. This removes your account and the synced vault from the server. It is
 permanent and there is no undo.
 
 Revoking Apple Health permission in the Health app stops any further reading
-immediately. Values already copied into your Calorie Lens history stay until you
+immediately. Values already copied into your Vigorly history stay until you
 delete them or delete the app.
 
 If you would rather I did it for you, or you have lost access to your account,
@@ -160,7 +160,7 @@ backup and deleting the app, but write to me and I will help either way.
 
 ## Children
 
-Calorie Lens is not directed at children. It is rated 4+ because it contains no
+Vigorly is not directed at children. It is rated 4+ because it contains no
 objectionable content, not because it is designed for young children, and it is
 not distributed in the Kids Category.
 
@@ -177,7 +177,7 @@ to you, delete it. That is a feature of a tool you own.
 
 If the app changes in a way that changes this policy, I will update this page and
 the date at the top. Material changes, particularly anything that would cause
-Calorie Lens to collect something it does not collect today, will also be called
+Vigorly to collect something it does not collect today, will also be called
 out in the app's release notes rather than quietly edited in here.
 
 ## Contact

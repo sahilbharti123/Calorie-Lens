@@ -37,6 +37,12 @@ import type {
   Workout,
 } from '@/src/types';
 
+/**
+ * Persisted-storage keys keep the pre-rename `calorie-lens.` prefix on purpose.
+ * They identify data already written to the device — renaming them would
+ * orphan every existing vault, session and backup rather than migrate it.
+ * The name a user sees is set in app.json; these are invisible.
+ */
 const LEGACY_STORAGE_KEY = 'calorie-lens.app-data.v1';
 const STORAGE_PREFIX = 'calorie-lens.encrypted-app-data.v2';
 /** Coalesces a burst of keystrokes into one encrypt + write. See flushLocalWrite. */

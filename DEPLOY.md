@@ -1,7 +1,7 @@
-# Deploying Calorie Lens
+# Deploying Vigorly
 
 The app is offline-first and the backend is optional, so the cheapest way to
-run Calorie Lens is not to run anything. This document describes three tiers,
+run Vigorly is not to run anything. This document describes three tiers,
 in increasing order of cost, and says plainly what each one buys.
 
 Prices are approximate and were checked in mid-2026. Hosting prices move;

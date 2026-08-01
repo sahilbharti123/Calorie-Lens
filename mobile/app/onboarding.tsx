@@ -247,7 +247,7 @@ export default function OnboardingScreen() {
         permission.granted
           ? 'Microphone and on-device dictation are ready. Speech is transcribed on this phone — no account and no connection needed.'
           : permission.canAskAgain
-            ? 'Calorie Lens needs microphone and speech access to log by voice.'
+            ? 'Vigorly needs microphone and speech access to log by voice.'
             : 'Microphone or speech access is off. Turn it on in Settings to log by voice.',
       );
     } catch (error) {

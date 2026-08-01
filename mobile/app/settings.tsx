@@ -198,7 +198,7 @@ export default function SettingsScreen() {
 
           <Reveal index={3}>
             <Text style={styles.note}>
-              Food and exercise values remain estimates. Calorie Lens shows the source and range before saving.
+              Food and exercise values remain estimates. Vigorly shows the source and range before saving.
             </Text>
           </Reveal>
         </ScrollView>

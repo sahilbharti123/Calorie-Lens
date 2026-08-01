@@ -60,7 +60,7 @@ async function syncAppleHealth(): Promise<HealthSnapshot> {
     ],
   });
   if (!authorized) {
-    throw new Error('Apple Health did not finish authorization. Open Health › Sharing › Apps › Calorie Lens and review access.');
+    throw new Error('Apple Health did not finish authorization. Open Health › Sharing › Apps › Vigorly and review access.');
   }
 
   const date = { startDate: startOfLocalDay(), endDate: new Date() };
@@ -112,7 +112,7 @@ async function syncHealthConnect(): Promise<HealthSnapshot> {
     { accessType: 'read', recordType: 'SleepSession' },
   ]);
   if (!permissions.length) {
-    throw new Error('No Health Connect categories were approved. Review Calorie Lens permissions in Health Connect.');
+    throw new Error('No Health Connect categories were approved. Review Vigorly permissions in Health Connect.');
   }
 
   const startTime = startOfLocalDay().toISOString();

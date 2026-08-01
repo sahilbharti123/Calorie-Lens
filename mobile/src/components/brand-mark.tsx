@@ -3,9 +3,9 @@ import Svg, { Circle, Defs, LinearGradient, Path, Stop } from 'react-native-svg'
 import { palette } from '@/src/theme';
 
 /**
- * The Calorie Lens mark: an open aperture ring — the "lens" — closing around a
- * flame. It doubles as the progress ring used throughout the app, so the logo
- * and the product's core visual are the same idea.
+ * The Vigorly mark: an open ring closing around a flame — vigour, contained and
+ * measured. It doubles as the progress ring used throughout the app, so the
+ * logo and the product's core visual are the same idea.
  */
 export function BrandMark({ size = 64, mono }: { size?: number; mono?: string }) {
   const ring = mono ?? 'url(#brandRing)';

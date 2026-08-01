@@ -179,7 +179,7 @@ export default function FoodScreen() {
                   onPress={() => router.push('/quick-log')}
                 />
               }
-              body="Type or say what you ate. Calorie Lens estimates calories and macros, then lets you review before saving."
+              body="Type or say what you ate. Vigorly estimates calories and macros, then lets you review before saving."
               icon="bowl"
               title="Your day starts with one sentence"
             />

@@ -1,4 +1,4 @@
-# Calorie Lens — TestFlight runbook (Advaice Limited)
+# Vigorly — TestFlight runbook (Advaice Limited)
 
 Build 1.0.0 (1) to TestFlight under the **Advaice Limited** team, built locally in
 Xcode and uploaded through Organizer. No third-party build service is involved and
@@ -44,7 +44,7 @@ Go to [Certificates, Identifiers & Profiles → Identifiers](https://developer.a
 make sure **Advaice Limited** is the selected team, and add an identifier:
 
 - Type: **App IDs → App**
-- Description: `Calorie Lens`
+- Description: `Vigorly`
 - Bundle ID: **Explicit**, `com.advaice.calorielens`
 - Capabilities: tick **HealthKit**
 
@@ -62,11 +62,11 @@ usage strings, not capabilities.
 In [App Store Connect → Apps](https://appstoreconnect.apple.com/apps) → **+** → **New App**:
 
 - Platform: **iOS**
-- Name: `Calorie Lens` (must be unique across the App Store; if it is taken, pick
+- Name: `Vigorly` (must be unique across the App Store; if it is taken, pick
   the alternative from `APP_STORE.md` and tell me so I can align the metadata)
 - Primary language: **English (U.K.)**
 - Bundle ID: `com.advaice.calorielens` — pick the identifier you just registered
-- SKU: `calorie-lens-ios` (internal reference only, never shown to users)
+- SKU: `vigorly-ios` (internal reference only, never shown to users)
 - User Access: **Full Access**
 
 You do not need to fill in pricing, screenshots, or the App Store listing to use
@@ -85,7 +85,7 @@ npx expo prebuild --clean
 Then confirm it took:
 
 ```bash
-grep -r PRODUCT_BUNDLE_IDENTIFIER ios/CalorieLens.xcodeproj/project.pbxproj | head -3
+grep -r PRODUCT_BUNDLE_IDENTIFIER ios/Vigorly.xcodeproj/project.pbxproj | head -3
 ```
 
 Every line should read `com.advaice.calorielens`.
@@ -93,10 +93,10 @@ Every line should read `com.advaice.calorielens`.
 ## 5. Set the signing team in Xcode
 
 ```bash
-open ios/CalorieLens.xcworkspace
+open ios/Vigorly.xcworkspace
 ```
 
-Select the **CalorieLens** target → **Signing & Capabilities** → **Release** tab:
+Select the **Vigorly** target → **Signing & Capabilities** → **Release** tab:
 
 - **Automatically manage signing**: on
 - **Team**: Advaice Limited

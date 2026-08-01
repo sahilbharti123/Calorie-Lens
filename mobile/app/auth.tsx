@@ -250,7 +250,7 @@ export default function AuthScreen() {
 
           <Reveal index={6} style={styles.privacyWrap}>
             <Text style={styles.privacy}>
-              Calorie Lens is a fitness tracker, not medical care. Food and exercise values are estimates.
+              Vigorly is a fitness tracker, not medical care. Food and exercise values are estimates.
             </Text>
           </Reveal>
         </ScrollView>

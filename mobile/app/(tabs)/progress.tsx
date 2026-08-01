@@ -389,7 +389,7 @@ export default function ProgressScreen() {
 
         <Reveal index={8}>
           <Text style={styles.privacy}>
-            Health access is requested by the operating system. Calorie Lens reads only the categories you approve.
+            Health access is requested by the operating system. Vigorly reads only the categories you approve.
           </Text>
         </Reveal>
       </ScrollView>

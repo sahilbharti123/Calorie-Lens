@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "Calorie Lens",
-    "slug": "calorie-lens",
+    "name": "Vigorly",
+    "slug": "vigorly",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "calorielens",
+    "scheme": "vigorly",
     "newArchEnabled": true,
     "userInterfaceStyle": "dark",
     "backgroundColor": "#07090A",
@@ -91,16 +91,16 @@
       [
         "expo-speech-recognition",
         {
-          "microphonePermission": "Calorie Lens uses the microphone only while you are dictating a food or workout entry.",
-          "speechRecognitionPermission": "Calorie Lens transcribes your dictation on this device to turn it into a food or workout entry."
+          "microphonePermission": "Vigorly uses the microphone only while you are dictating a food or workout entry.",
+          "speechRecognitionPermission": "Vigorly transcribes your dictation on this device to turn it into a food or workout entry."
         }
       ],
       "expo-sqlite",
       [
         "@kingstinct/react-native-healthkit",
         {
-          "NSHealthShareUsageDescription": "Calorie Lens reads steps, activity, sleep, and weight to keep your fitness dashboard current.",
-          "NSHealthUpdateUsageDescription": "Calorie Lens can save fitness information that you explicitly confirm.",
+          "NSHealthShareUsageDescription": "Vigorly reads steps, activity, sleep, and weight to keep your fitness dashboard current.",
+          "NSHealthUpdateUsageDescription": "Vigorly can save fitness information that you explicitly confirm.",
           "background": true
         }
       ],

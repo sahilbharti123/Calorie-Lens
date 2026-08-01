@@ -1,10 +1,10 @@
-# App Store submission pack — Calorie Lens
+# App Store submission pack — Vigorly
 
 Everything below is written to be pasted into App Store Connect. Character
 counts are shown as `(used/limit)`. Anything in `ANGLE BRACKETS` is a
 placeholder only you can fill in.
 
-- **App**: Calorie Lens
+- **App**: Vigorly
 - **Bundle ID**: `com.advaice.calorielens`
 - **Version**: 1.0.0 (build 1)
 - **Developer**: Sahil Bharti (individual), sahil.bharti97@gmail.com
@@ -18,7 +18,7 @@ placeholder only you can fill in.
 **Recommended**
 
 ```
-Calorie Lens: Food & Gym Log
+Vigorly: Food & Gym Log
 ```
 
 (28/30) — Keeps the brand first and buys two searchable words, "food" and
@@ -29,7 +29,7 @@ choose it over an established tracker.
 **Alternate A**
 
 ```
-Calorie Lens: Calorie Counter
+Vigorly: Calorie Counter
 ```
 
 (29/30) — Highest-volume search term, but "calorie" appears twice and it hides
@@ -38,7 +38,7 @@ the training half of the app.
 **Alternate B**
 
 ```
-Calorie Lens
+Vigorly
 ```
 
 (12/30) — Clean brand-only listing. Choose this only if you would rather build
@@ -77,7 +77,7 @@ USDA-sourced food and gym log
 ## 2. Promotional text (170 characters max)
 
 ```
-Most trackers show one confident number. Calorie Lens shows a range, the assumptions behind it, and the USDA record it came from. Works offline, no account needed.
+Most trackers show one confident number. Vigorly shows a range, the assumptions behind it, and the USDA record it came from. Works offline, no account needed.
 ```
 
 (163/170) — Promotional text can be changed any time without submitting a new
@@ -90,7 +90,7 @@ build, so use it later for release notes and seasonal messages.
 Paste exactly as written. Current length: **3393/4000**.
 
 ```
-Ask most calorie apps about one bowl of dal and you get a single confident number. That number is a guess in a lab coat. Calorie Lens shows you the range instead.
+Ask most calorie apps about one bowl of dal and you get a single confident number. That number is a guess in a lab coat. Vigorly shows you the range instead.
 
 Every estimate arrives with a midpoint, a plausible low to high range, the assumptions it made, a confidence label, and the source record behind it. Food numbers are calculated by a deterministic engine against reviewed USDA FoodData Central records, and each entry carries the FoodData Central ID it used. A language model is never allowed to invent a calorie value here. When the app does not recognize a food, it says so and asks you for a label or an ingredient list instead of reaching for a generic number.
 
@@ -104,9 +104,9 @@ Progress keeps the long view: weight trend, calorie adherence against target, tr
 
 The Coach tab reads your own numbers back to you. Protein and calorie adherence, training minutes against plan, how wide your estimates are running, where your weight is heading. Every observation states the figure it came from, so you can check it rather than trust it. All of it is arithmetic computed on this device. There is no chatbot in this release and nothing on that screen needs a network.
 
-Calorie Lens is local first. Tap Continue without an account and the entire app works, with no sign-up and no connection. Records are encrypted on the device with AES-GCM before they are written to storage. An account is optional and does exactly one thing: it keeps your history in sync across your own devices. Your fitness data is never sold and never shared. There are no ads, no analytics, and no trackers.
+Vigorly is local first. Tap Continue without an account and the entire app works, with no sign-up and no connection. Records are encrypted on the device with AES-GCM before they are written to storage. An account is optional and does exactly one thing: it keeps your history in sync across your own devices. Your fitness data is never sold and never shared. There are no ads, no analytics, and no trackers.
 
-Calorie Lens estimates. It is not a calorimeter and it is not medical advice. Recipes, cooking oil, portion reporting and your own metabolism all move the true number, which is precisely why you get a range and the reasoning behind it instead of false precision. Read your targets against a two to four week trend, not a single day.
+Vigorly estimates. It is not a calorimeter and it is not medical advice. Recipes, cooking oil, portion reporting and your own metabolism all move the true number, which is precisely why you get a range and the reasoning behind it instead of false precision. Read your targets against a two to four week trend, not a single day.
 ```
 
 Two rules this copy follows deliberately, worth keeping if you edit it:
@@ -144,7 +144,7 @@ content lives next to the code so it cannot drift.
 | Marketing URL (optional) | `https://<GITHUB-USERNAME>.github.io/calorie-lens/` |
 | Privacy Policy URL (required) | `https://<GITHUB-USERNAME>.github.io/calorie-lens/privacy` |
 
-**How to set it up.** In the Calorie Lens repository, create a `docs/` folder,
+**How to set it up.** In the Vigorly repository, create a `docs/` folder,
 then in Settings → Pages set the source to "Deploy from a branch", branch
 `main`, folder `/docs`. Add three files:
 
@@ -253,7 +253,7 @@ them. `Continue without an account` on the auth screen is a supported, complete
 mode, not a trial.
 
 **What changes when a user opts into sync.** Creating an account sends the
-encrypted fitness vault to the Calorie Lens sync service so a second device can
+encrypted fitness vault to the Vigorly sync service so a second device can
 restore it, and stores an email address, a display name, and a salted
 PBKDF2-HMAC hash of the password and of the recovery code. From that moment the
 data is "collected" in Apple's sense and must be disclosed exactly as in the
@@ -302,7 +302,7 @@ Target rating: **4+**. Answer every content question with the lowest option.
 
 Notes for the two answers a reviewer might question:
 
-- **Medical or Treatment-Focused Content → None.** Calorie Lens estimates food
+- **Medical or Treatment-Focused Content → None.** Vigorly estimates food
   and exercise energy and reports arithmetic about the user's own logs. It does
   not diagnose, does not treat, does not give dosing or clinical guidance, and
   states in the app that it is not medical advice. Nutrition tracking on its own
@@ -336,7 +336,7 @@ matters for ranking; the secondary rarely moves traffic.
 Paste into the "Notes" field in App Review Information.
 
 ```
-Calorie Lens is a nutrition and strength-training tracker. It works completely
+Vigorly is a nutrition and strength-training tracker. It works completely
 without an account.
 
 GETTING IN
@@ -426,7 +426,7 @@ is exactly the case where the easy exemptions are least obvious. The exemption
 for encryption "limited to authentication" does not cover encrypting a user's
 data at rest, and the low-key-length exemptions cap out far below 256 bits. Two
 routes are commonly available to an app like yours: the publicly-available
-source-code route, if the Calorie Lens repository is genuinely public and you
+source-code route, if the Vigorly repository is genuinely public and you
 send the notification email that route requires, or mass-market
 self-classification, which typically means answering "yes" to the encryption
 questions and filing an annual self-classification report. Read Apple's

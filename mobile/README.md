@@ -1,6 +1,6 @@
-# Calorie Lens mobile
+# Vigorly mobile
 
-The native iOS and Android client for Calorie Lens, built with Expo SDK 54 and
+The native iOS and Android client for Vigorly, built with Expo SDK 54 and
 React Native.
 
 ## Included
@@ -242,7 +242,7 @@ compatible health and wearable data through Health Connect.
 
 The app reports these conditions in the UI instead of presenting a generic
 failed connection. Voice needs microphone and speech permission and nothing
-else — no account, no API key, and no Calorie Lens server. Where the OS has no
+else — no account, no API key, and no Vigorly server. Where the OS has no
 on-device recognition model it may fall back to its own network recogniser, and
 the app says so rather than failing silently. Typed logging and the offline
 fitness tracker incur no cost of any kind.

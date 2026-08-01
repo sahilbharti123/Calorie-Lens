@@ -2,6 +2,12 @@ import * as SecureStore from 'expo-secure-store';
 
 import type { AuthSession } from '@/src/types';
 
+/**
+ * Persisted-storage keys keep the pre-rename `calorie-lens.` prefix on purpose.
+ * They identify data already written to the device — renaming them would
+ * orphan every existing vault, session and backup rather than migrate it.
+ * The name a user sees is set in app.json; these are invisible.
+ */
 const SESSION_KEY = 'calorie-lens.auth-session.v1';
 const RECOVERY_KEY = 'calorie-lens.recovery-code.v1';
 const ONBOARDING_KEY = 'calorie-lens.onboarding-complete.v2';

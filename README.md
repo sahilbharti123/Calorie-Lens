@@ -1,4 +1,4 @@
-# Calorie Lens
+# Vigorly
 
 A light personal fitness tracker with native iOS and Android apps plus a
 Streamlit web companion. Try the web version here:

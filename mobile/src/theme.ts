@@ -1,7 +1,7 @@
 import type { TextStyle } from 'react-native';
 
 /**
- * Calorie Lens — "Midnight Athlete" design system.
+ * Vigorly — "Midnight Athlete" design system.
  *
  * One dark, high-contrast surface stack with a single electric accent.
  * Everything in the app reads from these tokens; no screen defines its own

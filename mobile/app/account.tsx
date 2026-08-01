@@ -37,6 +37,8 @@ import { palette, radius, space, tabular, text } from '@/src/theme';
 import type { AppData, CoachMemory } from '@/src/types';
 
 type BackupFile = {
+  /** Wire format, not a display name — kept stable across the Vigorly rename
+   *  so backups written by an earlier build still restore. */
   format: 'calorie-lens-backup-v1';
   exportedAt: string;
   payload: AppData;
@@ -135,14 +137,14 @@ export default function AccountScreen() {
         payload: data,
       };
       const date = new Date().toISOString().slice(0, 10);
-      const file = new File(Paths.cache, `calorie-lens-backup-${date}.json`);
+      const file = new File(Paths.cache, `vigorly-backup-${date}.json`);
       if (file.exists) file.delete();
       file.create();
       file.write(JSON.stringify(backup, null, 2));
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(file.uri, {
           mimeType: 'application/json',
-          dialogTitle: 'Save Calorie Lens backup',
+          dialogTitle: 'Save Vigorly backup',
           UTI: 'public.json',
         });
       } else {
@@ -167,7 +169,7 @@ export default function AccountScreen() {
       const contents = await new File(result.assets[0].uri).text();
       const parsed = JSON.parse(contents) as Partial<BackupFile>;
       if (parsed.format !== 'calorie-lens-backup-v1' || !parsed.payload) {
-        throw new Error('This is not a Calorie Lens backup.');
+        throw new Error('This is not a Vigorly backup.');
       }
       replaceData(mergeAppData(data, normalizeData(parsed.payload)));
       setMessage('Backup restored. It will sync to your account automatically.');
