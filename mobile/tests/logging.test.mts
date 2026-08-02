@@ -412,6 +412,24 @@ const CASES = [
     ],
   },
   {
+    // The litre pattern required the word to end there, so "litres" matched
+    // nothing and two litres silently became one 250 ml glass.
+    name: 'litres of water, plural and singular',
+    say: 'I drank 2 litres of water',
+    check: (r) => [[r.operations[0]?.amount === 2000, `expected 2000 ml, got ${r.operations[0]?.amount}`]],
+  },
+  {
+    name: 'a litre with no digit',
+    say: 'I drank a litre of water',
+    check: (r) => [[r.operations[0]?.amount === 1000, `expected 1000 ml, got ${r.operations[0]?.amount}`]],
+  },
+  {
+    // A greedy gap swallowed "7." and captured the 5.
+    name: 'a fractional number is not read from its decimal',
+    say: 'slept 7.5 hours',
+    check: (r) => [[r.operations[0]?.amount === 7.5, `expected 7.5 hours, got ${r.operations[0]?.amount}`]],
+  },
+  {
     name: 'a workout and a drink in one sentence',
     say: 'I walked 30 minutes moderate and had a beer',
     context: { weightKg: 72 },

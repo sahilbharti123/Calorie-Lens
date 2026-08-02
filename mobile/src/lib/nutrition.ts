@@ -120,6 +120,30 @@ function quantityNear(
   return { amount: 0, unit: 'unknown' };
 }
 
+/**
+ * How much water was drunk.
+ *
+ * Written against the shared NUMBER pattern rather than a bare `\\d+`, because
+ * people say "a litre" and "half a litre" as often as "500 ml" — and because
+ * the old litre pattern required the word to end there, so "2 litres" matched
+ * nothing and silently fell through to a single 250 ml glass.
+ */
+function waterAmount(text: string): number {
+  const read = (units: string) => {
+    const match = text.match(new RegExp(`\\b(${NUMBER})\\b\\s*(?:${units})\\b`));
+    return match ? numberValue(match[1]) : 0;
+  };
+  const millilitres = read('ml|millilit(?:re|er)s?');
+  if (millilitres) return millilitres;
+  const litres = read('l|lit(?:re|er)s?');
+  if (litres) return litres * 1000;
+  const glasses = read('glass(?:es)?');
+  if (glasses) return glasses * GLASS_ML;
+  const bottles = read('bottles?');
+  if (bottles) return bottles * 500;
+  return GLASS_ML;
+}
+
 function firstNumber(text: string, pattern: RegExp) {
   const match = text.match(pattern);
   if (!match) return 0;
@@ -740,18 +764,17 @@ export function parseCommandLocally(
   };
   const lowered = text.toLowerCase().trim();
   const operations: LogOperation[] = [];
-  const water = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*(?:ml|millilit)/);
-  const waterLitres = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*(?:l|litre|liter)\b/);
-  const glasses = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*glass/);
   if (WATER_WORDS.test(lowered) || (/\bglass(?:es)?\b/.test(lowered) && !foods.some((food) => food.aliases.some((alias) => lowered.includes(alias))))) {
-    operations.push({ type: 'water', action: 'add', amount: water || waterLitres * 1000 || glasses * GLASS_ML || GLASS_ML });
+    operations.push({ type: 'water', action: 'add', amount: waterAmount(lowered) });
   }
   const steps = firstNumber(lowered, /(\d[\d,]*)\s*steps?/);
   if (steps) operations.push({ type: 'steps', action: 'set', amount: steps });
   // "I walked 10000 steps" is a step count, not a walk of unknown duration.
   // Without this it matched the Walking activity and asked for minutes.
   const stepsOnly = Boolean(steps) && !/\b(?:min|minute|hour|hr)/.test(lowered);
-  const sleep = firstNumber(lowered, /(?:slept|sleep).{0,12}(\d+(?:\.\d+)?)|(\d+(?:\.\d+)?)\s*(?:hours?|hrs?).{0,12}sleep/);
+  // `\D` rather than `.` between the word and the number: a greedy `.{0,12}`
+  // swallowed "7." and captured the "5", so "slept 7.5 hours" logged 5 hours.
+  const sleep = firstNumber(lowered, /(?:slept|sleep)\D{0,12}(\d+(?:\.\d+)?)|(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)\D{0,12}sleep/);
   if (/sleep|slept/.test(lowered) && sleep) operations.push({ type: 'sleep', action: 'set', amount: sleep });
   const hasWeightIntent = /\b(?:weight|weigh|weighed)\b/.test(lowered);
   const explicitWeight = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*kg/);

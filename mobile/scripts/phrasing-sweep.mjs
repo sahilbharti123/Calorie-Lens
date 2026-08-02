@@ -79,27 +79,37 @@ for (const slot of ['breakfast', 'lunch', 'dinner', 'snack']) {
 }
 
 /* ----------------------------------------------------------------- water -- */
-for (const say of [
-  'I drank 500 ml of water', '500 ml water', 'I had 2 glasses of water',
-  'two glasses of water', 'I drank a litre of water', 'drank 1 l water',
-  'I had 3 glasses of pani', 'maine 2 glass paani piya', 'a glass of water',
-]) add('water', say, 'water');
+// The amount matters as much as the type. An earlier sweep passed every one of
+// these while "2 litres" silently logged a single 250 ml glass, because it only
+// checked that *a* water entry appeared.
+for (const [say, ml] of [
+  ['I drank 500 ml of water', 500], ['500 ml water', 500],
+  ['I had 2 glasses of water', 500], ['two glasses of water', 500],
+  ['I drank a litre of water', 1000], ['drank 1 l water', 1000],
+  ['I drank 2 litres of water', 2000], ['3 liters of water', 3000],
+  ['half a litre of water', 500], ['I had a bottle of water', 500],
+  ['I had 3 glasses of pani', 750], ['maine 2 glass paani piya', 500],
+  ['a glass of water', 250], ['I drank water', 250],
+]) add('water', say, 'water', { amount: ml });
 
 /* ----------------------------------------------------------------- steps -- */
-for (const say of ['10000 steps', 'I walked 10000 steps', 'I did 8000 steps today', '12,000 steps']) {
-  add('steps', say, 'steps');
-}
+for (const [say, count] of [
+  ['10000 steps', 10000], ['I walked 10000 steps', 10000],
+  ['I did 8000 steps today', 8000], ['12,000 steps', 12000],
+]) add('steps', say, 'steps', { amount: count });
 
 /* ----------------------------------------------------------------- sleep -- */
-for (const say of ['I slept 7 hours', 'slept 7.5 hours', 'I got 6 hours of sleep', '8 hours sleep']) {
-  add('sleep', say, 'sleep');
-}
+for (const [say, hours] of [
+  ['I slept 7 hours', 7], ['slept 7.5 hours', 7.5],
+  ['I got 6 hours of sleep', 6], ['8 hours sleep', 8],
+]) add('sleep', say, 'sleep', { amount: hours });
 
 /* ---------------------------------------------------------------- weight -- */
-for (const say of [
-  'my weight is 78.4', 'I weigh 78.4 kg', 'weight 78', 'I weighed 78.4 kilos today',
-  'my weight today is 80', '78.4 kg weight',
-]) add('weight', say, 'weight');
+for (const [say, kg] of [
+  ['my weight is 78.4', 78.4], ['I weigh 78.4 kg', 78.4], ['weight 78', 78],
+  ['I weighed 78.4 kilos today', 78.4], ['my weight today is 80', 80],
+  ['78.4 kg weight', 78.4],
+]) add('weight', say, 'weight', { amount: kg });
 
 /* -------------------------------------------------------------- workouts -- */
 for (const say of [
@@ -151,7 +161,6 @@ for (const say of ['I had undhiyu', 'i ate my mums special curry', 'i had a thal
 /* ---------------------------------------------------------------- runner -- */
 const results = [];
 for (const testCase of cases) {
-  // eslint-disable-next-line no-await-in-loop
   const parsed = await parseFitnessCommand(testCase.say, undefined, CTX);
   const got = parsed.operations.map((operation) => operation.type);
   const asked = parsed.clarification?.target.kind;
@@ -163,7 +172,14 @@ for (const testCase of cases) {
     problem = `asked ${asked}`;
   } else if (!asked) {
     const missing = testCase.want.filter((type) => !got.includes(type));
-    if (missing.length) problem = `missing ${missing.join()} (got ${got.join() || 'nothing'})`;
+    if (missing.length) {
+      problem = `missing ${missing.join()} (got ${got.join() || 'nothing'})`;
+    } else if (testCase.amount !== undefined) {
+      const operation = parsed.operations.find((candidate) => candidate.type === testCase.want[0]);
+      if (operation?.amount !== testCase.amount) {
+        problem = `expected ${testCase.amount}, logged ${operation?.amount}`;
+      }
+    }
   }
   results.push({ ...testCase, got, asked, problem });
 }

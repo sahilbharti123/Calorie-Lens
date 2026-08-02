@@ -206,6 +206,11 @@ function isPristine(data: AppData) {
     && !data.deletedWorkoutIds.length
     && !data.deletedSavedMealIds.length
     && !data.savedMeals.length
+    // A device whose only data is taught foods is not a blank device. Without
+    // this, teaching a food before logging anything and then signing in threw
+    // the taught foods away in favour of the empty remote.
+    && !data.learnedFoods.length
+    && !data.deletedLearnedFoodIds.length
     && !data.training.routines.length
     && !data.training.sessions.length
     && !data.training.activeSession;
