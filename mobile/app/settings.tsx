@@ -1,5 +1,5 @@
 import * as Haptics from 'expo-haptics';
-import { useRouter } from 'expo-router';
+import { type Href, useRouter } from 'expo-router';
 import { type ComponentProps, useState } from 'react';
 import {
   KeyboardAvoidingView,
@@ -15,14 +15,12 @@ import { Glyph } from '@/src/components/glyph';
 import {
   Card,
   CountUp,
-  GhostButton,
   GlassFooter,
   ListRow,
   PrimaryButton,
   Reveal,
   Screen,
   SectionTitle,
-  Well,
 } from '@/src/components/ui';
 import { useApp } from '@/src/store/app-store';
 import { targetWeightError } from '@/src/lib/weight';
@@ -31,7 +29,7 @@ import type { Goals } from '@/src/types';
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { data, forgetFood, savePersonalization, updateGoals } = useApp();
+  const { data, savePersonalization, updateGoals } = useApp();
   const currentWeight = data.weights.at(-1)?.kg ?? data.profile.weightKg;
   const [values, setValues] = useState<Record<keyof Goals, string>>({
     calories: String(data.goals.calories),
@@ -170,41 +168,19 @@ export default function SettingsScreen() {
               it picked up from one entry would otherwise be applied to every
               future entry with no way to see it, let alone correct it. */}
           <Reveal index={2}>
-            <SectionTitle
-              aside={data.learnedFoods.length ? `${data.learnedFoods.length} saved` : undefined}
-              title="Foods you've taught"
-            />
-            <Card padded={!data.learnedFoods.length}>
-              {data.learnedFoods.length ? data.learnedFoods.map((food, index) => (
-                <ListRow
-                  detail={`${food.calories.toLocaleString()} kcal${
-                    food.servingAmount && food.servingUnit
-                      ? ` per ${food.servingAmount} ${food.servingUnit}`
-                      : ''
-                  }`}
-                  icon="bowl"
-                  key={food.id}
-                  last={index === data.learnedFoods.length - 1}
-                  right={(
-                    <GhostButton
-                      compact
-                      icon="trash"
-                      label="Forget"
-                      onPress={() => forgetFood(food.id)}
-                      tone="danger"
-                    />
-                  )}
-                  title={food.name}
-                />
-              )) : (
-                <Well style={styles.emptyWell}>
-                  <Text style={styles.helper}>
-                    Nothing yet. When the app meets a food it does not recognise and you give it
-                    the calories, it saves the figure here and uses it next time instead of
-                    asking again.
-                  </Text>
-                </Well>
-              )}
+            <SectionTitle title="Foods you've taught" />
+            <Card padded={false} style={styles.linkCard}>
+              <ListRow
+                detail={data.learnedFoods.length
+                  ? 'Rename, correct a figure, or remove one'
+                  : 'Nothing yet — give a food its calories once and it is saved'}
+                icon="bowl"
+                last
+                onPress={() => router.push('/taught-foods' as Href)}
+                title={data.learnedFoods.length
+                  ? `${data.learnedFoods.length} saved`
+                  : 'Nothing saved yet'}
+              />
             </Card>
           </Reveal>
 
@@ -356,7 +332,7 @@ const styles = StyleSheet.create({
   },
   unit: { ...text.caption, fontSize: 10.5, color: palette.inkLow },
 
-  emptyWell: { padding: 14 },
+  linkCard: { paddingHorizontal: 14 },
   helper: { ...text.caption, fontSize: 11, color: palette.inkLow, marginTop: 14 },
 
   note: {

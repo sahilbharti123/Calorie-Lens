@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  aliasesForName,
   learnableFrom,
   learnableName,
   parseFitnessCommand,
@@ -82,4 +83,40 @@ test('an entry that came from a saved food is not re-learned', () => {
     sourceLabel: 'Your own figure',
   };
   assert.equal(learnableFrom('I had undhiyu', fromSaved), null);
+});
+
+test('renaming regenerates what the app listens for', async () => {
+  // The derived name is only as good as the dictation, so a rename has to
+  // change matching too — otherwise the corrected food is still findable only
+  // under the garbled name.
+  const garbled = learnableName('I had one 500 ML of whole garden beer. 500ml hoegarden beer');
+  assert.ok(garbled);
+  assert.ok(garbled.aliases.includes('hoegarden'), 'the garbled word is what it listens for');
+
+  const renamed = aliasesForName('Hoegaarden');
+  assert.deepEqual(renamed, ['hoegaarden']);
+
+  const food = {
+    id: 'x',
+    name: 'Hoegaarden',
+    aliases: renamed,
+    calories: 240,
+    protein: 2,
+    carbs: 18,
+    fat: 0,
+    servingAmount: 500,
+    servingUnit: 'ml',
+    createdAt: 'now',
+    updatedAt: 'now',
+  };
+  const result = await parseFitnessCommand('I had 500 ml hoegaarden', undefined, { ...BASE, learned: [food] });
+  const meal = result.operations.find((operation) => operation.type === 'meal');
+  assert.equal(meal?.items[0]?.calories, 240, 'the renamed food is found under its new name');
+  assert.equal(meal?.items[0]?.name, 'Hoegaarden');
+});
+
+test('a one-word name keeps matching, and short filler is not an alias', () => {
+  assert.deepEqual(aliasesForName('Coke'), ['coke']);
+  // Two-word name: the phrase plus any word long enough to stand alone.
+  assert.deepEqual(aliasesForName('my kanji'), ['my kanji', 'kanji']);
 });

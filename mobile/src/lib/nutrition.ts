@@ -278,6 +278,19 @@ const NAME_STOPWORDS = new Set([
  * next time. Amounts, calorie figures and filler are stripped: the amount is
  * this serving, not part of the food's identity.
  */
+/**
+ * The phrases that should match a food with this name. Kept separate from
+ * `learnableName` so a rename regenerates matching by the same rule that
+ * created it — otherwise a corrected name would still be found only under the
+ * garbled one.
+ */
+export function aliasesForName(name: string) {
+  const words = name.toLowerCase().split(/\s+/).filter(Boolean);
+  const cleaned = words.join(' ').trim();
+  if (!cleaned) return [];
+  return [...new Set([cleaned, ...words.filter((word) => word.length >= 4)])];
+}
+
 export function learnableName(transcript: string) {
   const cleaned = transcript
     .toLowerCase()
@@ -293,10 +306,7 @@ export function learnableName(transcript: string) {
   const unique = [...new Set(words)];
   const name = unique.join(' ').trim();
   if (!name) return null;
-  // Distinctive single words make the food findable when it is said differently
-  // next time; short ones are too likely to collide with something else.
-  const aliases = [...new Set([name, ...unique.filter((word) => word.length >= 4)])];
-  return { name, aliases };
+  return { name, aliases: aliasesForName(name) };
 }
 
 /** The label-calories entry that was just logged, ready to be remembered. */
