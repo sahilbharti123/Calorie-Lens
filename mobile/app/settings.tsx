@@ -15,11 +15,14 @@ import { Glyph } from '@/src/components/glyph';
 import {
   Card,
   CountUp,
+  GhostButton,
   GlassFooter,
+  ListRow,
   PrimaryButton,
   Reveal,
   Screen,
   SectionTitle,
+  Well,
 } from '@/src/components/ui';
 import { useApp } from '@/src/store/app-store';
 import { targetWeightError } from '@/src/lib/weight';
@@ -28,7 +31,7 @@ import type { Goals } from '@/src/types';
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { data, savePersonalization, updateGoals } = useApp();
+  const { data, forgetFood, savePersonalization, updateGoals } = useApp();
   const currentWeight = data.weights.at(-1)?.kg ?? data.profile.weightKg;
   const [values, setValues] = useState<Record<keyof Goals, string>>({
     calories: String(data.goals.calories),
@@ -162,8 +165,51 @@ export default function SettingsScreen() {
             </Card>
           </Reveal>
 
-          {/* ---------- Daily goals ---------- */}
+          {/* ---------- Foods the app has been taught ----------
+              Anything the app learns has to be visible and removable. A figure
+              it picked up from one entry would otherwise be applied to every
+              future entry with no way to see it, let alone correct it. */}
           <Reveal index={2}>
+            <SectionTitle
+              aside={data.learnedFoods.length ? `${data.learnedFoods.length} saved` : undefined}
+              title="Foods you've taught"
+            />
+            <Card padded={!data.learnedFoods.length}>
+              {data.learnedFoods.length ? data.learnedFoods.map((food, index) => (
+                <ListRow
+                  detail={`${food.calories.toLocaleString()} kcal${
+                    food.servingAmount && food.servingUnit
+                      ? ` per ${food.servingAmount} ${food.servingUnit}`
+                      : ''
+                  }`}
+                  icon="bowl"
+                  key={food.id}
+                  last={index === data.learnedFoods.length - 1}
+                  right={(
+                    <GhostButton
+                      compact
+                      icon="trash"
+                      label="Forget"
+                      onPress={() => forgetFood(food.id)}
+                      tone="danger"
+                    />
+                  )}
+                  title={food.name}
+                />
+              )) : (
+                <Well style={styles.emptyWell}>
+                  <Text style={styles.helper}>
+                    Nothing yet. When the app meets a food it does not recognise and you give it
+                    the calories, it saves the figure here and uses it next time instead of
+                    asking again.
+                  </Text>
+                </Well>
+              )}
+            </Card>
+          </Reveal>
+
+          {/* ---------- Daily goals ---------- */}
+          <Reveal index={3}>
             <SectionTitle title="Daily goals" />
             <Card>
               <View style={styles.grid}>
@@ -219,7 +265,7 @@ export default function SettingsScreen() {
             </Card>
           </Reveal>
 
-          <Reveal index={3}>
+          <Reveal index={4}>
             <Text style={styles.note}>
               Food and exercise values remain estimates. Vigorly shows the source and range before saving.
             </Text>
@@ -310,6 +356,7 @@ const styles = StyleSheet.create({
   },
   unit: { ...text.caption, fontSize: 10.5, color: palette.inkLow },
 
+  emptyWell: { padding: 14 },
   helper: { ...text.caption, fontSize: 11, color: palette.inkLow, marginTop: 14 },
 
   note: {

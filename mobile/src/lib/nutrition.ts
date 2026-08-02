@@ -4,6 +4,7 @@ import { readSession } from '@/src/lib/session';
 import { parseWeightInput } from '@/src/lib/weight';
 import type {
   ClarificationAnswer,
+  LearnedFood,
   ClarificationTarget,
   EstimationContext,
   LogOperation,
@@ -249,6 +250,9 @@ function normalizeAnswerUnit(raw: string) {
 
 const UNKNOWN_FOOD_MARK = 'verified reference';
 
+/** Marks an entry whose number the user typed, and which can be remembered. */
+const LABEL_SOURCE = 'Food label supplied by user';
+
 /**
  * Words that mean "this is food". Word-anchored on purpose: an unanchored
  * `ate` matches "w-ate-r" and "moder-ate", which sent every glass of water and
@@ -257,6 +261,122 @@ const UNKNOWN_FOOD_MARK = 'verified reference';
 const MEAL_WORDS = /\b(?:ate|eat|eating|had|having|breakfast|lunch|dinner|snack|khaya|khayi|khana)\b/;
 
 const WATER_WORDS = /\b(?:water|paani|pani)\b/;
+
+/* ------------------------------------------------------------------ *
+ * Foods the user taught us
+ * ------------------------------------------------------------------ */
+
+/** Words too generic to identify a food on their own. */
+const NAME_STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'of', 'with', 'some', 'my', 'had', 'ate', 'drank',
+  'was', 'is', 'for', 'from', 'label', 'kcal', 'calories', 'calorie', 'today',
+  'one', 'two', 'three', 'flavoured', 'flavored', 'plate', 'bowl', 'glass',
+]);
+
+/**
+ * Turns what the user said into a name and the phrases that should match it
+ * next time. Amounts, calorie figures and filler are stripped: the amount is
+ * this serving, not part of the food's identity.
+ */
+export function learnableName(transcript: string) {
+  const cleaned = transcript
+    .toLowerCase()
+    .replace(/\d+(?:\.\d+)?\s*(?:kcal|calories?)/g, ' ')
+    .replace(/\bfrom (?:the )?label\b/g, ' ')
+    .replace(/\d+(?:\.\d+)?\s*(?:kg|g|grams?|ml|l|litres?|liters?|bowls?|cups?|glass(?:es)?|pieces?|slices?)\b/g, ' ')
+    .replace(/\d+(?:\.\d+)?/g, ' ')
+    .replace(/[^a-z\s'-]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  const words = cleaned.filter((word) => !NAME_STOPWORDS.has(word));
+  // Repeated dictation ("beer ... beer") should not become a repeated name.
+  const unique = [...new Set(words)];
+  const name = unique.join(' ').trim();
+  if (!name) return null;
+  // Distinctive single words make the food findable when it is said differently
+  // next time; short ones are too likely to collide with something else.
+  const aliases = [...new Set([name, ...unique.filter((word) => word.length >= 4)])];
+  return { name, aliases };
+}
+
+/** The label-calories entry that was just logged, ready to be remembered. */
+export function learnableFrom(
+  transcript: string,
+  item: Pick<MealItem, 'calories' | 'protein' | 'carbs' | 'fat' | 'sourceLabel'>,
+): Omit<LearnedFood, 'id' | 'createdAt' | 'updatedAt'> | null {
+  // Only a figure the user supplied. An entry that already came from a saved
+  // food must not be re-learned, or the name drifts a little every time.
+  if (item.sourceLabel !== LABEL_SOURCE) return null;
+  const named = learnableName(transcript);
+  if (!named) return null;
+  const lowered = transcript.toLowerCase();
+  const serving = lowered.match(new RegExp(`(${NUMBER})\\s*(${UNITS})\\b`));
+  return {
+    name: named.name,
+    aliases: named.aliases,
+    calories: item.calories,
+    protein: item.protein,
+    carbs: item.carbs,
+    fat: item.fat,
+    servingAmount: serving ? numberValue(serving[1]) : undefined,
+    servingUnit: serving ? normalizeUnit(serving[2], {} as FoodReference) : undefined,
+  };
+}
+
+/** The learned food this text refers to, longest match first. */
+function learnedMatch(text: string, learned: LearnedFood[] = []) {
+  let best: { food: LearnedFood; alias: string } | undefined;
+  for (const food of learned) {
+    for (const alias of food.aliases) {
+      if (!new RegExp(`\\b${escapeRegex(alias)}s?\\b`).test(text)) continue;
+      if (!best || alias.length > best.alias.length) best = { food, alias };
+    }
+  }
+  return best;
+}
+
+/**
+ * Scales a taught figure to the amount just said. With one verified data point
+ * linear scaling is the only defensible move, and the range widens because the
+ * further you get from the amount that was actually checked, the less the
+ * single figure tells you.
+ */
+function estimateLearned(
+  food: LearnedFood,
+  text: string,
+  alias: string,
+): Omit<MealItem, 'id' | 'slot' | 'loggedAt'> {
+  const said = quantityNear(text, alias, { pieceG: 1 } as FoodReference, true);
+  const sameUnit = Boolean(
+    said.amount && food.servingAmount && food.servingUnit && said.unit === food.servingUnit,
+  );
+  const factor = sameUnit ? said.amount / food.servingAmount! : 1;
+  const scaled = (value: number) => Math.round(value * factor * 10) / 10;
+  const serving = food.servingAmount && food.servingUnit
+    ? `${food.servingAmount} ${food.servingUnit}`
+    : 'the amount you saved';
+  const label = sameUnit && factor !== 1
+    ? `${said.amount} ${said.unit} · scaled from ${serving}`
+    : serving;
+  return {
+    name: food.name,
+    quantity: label,
+    calories: Math.round(food.calories * factor),
+    calorieLow: Math.round(food.calories * factor * 0.95),
+    calorieHigh: Math.round(food.calories * factor * 1.05),
+    protein: scaled(food.protein),
+    carbs: scaled(food.carbs),
+    fat: scaled(food.fat),
+    source: 'label',
+    sourceLabel: 'Your own figure',
+    sourceId: `you saved ${food.calories} kcal for ${serving}`,
+    confidence: 'medium',
+    basis: `${food.calories} kcal for ${serving}, as you recorded it`,
+    assumptions: sameUnit && factor !== 1
+      ? ['scaled in proportion from the amount you checked']
+      : [],
+  };
+}
 
 export function inferMealSlot(text = ''): MealSlot {
   const lowered = text.toLowerCase();
@@ -542,6 +662,10 @@ export function parseCommandLocally(
   if (workout && !('type' in workout)) return workout;
   if (workout) operations.push(workout);
 
+  // A food the user taught us wins outright: their own verified figure beats
+  // both a generic USDA record and a category estimate.
+  const taught = learnedMatch(lowered, context.learned);
+
   // Match foods, then keep only the most specific alias when one match's
   // alias is contained in another (e.g. "brown rice" beats "rice",
   // "egg white" beats "egg", "peanut butter" beats "butter").
@@ -557,9 +681,17 @@ export function parseCommandLocally(
   ));
   const hasExplicitOil = matches.some(({ food }) => food.name === 'Olive oil');
 
-  const looksLikeMeal = MEAL_WORDS.test(lowered) || matches.length > 0;
+  const looksLikeMeal = MEAL_WORDS.test(lowered) || matches.length > 0 || Boolean(taught);
   if (looksLikeMeal) {
-    if (!matches.length) {
+    if (taught) {
+      operations.push({
+        type: 'meal',
+        action: 'add',
+        slot: preferredSlot ?? inferMealSlot(lowered),
+        description: text.trim(),
+        items: [estimateLearned(taught.food, lowered, taught.alias)],
+      });
+    } else if (!matches.length) {
       const declaredCalories = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*(?:kcal|calories?)/);
       if (declaredCalories) {
         operations.push({
@@ -577,7 +709,7 @@ export function parseCommandLocally(
             carbs: 0,
             fat: 0,
             source: 'label',
-            sourceLabel: 'Food label supplied by user',
+            sourceLabel: LABEL_SOURCE,
             sourceId: 'declared serving',
             confidence: 'medium',
             basis: `${declaredCalories} kcal declared for the amount consumed`,
@@ -594,7 +726,7 @@ export function parseCommandLocally(
       }
     }
     const items: Omit<MealItem, 'id' | 'slot' | 'loggedAt'>[] = [];
-    for (const { food, alias } of matches) {
+    for (const { food, alias } of taught ? [] : matches) {
       const quantity = resolved?.amounts.get(alias)
         ?? quantityNear(lowered, alias, food, matches.length === 1);
       const estimate = estimateFood(food, quantity, lowered, context, alias, hasExplicitOil, resolved);

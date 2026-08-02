@@ -40,7 +40,12 @@ import {
   Tap,
   Well,
 } from '@/src/components/ui';
-import { advanceClarification, openQuestion, parseFitnessCommand } from '@/src/lib/nutrition';
+import {
+  advanceClarification,
+  learnableFrom,
+  openQuestion,
+  parseFitnessCommand,
+} from '@/src/lib/nutrition';
 import { ensureSpeechPermission, speechAvailable, useDictation } from '@/src/lib/speech';
 import { slotLabels } from '@/src/lib/stats';
 import { useApp } from '@/src/store/app-store';
@@ -103,7 +108,7 @@ const HEADER: Record<Stage, { eyebrow: string; title: string }> = {
 export default function QuickLogScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ slot?: MealSlot; prefill?: string }>();
-  const { applyOperations, data, updateEstimationProfile } = useApp();
+  const { applyOperations, data, learnFood, updateEstimationProfile } = useApp();
   const [draft, setText] = useState(params.prefill ?? '');
   const [showKeyboard, setShowKeyboard] = useState(Boolean(params.prefill));
   const [parsed, setParsed] = useState<ParsedCommand | null>(null);
@@ -121,7 +126,8 @@ export default function QuickLogScreen() {
     weightKg: data.weights.at(-1)?.kg,
     bowlMl: data.estimation.bowlMl,
     cupMl: data.estimation.cupMl || 200,
-  }), [data.estimation.bowlMl, data.estimation.cupMl, data.weights]);
+    learned: data.learnedFoods,
+  }), [data.estimation.bowlMl, data.estimation.cupMl, data.learnedFoods, data.weights]);
 
   useEffect(() => {
     setVoiceStatus(speechAvailable() ? VOICE_READY : VOICE_UNSUPPORTED);
@@ -244,6 +250,15 @@ export default function QuickLogScreen() {
   function confirm() {
     if (!parsed?.operations.length) return;
     applyOperations(parsed.operations);
+    // Remember any figure the user supplied, so the same food is recognised
+    // next time instead of asking for its label calories all over again.
+    for (const operation of parsed.operations) {
+      if (operation.type !== 'meal') continue;
+      for (const item of operation.items) {
+        const learnable = learnableFrom(parsed.transcript, item);
+        if (learnable) learnFood(learnable);
+      }
+    }
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     router.dismiss();
   }

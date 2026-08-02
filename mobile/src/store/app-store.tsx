@@ -28,6 +28,7 @@ import { initialTraining, mergeTraining, normalizeTraining } from '@/src/lib/tra
 import { useAuth } from '@/src/store/auth-store';
 import { palette } from '@/src/theme';
 import type {
+  LearnedFood,
   AppData,
   CoachMemory,
   CoachMessage,
@@ -102,6 +103,8 @@ export const initialData: AppData = {
   deletedWorkoutIds: [],
   deletedSavedMealIds: [],
   savedMeals: [],
+  learnedFoods: [],
+  deletedLearnedFoodIds: [],
   training: initialTraining,
 };
 
@@ -126,6 +129,8 @@ export function normalizeData(saved?: Partial<AppData> | null): AppData {
     deletedWorkoutIds: saved?.deletedWorkoutIds ?? [],
     deletedSavedMealIds: saved?.deletedSavedMealIds ?? [],
     savedMeals: saved?.savedMeals ?? [],
+    learnedFoods: saved?.learnedFoods ?? [],
+    deletedLearnedFoodIds: saved?.deletedLearnedFoodIds ?? [],
     healthSync: saved?.healthSync ?? (saved?.lastHealthSync ? {
       status: 'current',
       lastAttemptAt: saved.lastHealthSync,
@@ -288,6 +293,20 @@ export function mergeAppData(localInput: Partial<AppData>, remoteInput: Partial<
     deletedWorkoutIds,
     deletedSavedMealIds,
     savedMeals: mergeSavedMeals(local.savedMeals, remote.savedMeals, deletedSavedMealIds),
+    // Newest edit wins per food, and anything deleted on either device stays
+    // deleted — the same rule saved meals use.
+    learnedFoods: (() => {
+      const gone = new Set([...local.deletedLearnedFoodIds, ...remote.deletedLearnedFoodIds]);
+      const byId = new Map<string, LearnedFood>();
+      for (const food of [...remote.learnedFoods, ...local.learnedFoods]) {
+        const seen = byId.get(food.id);
+        if (!seen || food.updatedAt > seen.updatedAt) byId.set(food.id, food);
+      }
+      return [...byId.values()].filter((food) => !gone.has(food.id));
+    })(),
+    deletedLearnedFoodIds: [...new Set([
+      ...local.deletedLearnedFoodIds, ...remote.deletedLearnedFoodIds,
+    ])].slice(-500),
     training: mergeTraining(local.training, remote.training),
     lastHealthSync: [local.lastHealthSync, remote.lastHealthSync]
       .filter((value): value is string => Boolean(value))
@@ -314,6 +333,9 @@ type AppContextValue = {
   removeWorkout: (id: string) => void;
   saveMeal: (group: MealGroup) => void;
   removeSavedMeal: (id: string) => void;
+  learnFood: (food: Omit<LearnedFood, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  updateLearnedFood: (id: string, patch: Partial<LearnedFood>) => void;
+  forgetFood: (id: string) => void;
   applyHealthSnapshot: (snapshot: HealthSnapshot) => void;
   reportHealthSyncError: (message: string) => void;
   updateGoals: (goals: Partial<Goals>) => void;
@@ -621,6 +643,53 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     }));
   }, []);
 
+  /**
+   * Saves a food the user gave a figure for, or refreshes the one already
+   * saved under the same name — teaching the same food twice should correct it,
+   * not create a duplicate that shadows the first.
+   */
+  const learnFood = useCallback((food: Omit<LearnedFood, 'id' | 'createdAt' | 'updatedAt'>) => {
+    const now = new Date().toISOString();
+    setData((current) => {
+      const existing = current.learnedFoods.find(
+        (saved) => saved.name.toLowerCase() === food.name.toLowerCase(),
+      );
+      if (existing) {
+        return {
+          ...current,
+          learnedFoods: current.learnedFoods.map((saved) => (
+            saved.id === existing.id ? { ...saved, ...food, updatedAt: now } : saved
+          )),
+        };
+      }
+      return {
+        ...current,
+        learnedFoods: [
+          { ...food, id: id('learned-food'), createdAt: now, updatedAt: now },
+          ...current.learnedFoods,
+        ].slice(0, 500),
+      };
+    });
+  }, []);
+
+  const updateLearnedFood = useCallback((foodId: string, patch: Partial<LearnedFood>) => {
+    const now = new Date().toISOString();
+    setData((current) => ({
+      ...current,
+      learnedFoods: current.learnedFoods.map((food) => (
+        food.id === foodId ? { ...food, ...patch, updatedAt: now } : food
+      )),
+    }));
+  }, []);
+
+  const forgetFood = useCallback((foodId: string) => {
+    setData((current) => ({
+      ...current,
+      learnedFoods: current.learnedFoods.filter((food) => food.id !== foodId),
+      deletedLearnedFoodIds: [...new Set([...current.deletedLearnedFoodIds, foodId])].slice(-500),
+    }));
+  }, []);
+
   const applyHealthSnapshot = useCallback((snapshot: HealthSnapshot) => {
     updateToday((day) => ({
       ...day,
@@ -778,6 +847,9 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     removeWorkout,
     saveMeal,
     removeSavedMeal,
+    learnFood,
+    updateLearnedFood,
+    forgetFood,
     applyHealthSnapshot,
     reportHealthSyncError,
     updateGoals,
@@ -802,6 +874,9 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     removeWorkout,
     saveMeal,
     removeSavedMeal,
+    learnFood,
+    updateLearnedFood,
+    forgetFood,
     applyHealthSnapshot,
     reportHealthSyncError,
     updateGoals,

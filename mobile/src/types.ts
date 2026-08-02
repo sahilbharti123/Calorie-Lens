@@ -4,6 +4,39 @@ export type EstimationContext = {
   weightKg?: number;
   bowlMl?: number;
   cupMl: number;
+  /** Foods this user has taught the app; checked before the shipped catalog. */
+  learned?: LearnedFood[];
+};
+
+/**
+ * A food the user told the app about once.
+ *
+ * The shipped catalog cannot contain a particular Belgian wheat beer or the
+ * dish someone's mother makes, and asking for the same label calories every
+ * single time is how an app teaches people to stop using it. Once a figure has
+ * been given, it is kept and reused.
+ *
+ * The figure is stored exactly as it was given — "500 ml was 215 kcal" — rather
+ * than normalised to 100 g, because the user verified *that serving*, and a
+ * per-100 conversion would silently invent a density the label never stated.
+ * A different amount later is scaled from it linearly, which is the only honest
+ * thing to do with a single data point.
+ */
+export type LearnedFood = {
+  id: string;
+  /** What the user calls it. Shown on the entry and editable in settings. */
+  name: string;
+  /** Lowercased phrases that should match this food. */
+  aliases: string[];
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  /** The amount that `calories` describes, e.g. 500 with unit 'ml'. */
+  servingAmount?: number;
+  servingUnit?: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type MealItem = {
@@ -245,6 +278,8 @@ export type AppData = {
   deletedWorkoutIds: string[];
   deletedSavedMealIds: string[];
   savedMeals: SavedMeal[];
+  learnedFoods: LearnedFood[];
+  deletedLearnedFoodIds: string[];
   training: TrainingData;
   lastHealthSync?: string;
   healthSync?: HealthSyncRecord;
