@@ -157,7 +157,7 @@ const CASES = [
   },
   {
     name: 'a food the catalog does not know, resolved by label calories',
-    say: 'I had shahi tukda',
+    say: 'I had a bowl of undhiyu',
     replies: ['350 kcal'],
     check: (r) => [
       [ops(r).join() === 'meal', `expected a meal, got ${ops(r).join() || 'nothing'}`],
@@ -290,6 +290,55 @@ const CASES = [
     check: (r) => [
       [!ops(r).includes('water'), 'milk should not be counted as water'],
       [ops(r).includes('meal'), `expected a meal, got ${ops(r).join() || 'nothing'}`],
+    ],
+  },
+  {
+    // Sahil's beer: the recogniser produced two sentences and put three words
+    // between "500ml" and "beer". A stated unit is allowed to reach across
+    // those, because the sentence names exactly one food.
+    name: 'a drink whose amount is separated from its name',
+    say: 'I had one 500 ML of whole garden beer. 500ml hoegarden flavoured beer',
+    check: (r) => [
+      [ops(r).join() === 'meal', `expected a meal, got ${ops(r).join() || 'nothing'}`],
+      [kcal(r) === 215, `500 ml of beer should be 215 kcal, got ${kcal(r)}`],
+      [meal(r)?.items[0]?.source === 'typical', 'beer is a typical value, not a USDA record'],
+    ],
+  },
+  {
+    name: 'a typical value says so, and carries a wide range',
+    say: '2 slices of pizza',
+    check: (r) => {
+      const item = meal(r)?.items[0];
+      const spread = item ? (item.calorieHigh - item.calorieLow) / item.calories : 0;
+      return [
+        [item?.sourceLabel === 'Typical composition', `labelled ${item?.sourceLabel}`],
+        [item?.sourceId?.includes('category') ?? false, 'should not claim an FDC record'],
+        [item?.confidence === 'low', `a category figure is low confidence, got ${item?.confidence}`],
+        [spread > 0.8, `expected a wide range, got ${Math.round(spread * 100)}% of the midpoint`],
+        [(item?.assumptions ?? []).some((a) => a.includes('typical figure')), 'should state the assumption'],
+      ];
+    },
+  },
+  {
+    name: 'a verified record still says USDA and stays tight',
+    say: '150 g paneer',
+    check: (r) => {
+      const item = meal(r)?.items[0];
+      const spread = item ? (item.calorieHigh - item.calorieLow) / item.calories : 1;
+      return [
+        [item?.source === 'usda', `expected usda, got ${item?.source}`],
+        [item?.sourceId?.startsWith('FDC ') ?? false, `expected an FDC id, got ${item?.sourceId}`],
+        [spread < 0.1, `a weighed USDA food should be tight, got ${Math.round(spread * 100)}%`],
+      ];
+    },
+  },
+  {
+    name: 'a composite dish beats its parts',
+    say: '1 bowl butter chicken',
+    context: { bowlMl: 250 },
+    check: (r) => [
+      [meal(r)?.items.length === 1, `expected 1 item, got ${meal(r)?.items.length}`],
+      [meal(r)?.items[0]?.name === 'Butter chicken', `matched ${meal(r)?.items[0]?.name}`],
     ],
   },
   {

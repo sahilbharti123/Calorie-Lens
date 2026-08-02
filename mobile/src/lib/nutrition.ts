@@ -47,18 +47,42 @@ function normalizeUnit(raw: string | undefined, reference: FoodReference) {
   return unit;
 }
 
-function quantityNear(text: string, alias: string, reference: FoodReference): Quantity {
-  const units = 'kg|g|grams?|ml|l|litres?|liters?|bowls?|katoris?|cups?|glass(?:es)?|pieces?|slices?|tbsp|tsp';
-  const number = '\\d+(?:\\.\\d+)?|a|an|one|two|three|four|five|six|half|quarter';
+const UNITS = 'kg|g|grams?|ml|l|litres?|liters?|bowls?|katoris?|cups?|glass(?:es)?|pieces?|slices?|tbsp|tsp';
+const NUMBER = '\\d+(?:\\.\\d+)?|a|an|one|two|three|four|five|six|half|quarter';
+
+/**
+ * Finds the amount that belongs to one food.
+ *
+ * `loose` widens the search to allow a few words between the amount and the
+ * food it describes, which is how people actually speak — "500 ml hoegaarden
+ * flavoured beer" puts two words in the way. It is only safe when the sentence
+ * mentions a single food, and only when a unit was stated: with two foods "2
+ * rotis and rajma" would otherwise give the rajma a quantity of 2, and without
+ * a unit "a plate of momos" would read as one momo.
+ */
+function quantityNear(
+  text: string,
+  alias: string,
+  reference: FoodReference,
+  loose = false,
+): Quantity {
+  const food = escapeRegex(alias);
   const explicitVolume = text.match(
-    new RegExp(`(\\d+(?:\\.\\d+)?)\\s*ml\\s*(?:bowl|katori|glass)?(?:\\s+of)?\\s*${escapeRegex(alias)}s?\\b`),
+    new RegExp(`(\\d+(?:\\.\\d+)?)\\s*ml\\s*(?:bowl|katori|glass)?(?:\\s+of)?\\s*${food}s?\\b`),
   );
   if (explicitVolume) return { amount: numberValue(explicitVolume[1]), unit: 'ml' };
-  const before = text.match(new RegExp(`(${number})\\s*(${units})?\\s*(?:of\\s+)?${escapeRegex(alias)}s?\\b`));
-  const after = text.match(new RegExp(`${escapeRegex(alias)}s?\\s*[:,-]?\\s*(${number})\\s*(${units})\\b`));
+  const before = text.match(new RegExp(`(${NUMBER})\\s*(${UNITS})?\\s*(?:of\\s+)?${food}s?\\b`));
+  const after = text.match(new RegExp(`${food}s?\\s*[:,-]?\\s*(${NUMBER})\\s*(${UNITS})\\b`));
   const match = before ?? after;
-  if (!match) return { amount: 0, unit: 'unknown' };
-  return { amount: numberValue(match[1]), unit: normalizeUnit(match[2], reference) };
+  if (match) return { amount: numberValue(match[1]), unit: normalizeUnit(match[2], reference) };
+
+  if (loose) {
+    const spaced = text.match(
+      new RegExp(`(${NUMBER})\\s*(${UNITS})\\b(?:\\s+[\\w'-]+){0,4}?\\s+${food}s?\\b`),
+    );
+    if (spaced) return { amount: numberValue(spaced[1]), unit: normalizeUnit(spaced[2], reference) };
+  }
+  return { amount: 0, unit: 'unknown' };
 }
 
 function firstNumber(text: string, pattern: RegExp) {
@@ -226,13 +250,6 @@ function normalizeAnswerUnit(raw: string) {
 const UNKNOWN_FOOD_MARK = 'verified reference';
 
 /**
- * Composite dishes whose parts would otherwise partially match the catalog
- * (e.g. "butter chicken" → butter + chicken breast). These go to the AI
- * service or the label-calories path instead of a wrong local match.
- */
-const COMPLEX_DISHES = /butter chicken|paneer tikka|palak paneer|shahi paneer|kadai paneer|tikka masala|fried rice|noodles?|maggi|pizza|burger|pasta|sandwich|milkshake|smoothie|pav bhaji|chole bhature|masala dosa/;
-
-/**
  * Words that mean "this is food". Word-anchored on purpose: an unanchored
  * `ate` matches "w-ate-r" and "moder-ate", which sent every glass of water and
  * every moderate workout down the unknown-food path and lost the entry.
@@ -269,6 +286,11 @@ function foodFor(alias: string) {
  * invites an answer the catalog cannot convert — and a question the user
  * cannot get past.
  */
+/** "Dark chocolate (70%)" is a catalog name; "dark chocolate" is a sentence. */
+function spoken(name: string) {
+  return name.replace(/\s*\([^)]*\)/g, '').trim().toLowerCase();
+}
+
 function amountQuestion(food: FoodReference, alias: string): Missing {
   const countable = Boolean(food.pieceG);
   const pourable = Boolean(food.density);
@@ -280,8 +302,8 @@ function amountQuestion(food: FoodReference, alias: string): Missing {
         ? ['1 bowl', '1 cup', '100 g', '150 g']
         : ['50 g', '100 g', '150 g', '200 g'];
   const question = countable && !pourable
-    ? `How many ${food.name.toLowerCase()} did you have?`
-    : `How much ${food.name.toLowerCase()} did you have?`;
+    ? `How many ${spoken(food.name)} did you have?`
+    : `How much ${spoken(food.name)} did you have?`;
   return { question, suggestions, target: { kind: 'foodAmount', alias, foodName: food.name } };
 }
 
@@ -358,9 +380,13 @@ function estimateFood(
   const measured = gramsFor(quantity, food, context, alias, resolved);
   if ('question' in measured) return measured;
   const scale = measured.grams / 100;
+  // A typical-composition entry is uncertain in two independent ways: how much
+  // was eaten, and what a portion of that food actually contains. Only the
+  // first applies to a measured USDA record.
+  const spread = food.calorieVariance ?? 0;
   let calories = food.calories * scale;
-  let low = food.calories * measured.low / 100;
-  let high = food.calories * measured.high / 100;
+  let low = food.calories * measured.low / 100 * (1 - spread);
+  let high = food.calories * measured.high / 100 * (1 + spread);
   let fat = food.fat * scale;
   const assumptions: string[] = [];
   const isCurryBase = /rajma|dal|daal|chole|chana|curry/.test(text) && /rajma|dal|daal|chole|chana|chickpea|kidney|lentil/i.test(food.name + food.aliases.join(' '));
@@ -373,7 +399,13 @@ function estimateFood(
     assumptions.push('home curry range assumes ½–2 tsp oil in this portion');
   }
   const exactGrams = quantity.unit === 'g' || quantity.unit === 'kg';
-  const confidence = measured.label.includes('bowl') || assumptions.length ? 'low' : exactGrams ? 'high' : 'medium';
+  const typical = food.tier === 'typical';
+  if (typical) {
+    assumptions.push('typical figure for this kind of food, not a measured record');
+  }
+  const confidence = typical || measured.label.includes('bowl') || assumptions.length
+    ? 'low'
+    : exactGrams ? 'high' : 'medium';
   return {
     name: food.name,
     quantity: measured.label,
@@ -383,9 +415,9 @@ function estimateFood(
     protein: Math.round(food.protein * scale * 10) / 10,
     carbs: Math.round(food.carbs * scale * 10) / 10,
     fat: Math.round(fat * 10) / 10,
-    source: 'usda',
-    sourceLabel: 'USDA FoodData Central',
-    sourceId: `FDC ${food.fdcId}`,
+    source: typical ? 'typical' : 'usda',
+    sourceLabel: typical ? 'Typical composition' : 'USDA FoodData Central',
+    sourceId: typical ? 'category reference · wide range' : `FDC ${food.fdcId}`,
     confidence,
     basis: `${measured.label} · ${food.calories} kcal/100 g${assumptions[0] ? ` · ${assumptions[0]}` : ''}`,
     assumptions,
@@ -513,8 +545,11 @@ export function parseCommandLocally(
   // Match foods, then keep only the most specific alias when one match's
   // alias is contained in another (e.g. "brown rice" beats "rice",
   // "egg white" beats "egg", "peanut butter" beats "butter").
-  const complexDish = COMPLEX_DISHES.test(lowered);
-  const rawMatches = complexDish ? [] : foods
+  // Composite dishes used to be blocked from matching, because "butter chicken"
+  // would find butter and chicken breast separately. They are catalog entries
+  // in their own right now, and the longest-alias rule below keeps the parts
+  // from winning against the whole.
+  const rawMatches = foods
     .map((food) => ({ food, alias: food.aliases.find((alias) => new RegExp(`\\b${escapeRegex(alias)}s?\\b`).test(lowered)) }))
     .filter((match): match is { food: FoodReference; alias: string } => Boolean(match.alias));
   const matches = rawMatches.filter(({ alias }) => !rawMatches.some(
@@ -522,7 +557,7 @@ export function parseCommandLocally(
   ));
   const hasExplicitOil = matches.some(({ food }) => food.name === 'Olive oil');
 
-  const looksLikeMeal = MEAL_WORDS.test(lowered) || matches.length > 0 || complexDish;
+  const looksLikeMeal = MEAL_WORDS.test(lowered) || matches.length > 0;
   if (looksLikeMeal) {
     if (!matches.length) {
       const declaredCalories = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*(?:kcal|calories?)/);
@@ -560,7 +595,8 @@ export function parseCommandLocally(
     }
     const items: Omit<MealItem, 'id' | 'slot' | 'loggedAt'>[] = [];
     for (const { food, alias } of matches) {
-      const quantity = resolved?.amounts.get(alias) ?? quantityNear(lowered, alias, food);
+      const quantity = resolved?.amounts.get(alias)
+        ?? quantityNear(lowered, alias, food, matches.length === 1);
       const estimate = estimateFood(food, quantity, lowered, context, alias, hasExplicitOil, resolved);
       if ('question' in estimate) {
         return clarification(text, estimate.question, estimate.suggestions, estimate.target);
@@ -787,6 +823,9 @@ function rejection(target: ClarificationTarget) {
     const food = foodFor(target.alias);
     if (food && food.pieceG && !food.density) {
       return `${food.name} is counted in pieces — how many did you have, or how many grams?`;
+    }
+    if (food?.density && !food.pieceG) {
+      return `I need an amount for the ${spoken(food.name)}, like “250 ml”, “1 glass” or “150 g”.`;
     }
     return 'I need an amount, like “1 bowl”, “2 pieces” or “150 g”.';
   }

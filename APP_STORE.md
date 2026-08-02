@@ -67,10 +67,10 @@ demonstration, which is slightly weaker than the recommended line.
 **Alternate B**
 
 ```
-USDA-sourced food and gym log
+Ranges, not false precision
 ```
 
-(29/30) — Most literal and most keyword-dense. Reads a little dry.
+(27/30) — Says the differentiator most plainly. The former "USDA-sourced" line was dropped: staples are USDA, but the wider catalog is typical-composition, so the claim would not hold for every entry.
 
 ### Pick them as a pair
 
@@ -92,7 +92,7 @@ line wastes the subtitle restating the category.
 ## 2. Promotional text (170 characters max)
 
 ```
-Most trackers show one confident number. Vigorly shows a range, the assumptions behind it, and the USDA record it came from. Works offline, no account needed.
+Most trackers show one confident number. Vigorly shows a range, the assumptions behind it, and where the figure came from. Works offline, no account needed.
 ```
 
 (163/170) — Promotional text can be changed any time without submitting a new
@@ -107,7 +107,7 @@ Paste exactly as written. Current length: **3393/4000**.
 ```
 Ask most calorie apps about one bowl of dal and you get a single confident number. That number is a guess in a lab coat. Vigorly shows you the range instead.
 
-Every estimate arrives with a midpoint, a plausible low to high range, the assumptions it made, a confidence label, and the source record behind it. Food numbers are calculated by a deterministic engine against reviewed USDA FoodData Central records, and each entry carries the FoodData Central ID it used. A language model is never allowed to invent a calorie value here. When the app does not recognize a food, it says so and asks you for a label or an ingredient list instead of reaching for a generic number.
+Every estimate arrives with a midpoint, a plausible low to high range, the assumptions it made, a confidence label, and the source behind it. Staple foods are calculated against reviewed USDA FoodData Central records and carry the FoodData Central ID they used. Everything else - a lager, a slice of pizza, a restaurant curry - uses an ordinary published figure for that kind of food, is labelled as exactly that, and is given a deliberately wide range, because a category is the thing that varies. You always know which of the two you are looking at. A language model is never allowed to invent a calorie value here, and when the app has no reference at all it says so and asks you for a label rather than reaching for a number.
 
 Exercise energy works the same way. Activities map to the 2024 Adult Compendium of Physical Activities, and the formula subtracts resting energy, so a session is credited with the energy it actually added rather than the calories you would have burned sitting still. The MET value, your body weight, and the duration used are printed on the entry.
 

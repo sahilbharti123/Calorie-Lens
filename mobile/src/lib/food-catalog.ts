@@ -1,14 +1,20 @@
 /**
- * Reviewed on-device food catalog.
+ * Reviewed on-device food catalog — the high-confidence tier.
  *
- * Every entry is a USDA FoodData Central record (SR Legacy or FNDDS survey
- * data) verified against the published per-100 g values; the FDC ID is shown
- * to the user as the source. Piece weights and densities are documented
- * portion assumptions with an explicit variance that widens the shown range.
+ * Every entry in `USDA_FOODS` below is a USDA FoodData Central record (SR
+ * Legacy or FNDDS survey data) verified against the published per-100 g values;
+ * the FDC ID is shown to the user as the source. Piece weights and densities
+ * are documented portion assumptions with an explicit variance that widens the
+ * shown range.
  *
- * The Python engine (calorie_engine/catalog.py) mirrors this list — keep the
- * two in sync when adding foods.
+ * `food-typical.ts` holds the second tier: ordinary published figures for a
+ * category, with a wide stated range and no FDC ID, for the very large number
+ * of foods USDA has no single record for. Those are never labelled as USDA.
+ *
+ * The Python engine (calorie_engine/catalog.py) mirrors the USDA list — keep
+ * the two in sync when adding foods.
  */
+import { TYPICAL_FOODS } from '@/src/lib/food-typical';
 
 export type FoodReference = {
   name: string;
@@ -17,14 +23,23 @@ export type FoodReference = {
   protein: number;
   carbs: number;
   fat: number;
-  fdcId: number;
+  /** Present only on verified USDA records. */
+  fdcId?: number;
+  /** 'usda' when omitted. Decides how the entry describes its own source. */
+  tier?: 'usda' | 'typical';
+  /**
+   * How far the per-100 g energy itself can vary for this food, on top of any
+   * portion uncertainty. A USDA record is a measured composition and needs
+   * none; "restaurant butter chicken" needs a lot.
+   */
+  calorieVariance?: number;
   pieceG?: number;
   pieceVariance?: number;
   density?: number;
   densityVariance?: number;
 };
 
-export const FOODS: FoodReference[] = [
+export const USDA_FOODS: FoodReference[] = [
   // ------------------------------------------------------- pulses & legumes
   { name: 'Cooked kidney beans', aliases: ['kidney beans', 'kidney bean', 'rajma'], calories: 127, protein: 8.67, carbs: 22.8, fat: 0.5, fdcId: 175194, density: 0.75, densityVariance: 0.18 },
   { name: 'Cooked lentils', aliases: ['lentils', 'lentil', 'dhal', 'daal', 'dal'], calories: 116, protein: 9.02, carbs: 20.1, fat: 0.38, fdcId: 172421, density: 0.75, densityVariance: 0.18 },
@@ -66,3 +81,9 @@ export const FOODS: FoodReference[] = [
   { name: 'Biryani with meat', aliases: ['chicken biryani', 'mutton biryani', 'biryani'], calories: 144, protein: 8.4, carbs: 12.1, fat: 6.8, fdcId: 2341916, density: 0.85, densityVariance: 0.18 },
   { name: 'Chicken curry', aliases: ['chicken curry', 'chicken gravy'], calories: 82, protein: 5.7, carbs: 6.7, fat: 3.9, fdcId: 2341861, density: 0.95, densityVariance: 0.15 },
 ];
+
+/**
+ * Verified records first: when a food appears in both tiers, the alias search
+ * finds the USDA entry, and the typical value is only ever a fallback.
+ */
+export const FOODS: FoodReference[] = [...USDA_FOODS, ...TYPICAL_FOODS];

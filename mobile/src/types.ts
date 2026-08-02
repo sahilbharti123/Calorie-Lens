@@ -23,7 +23,7 @@ export type MealItem = {
   assumptions?: string[];
   slot: MealSlot;
   loggedAt: string;
-  source: 'usda' | 'label' | 'ai' | 'local' | 'manual';
+  source: 'usda' | 'typical' | 'label' | 'ai' | 'local' | 'manual';
 };
 
 export type SavedMeal = {
