@@ -21,7 +21,12 @@ const AI_PARSING_ENABLED = process.env.EXPO_PUBLIC_ENABLE_AI_PARSING === '1';
 const foods = FOODS;
 
 const numberWords: Record<string, number> = {
-  a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, half: 0.5, quarter: 0.25,
+  a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
+  nine: 9, ten: 10, half: 0.5, quarter: 0.25,
+  // Vague counts people genuinely use. A couple is two; a few is three-ish.
+  couple: 2, few: 3, several: 3, dozen: 12,
+  // Hindi numbers, since the app is used in Hinglish.
+  ek: 1, do: 2, teen: 3, char: 4, paanch: 5, aadha: 0.5, adha: 0.5,
 };
 
 const GLASS_ML = 250;
@@ -34,7 +39,9 @@ function escapeRegex(value: string) {
 
 function numberValue(value?: string) {
   if (!value) return 0;
-  return numberWords[value] ?? Number.parseFloat(value);
+  // "a couple of", "half a" — strip the filler and read the count word.
+  const word = value.replace(/^an?\s+/, '').replace(/\s+(?:of|a)$/, '').trim();
+  return numberWords[word] ?? numberWords[value] ?? Number.parseFloat(value);
 }
 
 /**
@@ -73,7 +80,7 @@ function normalizeUnit(raw: string | undefined, reference: FoodReference) {
 }
 
 const UNITS = 'kgs?|kilos?|kilograms?|g|gms?|grams?|ml|millilit(?:re|er)s?|l|lit(?:re|er)s?|bowls?|katoris?|cups?|mugs?|glass(?:es)?|pieces?|slices?|rotis?|bottles?|cans?|pints?|pegs?|shots?|plates?|servings?|tbsp|tsp';
-const NUMBER = '\\d+(?:\\.\\d+)?|a|an|one|two|three|four|five|six|half|quarter';
+const NUMBER = '\\d+(?:\\.\\d+)?|a couple of|a couple|a few|half a|an|a|one|two|three|four|five|six|seven|eight|nine|ten|half|quarter|couple|few|several|dozen|ek|do|teen|char|paanch|aadha|adha';
 
 /**
  * Finds the amount that belongs to one food.
@@ -96,14 +103,17 @@ function quantityNear(
     new RegExp(`(\\d+(?:\\.\\d+)?)\\s*ml\\s*(?:bowl|katori|glass)?(?:\\s+of)?\\s*${food}s?\\b`),
   );
   if (explicitVolume) return { amount: numberValue(explicitVolume[1]), unit: 'ml' };
-  const before = text.match(new RegExp(`(${NUMBER})\\s*(${UNITS})?\\s*(?:of\\s+)?${food}s?\\b`));
-  const after = text.match(new RegExp(`${food}s?\\s*[:,-]?\\s*(${NUMBER})\\s*(${UNITS})\\b`));
+  // The number is word-anchored on both sides. Without a leading \b, the bare
+  // "a" alternative matched the final letter of "thod-a", so "thoda paneer"
+  // read as one unnameable unit of paneer and the parser asked how much.
+  const before = text.match(new RegExp(`\\b(${NUMBER})\\b\\s*(${UNITS})?\\s*(?:of\\s+)?${food}s?\\b`));
+  const after = text.match(new RegExp(`${food}s?\\s*[:,-]?\\s*\\b(${NUMBER})\\b\\s*(${UNITS})\\b`));
   const match = before ?? after;
   if (match) return { amount: numberValue(match[1]), unit: normalizeUnit(match[2], reference) };
 
   if (loose) {
     const spaced = text.match(
-      new RegExp(`(${NUMBER})\\s*(${UNITS})\\b(?:\\s+[\\w'-]+){0,4}?\\s+${food}s?\\b`),
+      new RegExp(`\\b(${NUMBER})\\b\\s*(${UNITS})\\b(?:\\s+[\\w'-]+){0,4}?\\s+${food}s?\\b`),
     );
     if (spaced) return { amount: numberValue(spaced[1]), unit: normalizeUnit(spaced[2], reference) };
   }
@@ -425,7 +435,34 @@ export function inferMealSlot(text = ''): MealSlot {
   return 'dinner';
 }
 
-type Measured = { grams: number; low: number; high: number; label: string };
+type Measured = { grams: number; low: number; high: number; label: string; assumed?: boolean };
+
+/**
+ * One usual helping of a food, in whatever unit that food is measured in.
+ *
+ * Used when the sentence names a food but no amount. Everything in the catalog
+ * can answer this, so the parser never has to stop and ask for a number it can
+ * reasonably assume — the assumption is stated on the entry instead.
+ */
+function defaultPortion(food: FoodReference, context: EstimationContext): Measured | null {
+  const spread = 0.35;
+  const measure = (grams: number, label: string): Measured => ({
+    grams,
+    low: grams * (1 - spread),
+    high: grams * (1 + spread),
+    label,
+  });
+  if (food.pieceG) return measure(food.pieceG, `1 × ${food.pieceG} g standard piece (assumed)`);
+  if (food.servingMl && food.density) {
+    return measure(food.servingMl * food.density, `1 serving, ${food.servingMl} ml (assumed)`);
+  }
+  if (food.density) {
+    const bowlMl = context.bowlMl ?? 200;
+    return measure(bowlMl * food.density, `1 × ${bowlMl} ml bowl (assumed)`);
+  }
+  // Nothing to scale by — a flat helping, deliberately wide.
+  return measure(100, '100 g helping (assumed)');
+}
 type Missing = { question: string; suggestions: string[]; target: ClarificationTarget };
 
 const VOLUME_UNITS = new Set(['bowl', 'cup', 'glass', 'ml', 'l', 'tbsp', 'tsp']);
@@ -470,7 +507,15 @@ function gramsFor(
 ): Measured | Missing {
   const amount = quantity.amount;
   const unit = quantity.unit;
-  if (!amount) return amountQuestion(food, alias);
+  if (!amount) {
+    // No amount said at all. "2 rotis and dal" means a normal helping of dal —
+    // and refusing to log anything because one item lacks a number threw away
+    // the whole sentence. Assume one usual serving, say so on the entry, and
+    // let the user change it on the review screen before it is saved.
+    const assumed = defaultPortion(food, context);
+    if (!assumed) return amountQuestion(food, alias);
+    return { ...assumed, assumed: true };
+  }
   if (unit === 'kg') return { grams: amount * 1000, low: amount * 980, high: amount * 1020, label: `${amount} kg` };
   if (unit === 'g') return { grams: amount, low: amount * 0.98, high: amount * 1.02, label: `${amount} g` };
   if (unit === 'piece' || (unit === 'serving' && !food.servingMl && food.pieceG)) {
@@ -521,6 +566,20 @@ function gramsFor(
     volumeMl = amount * (unit === 'tbsp' ? 15 : 5);
     label = `${amount} ${unit}`;
   }
+  // A count with no unit we can convert — "2 paneer". Read it as that many
+  // usual helpings rather than asking, which is what the speaker meant.
+  if (unit === 'unknown') {
+    const one = defaultPortion(food, context);
+    if (one) {
+      return {
+        grams: one.grams * amount,
+        low: one.low * amount,
+        high: one.high * amount,
+        label: amount === 1 ? one.label : `${amount} × ${one.label}`,
+        assumed: true,
+      };
+    }
+  }
   // A volume for a food with no published density, or a unit we do not know.
   if (!volumeMl || !food.density) return amountQuestion(food, alias);
   const grams = volumeMl * food.density;
@@ -560,10 +619,13 @@ function estimateFood(
   }
   const exactGrams = quantity.unit === 'g' || quantity.unit === 'kg';
   const typical = food.tier === 'typical';
+  if (measured.assumed) {
+    assumptions.unshift('amount not stated — assumed one usual serving');
+  }
   if (typical) {
     assumptions.push('typical figure for this kind of food, not a measured record');
   }
-  const confidence = typical || measured.label.includes('bowl') || assumptions.length
+  const confidence = typical || measured.assumed || measured.label.includes('bowl') || assumptions.length
     ? 'low'
     : exactGrams ? 'high' : 'medium';
   return {
@@ -591,8 +653,9 @@ type Activity = { name: string; aliases: RegExp; mets: [number, number, number];
  */
 const activities: Activity[] = [
   { name: 'Walking', aliases: /\bwalk/, mets: [2.8, 3.8, 4.8], sourceId: 'walking' },
-  { name: 'Running', aliases: /\brun|\bjog|\bsprint/, mets: [6.5, 8.5, 11], sourceId: 'running' },
+  { name: 'Running', aliases: /\brun|\bran\b|\bjog|\bsprint/, mets: [6.5, 8.5, 11], sourceId: 'running' },
   { name: 'Cycling', aliases: /\bcycl|\bbike|\bbiking|\bspin class/, mets: [4.3, 7, 9], sourceId: 'bicycling' },
+  { name: 'Swimming', aliases: /\bswim|\bswam\b/, mets: [4.8, 7, 10], sourceId: 'swimming' },
   { name: 'Strength training', aliases: /\bstrength|\bweight training|\bweights\b|\blifting|\bgym\b|\bresistance training/, mets: [3.5, 5, 6], sourceId: 'conditioning-exercise' },
   { name: 'HIIT', aliases: /\bhiit\b|\bhigh intensity interval/, mets: [7, 9, 11], sourceId: 'conditioning-exercise' },
   { name: 'Yoga', aliases: /\byoga\b|\bvinyasa\b|\bhatha\b/, mets: [2.3, 2.7, 4], sourceId: 'conditioning-exercise' },
@@ -685,6 +748,9 @@ export function parseCommandLocally(
   }
   const steps = firstNumber(lowered, /(\d[\d,]*)\s*steps?/);
   if (steps) operations.push({ type: 'steps', action: 'set', amount: steps });
+  // "I walked 10000 steps" is a step count, not a walk of unknown duration.
+  // Without this it matched the Walking activity and asked for minutes.
+  const stepsOnly = Boolean(steps) && !/\b(?:min|minute|hour|hr)/.test(lowered);
   const sleep = firstNumber(lowered, /(?:slept|sleep).{0,12}(\d+(?:\.\d+)?)|(\d+(?:\.\d+)?)\s*(?:hours?|hrs?).{0,12}sleep/);
   if (/sleep|slept/.test(lowered) && sleep) operations.push({ type: 'sleep', action: 'set', amount: sleep });
   const hasWeightIntent = /\b(?:weight|weigh|weighed)\b/.test(lowered);
@@ -698,7 +764,7 @@ export function parseCommandLocally(
   }
 
   const effectiveContext = { ...context, weightKg: (context.weightKg ?? weight) || undefined };
-  const workout = estimateWorkout(lowered, effectiveContext, resolved);
+  const workout = stepsOnly ? null : estimateWorkout(lowered, effectiveContext, resolved);
   if (workout && !('type' in workout)) return workout;
   if (workout) operations.push(workout);
 

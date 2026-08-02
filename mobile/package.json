@@ -10,7 +10,8 @@
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./tests/register-alias.mjs --test tests/*.test.mts",
-    "prebuild": "expo prebuild"
+    "prebuild": "expo prebuild",
+    "check:phrasings": "node --import ./tests/register-alias.mjs scripts/phrasing-sweep.mjs"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",

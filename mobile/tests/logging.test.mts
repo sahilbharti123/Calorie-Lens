@@ -107,20 +107,25 @@ const CASES = [
     ],
   },
   {
-    // Sahil's screenshot: the recogniser heard "kne" for "one", so no amount
-    // could be read, and "1 bowl" is not answerable for a food with no density.
-    name: 'garbled dictation, then a bowl answer that cannot work, then a count',
+    // Sahil's screenshot. The recogniser heard "kne" for "one", so no amount
+    // could be read at all — which used to stop the entry dead. It now assumes
+    // one idli and says so, and the user can correct it on the review screen.
+    name: 'garbled dictation still logs, with the assumption stated',
     say: 'i had a one bowl of italy. i had kne bowl of idli',
     context: { bowlMl: 250 },
-    replies: ['1 bowl', '2'],
     check: (r) => [
       [ops(r).join() === 'meal', `expected a meal, got ${ops(r).join() || 'nothing'}`],
-      [kcal(r) === 128, `2 idlis should be 128 kcal, got ${kcal(r)}`],
+      [kcal(r) === 64, `one assumed idli should be 64 kcal, got ${kcal(r)}`],
+      [(meal(r)?.items[0]?.assumptions ?? []).some((a) => a.includes('assumed one usual serving')),
+        'the assumption must be on the entry'],
+      [meal(r)?.items[0]?.confidence === 'low', 'an assumed amount cannot be high confidence'],
     ],
   },
   {
-    name: 'the same garbled line answered in pieces first time',
-    say: 'i had kne bowl of idli',
+    // A bowl of idli genuinely cannot be converted — idli has a piece weight
+    // and no density — so this is the case that still has to ask.
+    name: 'an unconvertible unit still asks, and the answer settles it',
+    say: 'i had 1 bowl of idli',
     context: { bowlMl: 250 },
     replies: ['2 pieces'],
     check: (r) => [[kcal(r) === 128, `expected 128 kcal, got ${kcal(r)}`]],
@@ -245,12 +250,36 @@ const CASES = [
     check: (r) => [[kcal(r) > 0, 'milk should produce calories']],
   },
   {
-    name: 'a food with neither a piece weight nor a density',
+    name: 'a food with neither a piece weight nor a density falls back to a helping',
     say: 'I had some chicken',
-    replies: ['1 bowl', '200 g'],
     check: (r) => [
       [ops(r).join() === 'meal', `expected a meal, got ${ops(r).join() || 'nothing'}`],
-      [grams(r, 'chicken') === '200 g', `chicken measured as ${grams(r, 'chicken')}`],
+      [grams(r, 'chicken').startsWith('100 g helping'), `chicken measured as ${grams(r, 'chicken')}`],
+    ],
+  },
+  {
+    name: 'a second food with no amount does not kill the whole sentence',
+    say: '2 rotis and dal',
+    context: { bowlMl: 250 },
+    check: (r) => [
+      [meal(r)?.items.length === 2, `expected 2 items, got ${meal(r)?.items.length}`],
+      [(meal(r)?.items ?? []).some((i) => i.quantity.includes('assumed')), 'the dal should be an assumed helping'],
+    ],
+  },
+  {
+    // "a" used to match the last letter of "thod-a", so this read as one
+    // unnameable unit of paneer and asked how much.
+    name: 'a word ending in a is not a quantity',
+    say: 'thoda paneer khaya',
+    check: (r) => [[ops(r).join() === 'meal', `expected a meal, got ${ops(r).join() || 'nothing'}`]],
+  },
+  {
+    name: 'a step count is not a walk of unknown length',
+    say: 'I walked 10000 steps',
+    context: { weightKg: 72 },
+    check: (r) => [
+      [ops(r).join() === 'steps', `expected steps only, got ${ops(r).join() || 'nothing'}`],
+      [r.operations[0]?.amount === 10000, `expected 10000, got ${r.operations[0]?.amount}`],
     ],
   },
   {
