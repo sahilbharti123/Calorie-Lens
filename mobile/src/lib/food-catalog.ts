@@ -32,6 +32,13 @@ export type FoodReference = {
    * most ordinary way there is to describe a drink.
    */
   servingMl?: number;
+  /**
+   * What one helping weighs, for a solid that is neither countable nor poured.
+   * A packet of crisps is about 35 g and a plate of poha about 250 g; the flat
+   * 100 g fallback is wrong for both, in opposite directions and by enough to
+   * matter — 545 kcal for a packet of crisps is nearly a meal.
+   */
+  servingG?: number;
   /** 'usda' when omitted. Decides how the entry describes its own source. */
   tier?: 'usda' | 'typical';
   /**
@@ -54,7 +61,7 @@ export const USDA_FOODS: FoodReference[] = [
   { name: 'Tofu (regular)', aliases: ['tofu'], calories: 76, protein: 8.1, carbs: 1.9, fat: 4.8, fdcId: 172476, density: 1.04, densityVariance: 0.08 },
 
   // ------------------------------------------------------------------ grains
-  { name: 'Cooked white rice', aliases: ['white rice', 'plain rice', 'cooked rice', 'basmati rice', 'rice'], calories: 130, protein: 2.69, carbs: 28.2, fat: 0.28, fdcId: 168878, density: 0.79, densityVariance: 0.12 },
+  { name: 'Cooked white rice', aliases: ['white rice', 'plain rice', 'cooked rice', 'basmati rice', 'chawal', 'rice'], calories: 130, protein: 2.69, carbs: 28.2, fat: 0.28, fdcId: 168878, density: 0.79, densityVariance: 0.12 },
   { name: 'Cooked brown rice', aliases: ['brown rice'], calories: 123, protein: 2.74, carbs: 25.6, fat: 0.97, fdcId: 169704, density: 0.78, densityVariance: 0.12 },
   { name: 'Rolled oats (dry)', aliases: ['rolled oats', 'oatmeal', 'oats'], calories: 379, protein: 13.2, carbs: 67.7, fat: 6.5, fdcId: 173904, density: 0.35, densityVariance: 0.15 },
   { name: 'Whole-wheat roti', aliases: ['chapati', 'chappati', 'phulka', 'roti'], calories: 299, protein: 7.85, carbs: 46.1, fat: 9.2, fdcId: 174075, pieceG: 40, pieceVariance: 0.2 },
@@ -72,10 +79,10 @@ export const USDA_FOODS: FoodReference[] = [
   // -------------------------------------------------------------- dairy etc.
   { name: 'Whole milk', aliases: ['whole milk', 'full fat milk', 'doodh', 'milk'], calories: 60, protein: 3.27, carbs: 4.63, fat: 3.2, fdcId: 746782, density: 1.03, densityVariance: 0.03 },
   { name: 'Plain whole-milk yogurt', aliases: ['plain yogurt', 'yogurt', 'curd', 'dahi'], calories: 61, protein: 3.47, carbs: 4.66, fat: 3.25, fdcId: 171284, density: 1.03, densityVariance: 0.06 },
-  { name: 'Smooth peanut butter', aliases: ['peanut butter'], calories: 598, protein: 22.2, carbs: 22.3, fat: 51.4, fdcId: 172470, density: 1.07, densityVariance: 0.08 },
+  { name: 'Smooth peanut butter', aliases: ['peanut butter'], calories: 598, protein: 22.2, carbs: 22.3, fat: 51.4, fdcId: 172470, density: 1.07, densityVariance: 0.08, servingG: 32 },
   { name: 'Butter', aliases: ['makhan', 'makkhan', 'butter'], calories: 717, protein: 0.85, carbs: 0.06, fat: 81.1, fdcId: 173430, density: 0.96, densityVariance: 0.03, pieceG: 14, pieceVariance: 0.25 },
-  { name: 'Olive oil', aliases: ['olive oil', 'cooking oil', 'oil'], calories: 884, protein: 0, carbs: 0, fat: 100, fdcId: 171413, density: 0.91, densityVariance: 0.02 },
-  { name: 'Almonds', aliases: ['almonds', 'almond', 'badam'], calories: 579, protein: 21.15, carbs: 21.55, fat: 49.93, fdcId: 170567, pieceG: 1.2, pieceVariance: 0.15, density: 0.55, densityVariance: 0.15 },
+  { name: 'Olive oil', aliases: ['olive oil', 'cooking oil', 'oil'], calories: 884, protein: 0, carbs: 0, fat: 100, fdcId: 171413, density: 0.91, densityVariance: 0.02, servingG: 14 },
+  { name: 'Almonds', aliases: ['almonds', 'almond', 'badam'], calories: 579, protein: 21.15, carbs: 21.55, fat: 49.93, fdcId: 170567, pieceG: 1.2, pieceVariance: 0.15, density: 0.55, densityVariance: 0.15, servingMl: 50 },
 
   // ------------------------------------------------------ vegetables & fruit
   { name: 'Boiled potato', aliases: ['boiled potato', 'potato', 'potatoes', 'aloo'], calories: 87, protein: 1.9, carbs: 20.1, fat: 0.1, fdcId: 170438, pieceG: 170, pieceVariance: 0.25 },

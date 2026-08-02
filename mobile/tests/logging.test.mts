@@ -32,6 +32,7 @@ const kcal = (result) => {
   const entry = meal(result);
   return entry ? entry.items.reduce((sum, item) => sum + item.calories, 0) : 0;
 };
+const names = (result) => meal(result)?.items.map((item) => item.name) ?? [];
 const grams = (result, name) => {
   const item = meal(result)?.items.find((candidate) => candidate.name.toLowerCase().includes(name));
   return item ? item.quantity : '(not found)';
@@ -58,13 +59,17 @@ const CASES = [
     ],
   },
   {
+    // "Brisk" is the standard description of a moderate walking pace — roughly
+    // 5 km/h — not a hard effort. This test asserted 'hard' and so protected a
+    // real mistake: it overstated a half-hour walk by a third.
     name: 'brisk walk with a known body weight',
     say: '30 minute brisk walk',
     context: { weightKg: 72 },
     check: (r) => [
       [ops(r).join() === 'workout', `expected a workout, got ${ops(r).join() || 'nothing'}`],
-      [r.operations[0]?.intensity === 'hard', `brisk should read as hard, got ${r.operations[0]?.intensity}`],
+      [r.operations[0]?.intensity === 'moderate', `brisk should read as moderate, got ${r.operations[0]?.intensity}`],
       [r.operations[0]?.durationMin === 30, `expected 30 min, got ${r.operations[0]?.durationMin}`],
+      [r.operations[0]?.calories === 106, `expected 106 kcal for 30 min at 72 kg, got ${r.operations[0]?.calories}`],
     ],
   },
   {
@@ -444,6 +449,105 @@ const CASES = [
       [ops(r).includes('meal') && ops(r).includes('water'), `got ${ops(r).join() || 'nothing'}`],
       [r.operations.find((o) => o.type === 'water')?.amount === 500, 'expected 500 ml of water'],
     ],
+  },
+
+  /* ------------------------------------------------------------------ *
+   * Found by logging a hundred realistic entries and reading the numbers
+   * rather than the operation types. Every case below was wrong in a way
+   * no structural test could see: the entry appeared, and it was false.
+   * ------------------------------------------------------------------ */
+  {
+    // "tomato sauce" is not a tomato. The sauce is already inside the dish.
+    name: 'a compound name does not also log its ingredient',
+    say: 'pasta with tomato sauce',
+    check: (r) => [
+      [names(r).length === 1, `expected one item, got ${names(r).join(' + ') || 'nothing'}`],
+      [names(r)[0]?.includes('Pasta'), `expected the pasta dish, got ${names(r)[0]}`],
+    ],
+  },
+  {
+    name: 'coconut water is not a glass of water',
+    say: 'coconut water',
+    check: (r) => [
+      [!ops(r).includes('water'), 'coconut water should not log drinking water'],
+      [names(r)[0] === 'Coconut water', `got ${names(r)[0]}`],
+    ],
+  },
+  {
+    // The nuggets entry matched on its short alias "nuggets", which does not
+    // contain "chicken", so a phantom chicken breast survived alongside it.
+    name: 'the longest alias wins, so a dish is not double-counted',
+    say: 'chicken nuggets and fries',
+    check: (r) => [
+      [names(r).length === 2, `expected 2 items, got ${names(r).join(' + ')}`],
+      [!names(r).some((n) => n.includes('breast')), `phantom chicken breast in ${names(r).join(' + ')}`],
+    ],
+  },
+  {
+    name: 'a mango lassi is one drink, not a lassi and a mango',
+    say: 'a mango lassi',
+    check: (r) => [[names(r).length === 1, `expected 1 item, got ${names(r).join(' + ')}`]],
+  },
+  {
+    // A packet is a stated amount. Asking for it is asking twice.
+    name: 'a packet is a helping, not an unanswered question',
+    say: 'a packet of chips',
+    check: (r) => [
+      [!r.clarification, `asked instead of logging: ${r.clarification?.question}`],
+      [kcal(r) > 120 && kcal(r) < 260, `a packet of crisps should be roughly 190 kcal, got ${kcal(r)}`],
+    ],
+  },
+  {
+    name: 'a bowl of something with no density is still a helping',
+    say: 'a bowl of namkeen',
+    check: (r) => [[!r.clarification, `asked instead of logging: ${r.clarification?.question}`]],
+  },
+  {
+    // One almond is 1.2 g, so assuming "one piece" logged 7 kcal.
+    name: 'a handful of almonds is a handful',
+    say: 'a handful of almonds',
+    check: (r) => [[kcal(r) > 140 && kcal(r) < 210, `expected about 174 kcal, got ${kcal(r)}`]],
+  },
+  {
+    // Nobody eats a 250 ml bowl of ghee, and the generic bowl fallback said
+    // 2048 kcal. Condiments and fats need an explicit spoon-sized helping.
+    name: 'a fat defaults to a spoonful, not a bowlful',
+    say: 'ghee',
+    check: (r) => [[kcal(r) < 150, `a helping of ghee should be a spoon, got ${kcal(r)} kcal`]],
+  },
+  {
+    name: 'a glass of wine is a wine glass',
+    say: 'a glass of red wine',
+    check: (r) => [[kcal(r) > 110 && kcal(r) < 145, `expected about 126 kcal for 150 ml, got ${kcal(r)}`]],
+  },
+  {
+    name: 'a glass of milk is still a tumbler',
+    say: 'a glass of milk',
+    check: (r) => [[kcal(r) > 140 && kcal(r) < 170, `expected about 155 kcal for 250 ml, got ${kcal(r)}`]],
+  },
+  {
+    name: 'a latte is a latte cup, not a beer bottle',
+    say: 'a latte',
+    check: (r) => [[kcal(r) > 115 && kcal(r) < 150, `expected about 132 kcal for 240 ml, got ${kcal(r)}`]],
+  },
+  {
+    // "tomatoes" is not "tomatos", so the bare s? plural matched nothing and
+    // the sentence understood no food at all.
+    name: 'an -es plural still names its food',
+    say: '2 tomatoes',
+    check: (r) => [
+      [!r.clarification, `asked instead of logging: ${r.clarification?.question}`],
+      [names(r)[0] === 'Tomato', `got ${names(r)[0]}`],
+    ],
+  },
+  {
+    // A bowl of idli holds several. Logging one would understate it badly, and
+    // this is the one shape where the question is the honest answer.
+    name: 'a vessel of a countable food still asks',
+    say: 'i had 1 bowl of idli',
+    context: { bowlMl: 250 },
+    replies: ['3 pieces'],
+    check: (r) => [[kcal(r) === 192, `expected 3 idlis at 192 kcal, got ${kcal(r)}`]],
   },
 ];
 

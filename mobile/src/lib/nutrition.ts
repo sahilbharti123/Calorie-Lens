@@ -64,8 +64,12 @@ const UNIT_ALIASES: Record<string, string> = {
   bottle: 'serving', bottles: 'serving', can: 'serving', cans: 'serving',
   pint: 'pint', pints: 'pint', peg: 'peg', pegs: 'peg', shot: 'peg', shots: 'peg',
   plate: 'serving', plates: 'serving', serving: 'serving', servings: 'serving',
+  handful: 'handful', handfuls: 'handful', packet: 'serving', packets: 'serving',
   tbsp: 'tbsp', tsp: 'tsp',
 };
+
+/** A handful is about 30 g of whatever it is — nuts, crisps, popcorn. */
+const HANDFUL_G = 30;
 
 /** A pint and a peg are fixed measures; everything else is per-food. */
 const FIXED_ML: Record<string, number> = { pint: 568, peg: 30 };
@@ -79,7 +83,7 @@ function normalizeUnit(raw: string | undefined, reference: FoodReference) {
   return 'unknown';
 }
 
-const UNITS = 'kgs?|kilos?|kilograms?|g|gms?|grams?|ml|millilit(?:re|er)s?|l|lit(?:re|er)s?|bowls?|katoris?|cups?|mugs?|glass(?:es)?|pieces?|slices?|rotis?|bottles?|cans?|pints?|pegs?|shots?|plates?|servings?|tbsp|tsp';
+const UNITS = 'kgs?|kilos?|kilograms?|g|gms?|grams?|ml|millilit(?:re|er)s?|l|lit(?:re|er)s?|bowls?|katoris?|cups?|mugs?|glass(?:es)?|pieces?|slices?|rotis?|bottles?|cans?|pints?|pegs?|shots?|plates?|servings?|handfuls?|packets?|tbsp|tsp';
 const NUMBER = '\\d+(?:\\.\\d+)?|a couple of|a couple|a few|half a|an|a|one|two|three|four|five|six|seven|eight|nine|ten|half|quarter|couple|few|several|dozen|ek|do|teen|char|paanch|aadha|adha';
 
 /**
@@ -100,20 +104,20 @@ function quantityNear(
 ): Quantity {
   const food = escapeRegex(alias);
   const explicitVolume = text.match(
-    new RegExp(`(\\d+(?:\\.\\d+)?)\\s*ml\\s*(?:bowl|katori|glass)?(?:\\s+of)?\\s*${food}s?\\b`),
+    new RegExp(`(\\d+(?:\\.\\d+)?)\\s*ml\\s*(?:bowl|katori|glass)?(?:\\s+of)?\\s*${food}(?:es|s)?\\b`),
   );
   if (explicitVolume) return { amount: numberValue(explicitVolume[1]), unit: 'ml' };
   // The number is word-anchored on both sides. Without a leading \b, the bare
   // "a" alternative matched the final letter of "thod-a", so "thoda paneer"
   // read as one unnameable unit of paneer and the parser asked how much.
-  const before = text.match(new RegExp(`\\b(${NUMBER})\\b\\s*(${UNITS})?\\s*(?:of\\s+)?${food}s?\\b`));
+  const before = text.match(new RegExp(`\\b(${NUMBER})\\b\\s*(${UNITS})?\\s*(?:of\\s+)?${food}(?:es|s)?\\b`));
   const after = text.match(new RegExp(`${food}s?\\s*[:,-]?\\s*\\b(${NUMBER})\\b\\s*(${UNITS})\\b`));
   const match = before ?? after;
   if (match) return { amount: numberValue(match[1]), unit: normalizeUnit(match[2], reference) };
 
   if (loose) {
     const spaced = text.match(
-      new RegExp(`\\b(${NUMBER})\\b\\s*(${UNITS})\\b(?:\\s+[\\w'-]+){0,4}?\\s+${food}s?\\b`),
+      new RegExp(`\\b(${NUMBER})\\b\\s*(${UNITS})\\b(?:\\s+[\\w'-]+){0,4}?\\s+${food}(?:es|s)?\\b`),
     );
     if (spaced) return { amount: numberValue(spaced[1]), unit: normalizeUnit(spaced[2], reference) };
   }
@@ -213,10 +217,12 @@ function answers(answer: ClarificationAnswer, target: ClarificationTarget) {
   return true;
 }
 
+// "Brisk" is the standard word for a moderate-paced walk, not a hard one, and
+// reading it as hard overstated a half-hour walk by a third.
 const INTENSITY_WORDS: [RegExp, Workout['intensity']][] = [
-  [/hard|intense|vigorous|brisk|fast|heavy/, 'hard'],
+  [/hard|intense|vigorous|fast|heavy/, 'hard'],
   [/light|easy|gentle|slow|casual/, 'light'],
-  [/moderate|medium|normal|steady/, 'moderate'],
+  [/moderate|medium|normal|steady|brisk/, 'moderate'],
 ];
 
 /**
@@ -396,7 +402,7 @@ function learnedMatch(text: string, learned: LearnedFood[] = []) {
   let best: { food: LearnedFood; alias: string } | undefined;
   for (const food of learned) {
     for (const alias of food.aliases) {
-      if (!new RegExp(`\\b${escapeRegex(alias)}s?\\b`).test(text)) continue;
+      if (!new RegExp(`\\b${escapeRegex(alias)}(?:es|s)?\\b`).test(text)) continue;
       if (!best || alias.length > best.alias.length) best = { food, alias };
     }
   }
@@ -476,7 +482,15 @@ function defaultPortion(food: FoodReference, context: EstimationContext): Measur
     high: grams * (1 + spread),
     label,
   });
-  if (food.pieceG) return measure(food.pieceG, `1 × ${food.pieceG} g standard piece (assumed)`);
+  // An explicit helping weight outranks the piece weight, because some foods
+  // are counted but never eaten one at a time: nobody has a single chicken
+  // nugget, and reading "nuggets and fries" as one 17 g piece logged 49 kcal.
+  if (food.servingG) return measure(food.servingG, `${food.servingG} g helping (assumed)`);
+  // A piece weight only makes a sensible default if a piece is a portion. One
+  // almond weighs 1.2 g, so "a handful of almonds" logged 7 kcal.
+  if (food.pieceG && food.pieceG >= 10) {
+    return measure(food.pieceG, `1 × ${food.pieceG} g standard piece (assumed)`);
+  }
   if (food.servingMl && food.density) {
     return measure(food.servingMl * food.density, `1 serving, ${food.servingMl} ml (assumed)`);
   }
@@ -490,9 +504,41 @@ function defaultPortion(food: FoodReference, context: EstimationContext): Measur
 type Missing = { question: string; suggestions: string[]; target: ClarificationTarget };
 
 const VOLUME_UNITS = new Set(['bowl', 'cup', 'glass', 'ml', 'l', 'tbsp', 'tsp']);
+/**
+ * Units that name a container rather than a measurement. A bowl, a plate and a
+ * packet are all "one of these", so for a food with no density they can be read
+ * as one helping. "250 ml" cannot.
+ */
+const VESSEL_UNITS = new Set(['bowl', 'cup', 'glass', 'serving', 'unknown']);
 
 function foodFor(alias: string) {
   return foods.find((food) => food.aliases.includes(alias));
+}
+
+/**
+ * Words that turn the thing before them into a different food.
+ *
+ * Tomato sauce is not a tomato, coconut oil is not a coconut, and a mango shake
+ * is not a mango — but the alias for each is sitting right there in the phrase.
+ * "Pasta with tomato sauce" logged a whole extra tomato this way, and the same
+ * shape of mistake put a glass of water inside "coconut water".
+ */
+const COMPOUND_SUFFIX = /^(?:sauce|ketchup|paste|puree|powder|juice|shake|smoothie|soup|oil|extract|essence|flavou?red?|water|milk|syrup)\b/;
+
+/**
+ * Whether the sentence really names this food, rather than merely containing
+ * its letters as part of a compound.
+ */
+function aliasSaid(lowered: string, alias: string) {
+  const pattern = new RegExp(`\\b${escapeRegex(alias)}(?:es|s)?\\b`, 'g');
+  for (let hit = pattern.exec(lowered); hit; hit = pattern.exec(lowered)) {
+    const after = lowered.slice(hit.index + hit[0].length).replace(/^\s+/, '');
+    // A suffix already inside the alias is part of the food's own name —
+    // "tomato ketchup" is allowed to be followed by nothing in particular, and
+    // "coconut water" is only blocked when the alias stops at "coconut".
+    if (!COMPOUND_SUFFIX.test(after)) return true;
+  }
+  return false;
 }
 
 /**
@@ -540,8 +586,19 @@ function gramsFor(
     if (!assumed) return amountQuestion(food, alias);
     return { ...assumed, assumed: true };
   }
+  if (unit === 'handful') {
+    const grams = amount * HANDFUL_G;
+    return { grams, low: grams * 0.6, high: grams * 1.4, label: `${amount} handful, about ${HANDFUL_G} g` };
+  }
   if (unit === 'kg') return { grams: amount * 1000, low: amount * 980, high: amount * 1020, label: `${amount} kg` };
   if (unit === 'g') return { grams: amount, low: amount * 0.98, high: amount * 1.02, label: `${amount} g` };
+  // A packet or plate of something that states its own helping weight — "a
+  // packet of biscuits" is a packet, not one biscuit. Checked before the piece
+  // branch below so the helping wins over the piece for these foods.
+  if (unit === 'serving' && !food.servingMl && food.servingG) {
+    const grams = amount * food.servingG;
+    return { grams, low: grams * 0.65, high: grams * 1.35, label: `${amount} × ${food.servingG} g helping`, assumed: true };
+  }
   if (unit === 'piece' || (unit === 'serving' && !food.servingMl && food.pieceG)) {
     const pieceG = food.pieceG ?? resolved?.pieceGrams.get(alias);
     if (!pieceG) {
@@ -559,21 +616,29 @@ function gramsFor(
   let label = '';
   if (unit === 'bowl') {
     const bowlMl = context.bowlMl ?? resolved?.bowlMl;
-    if (!bowlMl) {
+    // Only worth asking when there is a density to multiply the answer by.
+    // For a food measured any other way the bowl size changes nothing, so the
+    // question is one the user cannot get anything out of answering.
+    if (!bowlMl && food.density) {
       return {
         question: 'About how large is your usual bowl?',
         suggestions: ['150 ml', '200 ml', '250 ml', '300 ml'],
         target: { kind: 'bowlMl' },
       };
     }
-    volumeMl = amount * bowlMl;
+    volumeMl = amount * (bowlMl ?? 0);
     label = `${amount} × ${bowlMl} ml bowl`;
   } else if (unit === 'cup') {
     volumeMl = amount * context.cupMl;
     label = `${amount} × ${context.cupMl} ml cup`;
   } else if (unit === 'glass') {
-    volumeMl = amount * GLASS_ML;
-    label = `${amount} × ${GLASS_ML} ml glass`;
+    // A glass of wine is 150 ml and a glass of whisky is a peg. Where a drink
+    // states its own serving and that serving is smaller than a tumbler, the
+    // glass it is actually poured into is the smaller one — "a glass of red
+    // wine" was logging a 250 ml pour, half a bottle over two.
+    const glassMl = Math.min(food.servingMl ?? GLASS_ML, GLASS_ML);
+    volumeMl = amount * glassMl;
+    label = `${amount} × ${glassMl} ml glass`;
   } else if (unit === 'ml') {
     volumeMl = amount;
     label = `${amount} ml`;
@@ -590,10 +655,25 @@ function gramsFor(
     volumeMl = amount * (unit === 'tbsp' ? 15 : 5);
     label = `${amount} ${unit}`;
   }
-  // A count with no unit we can convert — "2 paneer". Read it as that many
-  // usual helpings rather than asking, which is what the speaker meant.
-  if (unit === 'unknown') {
-    const one = defaultPortion(food, context);
+  // Three things arrive here meaning "this many helpings" rather than a volume:
+  // a bare count ("2 paneer"), a stated serving the food has no serving size
+  // for ("a packet of crisps"), and a vessel for a food with no published
+  // density ("a bowl of bhujia"). Counting helpings is what the speaker meant
+  // in every one of those, and it is far better than stopping to ask for an
+  // amount they have already given in their own words.
+  //
+  // An absolute volume is deliberately excluded: "250 ml of paneer" states a
+  // real volume the catalog cannot convert, and reading the 250 as a count of
+  // helpings would log twenty-five kilograms.
+  if (!volumeMl || !food.density) {
+    // A vessel of a countable food is the one case still worth a question: a
+    // bowl of idli holds several, and quietly logging one would understate it
+    // by two thirds. Every other shape here has a helping to fall back on.
+    const vesselOfCountable = food.pieceG && !food.servingG && VOLUME_UNITS.has(unit);
+    const countsHelpings = !vesselOfCountable && (food.density
+      ? unit === 'unknown' || unit === 'serving'
+      : VESSEL_UNITS.has(unit));
+    const one = countsHelpings ? defaultPortion(food, context) : null;
     if (one) {
       return {
         grams: one.grams * amount,
@@ -603,9 +683,10 @@ function gramsFor(
         assumed: true,
       };
     }
+    // A real volume for a food with no published density, or a unit nothing in
+    // the catalog can convert. Here the question is the honest answer.
+    return amountQuestion(food, alias);
   }
-  // A volume for a food with no published density, or a unit we do not know.
-  if (!volumeMl || !food.density) return amountQuestion(food, alias);
   const grams = volumeMl * food.density;
   const variance = food.densityVariance ?? 0.12;
   return { grams, low: grams * (1 - variance), high: grams * (1 + variance), label };
@@ -632,14 +713,23 @@ function estimateFood(
   let high = food.calories * measured.high / 100 * (1 + spread);
   let fat = food.fat * scale;
   const assumptions: string[] = [];
-  const isCurryBase = /rajma|dal|daal|chole|chana|curry/.test(text) && /rajma|dal|daal|chole|chana|chickpea|kidney|lentil/i.test(food.name + food.aliases.join(' '));
+  // Boiled lentils and beans are USDA records for the plain ingredient, so a
+  // bowl of dal is that plus the fat it was cooked in. A typical-tier dish is
+  // the opposite: "dal makhani" is already a published figure for the finished
+  // thing, cream and all, and adding oil on top billed it twice — 100 g of dal
+  // tadka came back a third higher than the entry's own per-100 g figure.
+  const isCurryBase = food.tier !== 'typical'
+    && /rajma|dal|daal|chole|chana|curry/.test(text)
+    && /rajma|dal|daal|chole|chana|chickpea|kidney|lentil/i.test(food.name + food.aliases.join(' '));
   if (isCurryBase && !suppressOilAssumption && !/plain|boiled|dry/.test(text)) {
-    const oilKcal = 4.6 * 8.84;
+    // Proportional to the helping. A flat allowance meant a kilo of dal and a
+    // spoonful were assumed to have been cooked in the same two teaspoons.
+    const oilKcal = 4.6 * 8.84 * scale;
     calories += oilKcal;
     low += oilKcal * 0.5;
     high += oilKcal * 2;
-    fat += 4.6;
-    assumptions.push('home curry range assumes ½–2 tsp oil in this portion');
+    fat += 4.6 * scale;
+    assumptions.push('home curry range assumes ½–2 tsp oil per 100 g');
   }
   const exactGrams = quantity.unit === 'g' || quantity.unit === 'kg';
   const typical = food.tier === 'typical';
@@ -711,11 +801,11 @@ function estimateWorkout(
       { kind: 'bodyWeight' },
     );
   }
-  const spokenIntensity = /hard|intense|vigorous|brisk/.test(text)
+  const spokenIntensity = /hard|intense|vigorous/.test(text)
     ? 'hard'
-    : /easy|light/.test(text)
+    : /easy|light|gentle|casual/.test(text)
       ? 'light'
-      : /moderate/.test(text)
+      : /moderate|steady|brisk/.test(text)
         ? 'moderate'
         : undefined;
   const intensity = resolved?.intensity ?? spokenIntensity;
@@ -764,9 +854,17 @@ export function parseCommandLocally(
   };
   const lowered = text.toLowerCase().trim();
   const operations: LogOperation[] = [];
-  if (WATER_WORDS.test(lowered) || (/\bglass(?:es)?\b/.test(lowered) && !foods.some((food) => food.aliases.some((alias) => lowered.includes(alias))))) {
-    operations.push({ type: 'water', action: 'add', amount: waterAmount(lowered) });
-  }
+  // "coconut water" is a drink, not a glass of water. Only treat the word as
+  // hydration when it is not part of a food this catalog knows.
+  const wateryFood = foods.some((food) => food.aliases.some(
+    (alias) => alias.includes('water') && new RegExp(`\\b${escapeRegex(alias)}(?:es|s)?\\b`).test(lowered),
+  ));
+  const drankWater = !wateryFood && (
+    WATER_WORDS.test(lowered)
+    || (/\bglass(?:es)?\b/.test(lowered)
+      && !foods.some((food) => food.aliases.some((alias) => lowered.includes(alias))))
+  );
+  if (drankWater) operations.push({ type: 'water', action: 'add', amount: waterAmount(lowered) });
   const steps = firstNumber(lowered, /(\d[\d,]*)\s*steps?/);
   if (steps) operations.push({ type: 'steps', action: 'set', amount: steps });
   // "I walked 10000 steps" is a step count, not a walk of unknown duration.
@@ -803,7 +901,16 @@ export function parseCommandLocally(
   // in their own right now, and the longest-alias rule below keeps the parts
   // from winning against the whole.
   const rawMatches = foods
-    .map((food) => ({ food, alias: food.aliases.find((alias) => new RegExp(`\\b${escapeRegex(alias)}s?\\b`).test(lowered)) }))
+    // The *longest* matching alias, not the first. "chicken nuggets and fries"
+    // matched the nuggets entry on its short alias "nuggets", which does not
+    // contain "chicken", so the plain chicken-breast entry survived the
+    // specificity filter below and the meal was logged twice.
+    .map((food) => ({
+      food,
+      alias: food.aliases
+        .filter((candidate) => aliasSaid(lowered, candidate))
+        .sort((a, b) => b.length - a.length)[0],
+    }))
     .filter((match): match is { food: FoodReference; alias: string } => Boolean(match.alias));
   const matches = rawMatches.filter(({ alias }) => !rawMatches.some(
     (other) => other.alias !== alias && other.alias.length > alias.length && other.alias.includes(alias),
