@@ -41,7 +41,6 @@ export default function TodayScreen() {
   const {
     data,
     today,
-    addWater,
     applyHealthSnapshot,
     applyOperations,
     dismissVaultReset,
@@ -231,12 +230,15 @@ export default function TodayScreen() {
             its icon chip from `accent`, so a neutral accent is what gives the
             inkMid glyph on a quiet chip. */}
         <Reveal index={3} style={styles.metrics}>
+          {/* Opens the water screen rather than logging on the spot. A tile
+              that wrote 250 ml straight into the day gave a mis-tap no way
+              back — the number was simply wrong for the rest of the day. */}
           <Metric
             accent={palette.inkMid}
-            detail="Tap to add 250 ml"
+            detail={`${Math.round((today.waterMl / Math.max(1, data.goals.waterMl)) * 100)}% of goal`}
             icon="water"
             label="Water"
-            onPress={() => addWater(250)}
+            onPress={() => router.push('/water-log' as Href)}
             value={`${(today.waterMl / 1000).toFixed(1)} L`}
           />
           <Metric

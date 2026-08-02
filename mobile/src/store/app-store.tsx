@@ -310,7 +310,6 @@ type AppContextValue = {
   syncState: SyncState;
   syncError: string;
   applyOperations: (operations: LogOperation[]) => void;
-  addWater: (amount: number) => void;
   removeMeal: (id: string) => void;
   removeWorkout: (id: string) => void;
   saveMeal: (group: MealGroup) => void;
@@ -571,10 +570,6 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     }
   }, [updateToday]);
 
-  const addWater = useCallback((amount: number) => {
-    applyOperations([{ type: 'water', action: 'add', amount }]);
-  }, [applyOperations]);
-
   const removeMeal = useCallback((mealId: string) => {
     updateToday((day) => ({ ...day, meals: day.meals.filter((meal) => meal.id !== mealId) }));
     setData((current) => ({
@@ -779,7 +774,6 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     syncState,
     syncError,
     applyOperations,
-    addWater,
     removeMeal,
     removeWorkout,
     saveMeal,
@@ -804,7 +798,6 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     syncState,
     syncError,
     applyOperations,
-    addWater,
     removeMeal,
     removeWorkout,
     saveMeal,
