@@ -87,11 +87,13 @@ export default function SettingsScreen() {
   }
 
   const previewCalories = Number(values.calories) || 0;
-  const targetError = targetWeightError(
-    data.profile.primaryGoal,
-    Number(weightKg) || currentWeight,
-    Number(targetWeightKg) || undefined,
-  );
+  // Target weight is optional — Progress says "Not set yet" and `save()` stores
+  // undefined for it. Validating an empty field greyed out Save permanently, so
+  // someone who skipped onboarding could never change their calories again.
+  const target = Number(targetWeightKg) || undefined;
+  const targetError = target
+    ? targetWeightError(data.profile.primaryGoal, Number(weightKg) || currentWeight, target)
+    : null;
 
   return (
     <Screen edges={['bottom']}>

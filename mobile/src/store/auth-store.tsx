@@ -51,7 +51,15 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
       readOnboardingComplete(),
       readOfflineMode(),
       supabase?.auth.getSession() ?? Promise.resolve({ data: { session: null }, error: null }),
-    ]).then(([hasOnboarded, storedOfflineMode, result]) => {
+    ])
+      .catch((reason) => {
+        // A failed local read says nothing about whether this user has
+        // onboarded. Falling through with `onboardingComplete: false` restarted
+        // the whole setup flow for someone with months of history.
+        console.warn('Auth bootstrap could not read local state', reason);
+        return [true, false, { data: { session: null }, error: null }] as const;
+      })
+      .then(([hasOnboarded, storedOfflineMode, result]) => {
       if (!active) return;
       setOnboardingComplete(hasOnboarded);
       if (result.error) setRecoveryError(authErrorMessage(result.error));

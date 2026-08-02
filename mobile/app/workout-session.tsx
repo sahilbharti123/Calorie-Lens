@@ -152,13 +152,19 @@ export default function WorkoutSessionScreen() {
   }
 
   function replaceExercise(entryId: string) {
-    onNextExercisePick(([exerciseId]) => {
-      if (!exerciseId) return;
+    // The picker is multi-select. Taking only the first id silently dropped the
+    // rest, so the extras are inserted after the replacement instead.
+    onNextExercisePick((exerciseIds) => {
+      const [first, ...extras] = exerciseIds;
+      if (!first) return;
       workouts.updateActiveSession((current) => ({
         ...current,
-        exercises: current.exercises.map((entry) => entry.id === entryId
-          ? { ...makeSessionExercise(exerciseId, entry.restSec), id: entry.id, supersetId: entry.supersetId }
-          : entry),
+        exercises: current.exercises.flatMap((entry) => (entry.id === entryId
+          ? [
+            { ...makeSessionExercise(first, entry.restSec), id: entry.id, supersetId: entry.supersetId },
+            ...extras.map((id) => makeSessionExercise(id, entry.restSec)),
+          ]
+          : [entry])),
       }));
     });
     router.push('/exercise-picker');
@@ -231,6 +237,14 @@ export default function WorkoutSessionScreen() {
                 value={session.name}
               />
             </View>
+            <Tap
+              accessibilityLabel="Leave workout running and go back"
+              hitSlop={10}
+              onPress={() => router.back()}
+              scaleTo={0.9}
+              style={styles.minimise}>
+              <Glyph color={palette.inkMid} name="chevronDown" size={18} />
+            </Tap>
             <PrimaryButton compact icon="check" label="Finish" onPress={finish} />
           </View>
         </Reveal>
@@ -731,6 +745,16 @@ const styles = StyleSheet.create({
   fill: { flex: 1 },
   emptyWrap: { flex: 1, justifyContent: 'center', paddingHorizontal: space.md },
 
+  minimise: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: palette.surfaceHi,
+    borderWidth: 1,
+    borderColor: palette.lineHi,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

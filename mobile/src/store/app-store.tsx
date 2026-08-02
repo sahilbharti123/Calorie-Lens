@@ -260,10 +260,14 @@ export function mergeAppData(localInput: Partial<AppData>, remoteInput: Partial<
         .filter((meal) => !deletedMealIds.includes(meal.id)),
       workouts: unionById(remoteDay.workouts, localDay.workouts)
         .filter((workout) => !deletedWorkoutIds.includes(workout.id)),
+      // Water accumulates, so the larger figure is the more complete one.
       waterMl: Math.max(remoteDay.waterMl, localDay.waterMl),
-      steps: Math.max(remoteDay.steps, localDay.steps),
-      activeCalories: Math.max(remoteDay.activeCalories, localDay.activeCalories),
-      sleepHours: Math.max(remoteDay.sleepHours, localDay.sleepHours),
+      // Steps, active energy and sleep are *set* rather than added — by a health
+      // sync or by the user correcting a mistyped figure. Taking the maximum
+      // silently reverted every correction downwards, so the local value wins.
+      steps: localDay.steps || remoteDay.steps,
+      activeCalories: localDay.activeCalories || remoteDay.activeCalories,
+      sleepHours: localDay.sleepHours || remoteDay.sleepHours,
     };
   }
   const weights = new Map<string, WeightPoint>();
@@ -412,7 +416,12 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     return () => {
       active = false;
     };
-  }, [scope, session]);
+    // `scope` deliberately, not `session`: supabase mints a new session object
+    // on every token refresh, and depending on it re-ran hydration mid-use —
+    // which flips `hydrated` back to false and unmounts the whole navigation
+    // stack, dropping the user out of whatever screen they were on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope]);
 
   const dismissVaultReset = useCallback(() => setVaultReset(false), []);
 

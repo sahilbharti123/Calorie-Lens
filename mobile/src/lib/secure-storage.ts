@@ -112,15 +112,29 @@ export async function readEncryptedJson<T>(storageKey: string): Promise<T | null
     return null;
   }
 
+  // Fetched outside the try below on purpose. If the keychain itself fails —
+  // an iOS item briefly unavailable, an Android Keystore entry invalidated by a
+  // lock-screen change — that is a transient read error, not proof the
+  // ciphertext is unreadable. Discarding on it destroyed vaults that would have
+  // opened fine on the next launch.
+  let key: Uint8Array;
   try {
-    const plaintext = gcm(
-      await deviceKey(),
-      hexToBytes(nonceHex),
-      utf8ToBytes(storageKey),
-    ).decrypt(hexToBytes(ciphertextHex));
+    key = await deviceKey();
+  } catch (reason) {
+    throw new Error(
+      `Secure storage is unavailable, so ${storageKey} was left untouched: ${
+        reason instanceof Error ? reason.message : 'unknown error'
+      }`,
+    );
+  }
+
+  try {
+    const plaintext = gcm(key, hexToBytes(nonceHex), utf8ToBytes(storageKey))
+      .decrypt(hexToBytes(ciphertextHex));
     return JSON.parse(bytesToUtf8(plaintext)) as T;
   } catch {
-    // Wrong key (restored backup, cleared keychain) or a truncated write.
+    // The key is readable but does not open this record: a restored backup, or
+    // a truncated write. That genuinely cannot be recovered.
     await discard(storageKey);
     return null;
   }

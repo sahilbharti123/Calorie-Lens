@@ -9,6 +9,7 @@ import {
   Card,
   CountUp,
   Reveal,
+  ListRow,
   Screen,
   ScreenHeader,
   SectionTitle,
@@ -18,6 +19,8 @@ import {
 } from '@/src/components/ui';
 import { dateKey } from '@/src/lib/date';
 import { healthSetupCopy, healthSnapshotHasSamples, syncNativeHealth } from '@/src/lib/health';
+import { buildInsights, type Insight } from '@/src/lib/insights';
+import { personalDailyNudge } from '@/src/lib/personalization';
 import { dayTotals } from '@/src/lib/stats';
 import { loggingStreak } from '@/src/lib/streak';
 import { completedSessions } from '@/src/lib/training';
@@ -39,6 +42,16 @@ type SyncOutcome = '' | 'synced' | 'empty' | 'failed';
 /** Health data only exists in a native build — the same test `sync()` makes. */
 const NATIVE_HEALTH = Platform.OS === 'ios' || Platform.OS === 'android';
 
+/**
+ * Amber is the only colour that carries meaning in the insight list — lime is
+ * the app's accent and grey is simply quiet, so a warm chip always means "look".
+ */
+const TONE_COLOR: Record<Insight['tone'], string> = {
+  good: palette.lime,
+  watch: palette.warn,
+  neutral: palette.inkMid,
+};
+
 const HEALTH_CATEGORIES = 'Steps, activity, sleep and weight';
 
 /**
@@ -49,10 +62,13 @@ const HEALTH_CATEGORIES = 'Steps, activity, sleep and weight';
  */
 function connectionState(outcome: SyncOutcome, record: ReturnType<typeof useApp>['data']['healthSync']) {
   if (!NATIVE_HEALTH) return 'Not available in this build';
+  // The stored record outranks this screen's own last result. `outcome` is
+  // local state that survives tab switches, so a sync that failed on the Today
+  // tab used to leave this row still reading "Synced just now".
+  if (record?.status === 'error') return 'Needs attention';
   if (outcome === 'synced') return 'Synced just now';
   if (outcome === 'empty') return 'No shared samples yet';
   if (outcome === 'failed') return 'Not syncing';
-  if (record?.status === 'error') return 'Needs attention';
   if (record?.status === 'empty') return 'No shared samples yet';
   return record?.lastSuccessAt ? `Updated ${relativeTime(record.lastSuccessAt)}` : 'Not connected yet';
 }
@@ -74,6 +90,8 @@ export default function ProgressScreen() {
   /** What the last sync attempt actually reported. '' until one has run. */
   const [outcome, setOutcome] = useState<SyncOutcome>('');
   const [range, setRange] = useState<Range>('30');
+  /** Which insight row is expanded, or null when all are collapsed. */
+  const [openInsight, setOpenInsight] = useState<string | null>(null);
   const provider = data.healthSync?.source
     ?? (Platform.OS === 'ios' ? 'Apple Health' : 'Health Connect');
   const setup = healthSetupCopy();
@@ -196,6 +214,11 @@ export default function ProgressScreen() {
     : weightPoints.length === 1
       ? 'One weigh-in in this window. Log another and the line appears.'
       : 'No weigh-ins in this window yet. Step on the scale to restart the line.';
+
+  // Moved here from the Coach tab: a reading of the user's own numbers belongs
+  // next to the charts those numbers came from.
+  const insights = buildInsights(data, today);
+  const nudge = personalDailyNudge(data, today);
 
   return (
     <Screen>
@@ -375,9 +398,113 @@ export default function ProgressScreen() {
           </Card>
         </Reveal>
 
+        {/* ---------- What the logs say ---------- */}
+        <SectionTitle title="What your logs show" />
+        <Reveal index={7}>
+          <Card>
+            <View style={styles.focusHead}>
+              <View style={styles.focusIcon}>
+                <Glyph color={palette.lime} name="spark" size={15} />
+              </View>
+              <Text style={styles.focusLabel}>TODAY&apos;S FOCUS</Text>
+            </View>
+            <Text style={styles.focusTitle}>{nudge.title}</Text>
+            <Text style={styles.focusBody}>{nudge.body}</Text>
+          </Card>
+        </Reveal>
+
+        {insights.length ? (
+          <Reveal index={8} style={{ marginTop: space.sm }}>
+            <Card padded={false} style={styles.insightCard}>
+              {insights.map((insight, index) => {
+                const open = openInsight === insight.id;
+                return (
+                  <View
+                    key={insight.id}
+                    style={index < insights.length - 1 ? styles.insightRow : undefined}>
+                    <ListRow
+                      accent={TONE_COLOR[insight.tone]}
+                      detail={insight.summary}
+                      icon={insight.icon}
+                      last
+                      onPress={() => setOpenInsight(open ? null : insight.id)}
+                      right={
+                        <View style={open ? styles.chevronOpen : undefined}>
+                          <Glyph color={palette.inkLow} name="chevronDown" size={15} />
+                        </View>
+                      }
+                      title={insight.title}
+                    />
+                    {open ? (
+                      <Reveal from={6}>
+                        <Text style={styles.insightBody}>{insight.body}</Text>
+                      </Reveal>
+                    ) : null}
+                  </View>
+                );
+              })}
+            </Card>
+          </Reveal>
+        ) : (
+          <Reveal index={8} style={{ marginTop: space.sm }}>
+            <Well style={styles.moved}>
+              <Glyph color={palette.inkMid} name="info" size={15} />
+              <Text style={styles.movedText}>
+                Log three days of meals and this section starts reading patterns back to you —
+                protein adherence, calorie drift, training volume, and how wide your estimates
+                are running.
+              </Text>
+            </Well>
+          </Reveal>
+        )}
+
+        {/* ---------- The plan ---------- */}
+        <SectionTitle title="Your plan" />
+        <Reveal index={9}>
+          <Card>
+            <View style={styles.planRow}>
+              <View style={styles.planCell}>
+                <Text style={styles.planLabel}>DAILY CALORIES</Text>
+                <CountUp style={styles.planValue} value={data.goals.calories} />
+              </View>
+              <View style={styles.planDivider} />
+              <View style={styles.planCell}>
+                <Text style={styles.planLabel}>PROTEIN</Text>
+                <CountUp style={styles.planValue} suffix=" g" value={data.goals.protein} />
+              </View>
+              <View style={styles.planDivider} />
+              <View style={styles.planCell}>
+                <Text style={styles.planLabel}>TRAINING</Text>
+                <CountUp
+                  style={styles.planValue}
+                  suffix=" min"
+                  value={data.goals.weeklyWorkoutMinutes}
+                />
+              </View>
+            </View>
+
+            {data.plan.summary ? (
+              <Well style={styles.planWell}>
+                <Text style={styles.planSummary}>{data.plan.summary}</Text>
+                {data.plan.method ? <Text style={styles.planMethod}>{data.plan.method}</Text> : null}
+              </Well>
+            ) : null}
+
+            <View style={styles.planRows}>
+              <ListRow
+                detail="Recalculates from your profile"
+                icon="target"
+                last
+                onPress={() => router.push('/settings' as Href)}
+                title="Adjust goals and targets"
+              />
+            </View>
+          </Card>
+        </Reveal>
+
         {/* ---------- Connected health ---------- */}
         <SectionTitle title="Connected health" />
-        <Reveal index={7}>
+        <Reveal index={10}>
           <Card>
             <View style={styles.providerRow}>
               <View style={styles.providerIcon}>
@@ -425,7 +552,7 @@ export default function ProgressScreen() {
           </Card>
         </Reveal>
 
-        <Reveal index={8}>
+        <Reveal index={11}>
           <Text style={styles.privacy}>
             Health access is requested by the operating system. Vigorly reads only the categories you approve.
           </Text>
@@ -526,7 +653,49 @@ function MeterRow({
   );
 }
 
+const insightStyles = {
+  /* today's focus */
+  focusHead: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: space.sm },
+  focusIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: radius.sm,
+    backgroundColor: palette.limeSoft,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+  },
+  focusLabel: { ...text.label, color: palette.lime },
+  focusTitle: { ...text.value, color: palette.ink, marginTop: space.sm },
+  focusBody: { ...text.caption, color: palette.inkMid, marginTop: space.xs },
+
+  /* insight list */
+  insightCard: { paddingHorizontal: 14 },
+  insightRow: { borderBottomWidth: 1, borderBottomColor: palette.line },
+  insightBody: { ...text.body, color: palette.inkMid, paddingBottom: space.sm },
+  chevronOpen: { transform: [{ rotate: '180deg' }] },
+  moved: { flexDirection: 'row' as const, alignItems: 'flex-start' as const, gap: space.sm, padding: 14 },
+  movedText: { ...text.caption, color: palette.inkMid, flex: 1 },
+
+  /* plan */
+  planRow: { flexDirection: 'row' as const, alignItems: 'center' as const },
+  planCell: { flex: 1, alignItems: 'center' as const },
+  planDivider: { width: 1, alignSelf: 'stretch' as const, backgroundColor: palette.line },
+  planLabel: {
+    ...text.label,
+    fontSize: 8.5,
+    letterSpacing: 1,
+    color: palette.inkLow,
+    marginBottom: space.xs,
+  },
+  planValue: { ...text.headline, fontSize: 17, color: palette.ink, textAlign: 'center' as const, ...tabular },
+  planWell: { marginTop: space.md },
+  planSummary: { ...text.body, fontSize: 12.5, color: palette.ink },
+  planMethod: { ...text.caption, fontSize: 10.5, color: palette.inkLow, marginTop: space.xs },
+  planRows: { marginTop: space.sm },
+};
+
 const styles = StyleSheet.create({
+  ...insightStyles,
   content: { paddingHorizontal: space.md, paddingBottom: space.tabClearance },
 
   heroTop: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm },
