@@ -514,6 +514,7 @@ export function GhostButton({
   icon,
   tone = 'default',
   compact,
+  disabled,
   style,
 }: {
   label: string;
@@ -521,12 +522,18 @@ export function GhostButton({
   icon?: GlyphName;
   tone?: 'default' | 'danger';
   compact?: boolean;
+  disabled?: boolean;
   style?: StyleProp<ViewStyle>;
 }) {
-  const color = tone === 'danger' ? palette.danger : palette.ink;
+  const color = disabled ? palette.inkLow : tone === 'danger' ? palette.danger : palette.ink;
   return (
-    <Tap accessibilityLabel={label} onPress={onPress} style={style}>
-      <View style={[styles.ghost, compact && styles.primaryCompact, tone === 'danger' && styles.ghostDanger]}>
+    <Tap accessibilityLabel={label} disabled={disabled} onPress={onPress} style={style}>
+      <View style={[
+        styles.ghost,
+        compact && styles.primaryCompact,
+        tone === 'danger' && styles.ghostDanger,
+        disabled && styles.ghostDisabled,
+      ]}>
         {icon ? <Glyph color={color} name={icon} size={16} /> : null}
         <Text style={[styles.ghostLabel, { color }]}>{label}</Text>
       </View>
@@ -835,6 +842,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   ghostDanger: { borderColor: `${palette.danger}44`, backgroundColor: `${palette.danger}10` },
+  ghostDisabled: { opacity: 0.5 },
   ghostLabel: { ...text.row, fontSize: 14 },
   chip: {
     minHeight: 44,

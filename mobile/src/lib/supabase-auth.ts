@@ -45,11 +45,21 @@ export function parseAuthLink(url: string): AuthLinkTokens | null {
   }
 }
 
+/**
+ * The one sign-in failure a person can do something about from inside the app.
+ *
+ * Every other error is retype-it-and-try-again. This one is a dead end without
+ * help: the confirmation email may have gone to spam, expired, or never arrived
+ * at all, and no amount of correcting the password gets past it. The screen
+ * matches on this exact string to offer a resend.
+ */
+export const EMAIL_UNCONFIRMED = 'Confirm your email before signing in.';
+
 export function authErrorMessage(error: unknown) {
   const fallback = error instanceof Error ? error.message : 'That did not work. Try again.';
   const value = fallback.toLowerCase();
   if (value.includes('invalid login credentials')) return 'The email or password is incorrect.';
-  if (value.includes('email not confirmed')) return 'Confirm your email before signing in.';
+  if (value.includes('email not confirmed')) return EMAIL_UNCONFIRMED;
   if (value.includes('user already registered')) return 'An account already exists for this email. Sign in instead.';
   if (value.includes('password should be')) return 'Use a stronger password with at least 10 characters.';
   if (value.includes('rate limit')) return 'Too many attempts. Wait a moment and try again.';

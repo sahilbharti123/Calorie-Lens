@@ -13,6 +13,7 @@ import {
 import { BrandMark } from '@/src/components/brand-mark';
 import { Glyph, type GlyphName } from '@/src/components/glyph';
 import { GhostButton, PrimaryButton, Reveal, Screen, Segmented, Tap } from '@/src/components/ui';
+import { EMAIL_UNCONFIRMED } from '@/src/lib/supabase-auth';
 import { useAuth } from '@/src/store/auth-store';
 import { palette, radius, space, text } from '@/src/theme';
 
@@ -26,6 +27,7 @@ export default function AuthScreen() {
   const {
     continueOffline,
     requestPasswordReset,
+    resendConfirmation,
     serviceConfigured,
     signIn,
     signUp,
@@ -83,6 +85,25 @@ export default function AuthScreen() {
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'That did not work. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Sends the confirmation email again, for the person who never got the first
+   * one. Offered only when sign-in has actually failed for that reason, so it
+   * never appears as one more thing to read on a screen that already asks for
+   * an email and a password.
+   */
+  async function resend() {
+    setBusy(true);
+    try {
+      await resendConfirmation(email);
+      setError('');
+      setMessage('Sent again. Open the link on this phone, then sign in.');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not send it again. Try in a minute.');
     } finally {
       setBusy(false);
     }
@@ -180,6 +201,16 @@ export default function AuthScreen() {
 
           <Reveal index={4} style={styles.status}>
             {error ? <Notice body={error} icon="alert" tone="danger" /> : null}
+            {error === EMAIL_UNCONFIRMED ? (
+              <GhostButton
+                compact
+                disabled={busy}
+                icon="cloud"
+                label="Send the confirmation email again"
+                onPress={() => void resend()}
+                style={styles.resend}
+              />
+            ) : null}
             {message ? <Notice body={message} icon="check" tone="accent" /> : null}
             {!serviceConfigured ? (
               <Notice
@@ -316,6 +347,7 @@ const styles = StyleSheet.create({
   divider: { flexDirection: 'row', alignItems: 'center', gap: 12, marginVertical: 2 },
   rule: { flex: 1, height: 1, backgroundColor: palette.line },
   dividerLabel: { ...text.label, color: palette.inkLow },
+  resend: { marginTop: space.xs },
   offlineNote: {
     ...text.caption,
     fontSize: 11,

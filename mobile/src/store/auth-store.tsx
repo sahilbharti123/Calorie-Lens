@@ -25,6 +25,7 @@ type AuthContextValue = {
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (displayName: string, email: string, password: string) => Promise<SignupResult>;
   requestPasswordReset: (email: string) => Promise<void>;
+  resendConfirmation: (email: string) => Promise<void>;
   completeRecoveredPassword: (newPassword: string) => Promise<void>;
   continueOffline: () => void;
   completeOnboarding: () => Promise<void>;
@@ -148,6 +149,24 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
     if (error) throw new Error(authErrorMessage(error));
   }, []);
 
+  /**
+   * Sends the confirmation email again.
+   *
+   * Without this, someone who signed up and never received the email — spam
+   * folder, expired link, a provider that dropped it — cannot get into the
+   * account they just created and cannot create it again either, because the
+   * address is already registered. That is a closed door with no handle on it.
+   */
+  const resendConfirmation = useCallback(async (email: string) => {
+    const client = requireSupabase();
+    const { error } = await client.auth.resend({
+      type: 'signup',
+      email: email.trim(),
+      options: { emailRedirectTo: 'vigorly://auth' },
+    });
+    if (error) throw new Error(authErrorMessage(error));
+  }, []);
+
   const completeRecoveredPassword = useCallback(async (newPassword: string) => {
     const client = requireSupabase();
     const { error } = await client.auth.updateUser({ password: newPassword });
@@ -224,6 +243,7 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
     signIn,
     signUp,
     requestPasswordReset,
+    resendConfirmation,
     completeRecoveredPassword,
     continueOffline,
     completeOnboarding,
@@ -242,6 +262,7 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
     signIn,
     signUp,
     requestPasswordReset,
+    resendConfirmation,
     completeRecoveredPassword,
     continueOffline,
     completeOnboarding,
