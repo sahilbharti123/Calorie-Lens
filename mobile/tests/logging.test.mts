@@ -342,6 +342,55 @@ const CASES = [
     ],
   },
   {
+    // "glass" ends in an s. The old unit normaliser stripped it blindly and
+    // produced "glas", which matched no branch, so every "a glass of X" asked
+    // how much X you had.
+    name: 'a glass of something is a glass',
+    say: 'I had a glass of beer',
+    check: (r) => [
+      [ops(r).join() === 'meal', `expected a meal, got ${ops(r).join() || 'nothing'}`],
+      [(meal(r)?.items[0]?.quantity ?? '').includes('250 ml glass'), `measured as ${meal(r)?.items[0]?.quantity}`],
+    ],
+  },
+  {
+    name: 'a drink counted rather than measured',
+    say: 'two beers',
+    check: (r) => [
+      [ops(r).join() === 'meal', `expected a meal, got ${ops(r).join() || 'nothing'}`],
+      [kcal(r) === 284, `two 330 ml beers should be 284 kcal, got ${kcal(r)}`],
+    ],
+  },
+  {
+    name: 'one of a thing, with no number at all',
+    say: 'I had a beer',
+    check: (r) => [[kcal(r) === 142, `one beer should be 142 kcal, got ${kcal(r)}`]],
+  },
+  {
+    name: 'pints and pegs are real measures',
+    say: 'a pint of beer',
+    check: (r) => [
+      [(meal(r)?.items[0]?.quantity ?? '').includes('568 ml'), `measured as ${meal(r)?.items[0]?.quantity}`],
+    ],
+  },
+  {
+    // "had" made this look like a meal, so the unknown-food branch fired and
+    // returned, discarding the water it had already understood.
+    name: 'water in a sentence that also looks like a meal',
+    say: 'I had 2 glasses of water',
+    check: (r) => [
+      [ops(r).join() === 'water', `expected water only, got ${ops(r).join() || 'nothing'}`],
+      [r.operations[0]?.amount === 500, `expected 500 ml, got ${r.operations[0]?.amount}`],
+    ],
+  },
+  {
+    name: 'a workout and a drink in one sentence',
+    say: 'I walked 30 minutes moderate and had a beer',
+    context: { weightKg: 72 },
+    check: (r) => [
+      [ops(r).includes('workout') && ops(r).includes('meal'), `got ${ops(r).join() || 'nothing'}`],
+    ],
+  },
+  {
     name: 'food and water together',
     say: 'I had 2 rotis and 500 ml water',
     check: (r) => [

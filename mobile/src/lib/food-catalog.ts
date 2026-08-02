@@ -25,6 +25,13 @@ export type FoodReference = {
   fat: number;
   /** Present only on verified USDA records. */
   fdcId?: number;
+  /**
+   * What one of this thing is, in millilitres, when the user just says "a
+   * beer" or "two coffees". Without it, a drink counted rather than measured
+   * has no amount at all and the app has to ask — which is intolerable for the
+   * most ordinary way there is to describe a drink.
+   */
+  servingMl?: number;
   /** 'usda' when omitted. Decides how the entry describes its own source. */
   tier?: 'usda' | 'typical';
   /**

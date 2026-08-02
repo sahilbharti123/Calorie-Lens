@@ -48,16 +48,22 @@ const drink = (
   carbs: number,
   fat: number,
   extra: Partial<FoodReference> = {},
-) => t(name, aliases, calories, protein, carbs, fat, { density: 1.0, densityVariance: 0.02, ...extra });
+) => t(name, aliases, calories, protein, carbs, fat, {
+  density: 1.0,
+  densityVariance: 0.02,
+  // What "a beer" or "two coffees" means when no amount is given.
+  servingMl: 330,
+  ...extra,
+});
 
 export const TYPICAL_FOODS: FoodReference[] = [
   /* ----------------------------------------------------------- alcohol ---- */
   drink('Beer (regular, ~5%)', ['beer', 'lager', 'pint', 'hoegaarden', 'kingfisher', 'budweiser', 'heineken', 'corona'], 43, 0.5, 3.6, 0),
   drink('Beer (strong, ~8%)', ['strong beer', 'strong lager'], 65, 0.5, 5.5, 0),
   drink('Light beer', ['light beer', 'lite beer'], 29, 0.2, 1.6, 0),
-  drink('Wine (red)', ['red wine'], 85, 0.1, 2.6, 0, { density: 0.99 }),
-  drink('Wine (white)', ['white wine', 'wine'], 82, 0.1, 2.6, 0, { density: 0.99 }),
-  drink('Whisky, vodka, gin, rum (40%)', ['whisky', 'whiskey', 'vodka', 'gin', 'rum', 'tequila', 'brandy', 'spirit'], 231, 0, 0, 0, { density: 0.95 }),
+  drink('Wine (red)', ['red wine'], 85, 0.1, 2.6, 0, { servingMl: 150, density: 0.99 }),
+  drink('Wine (white)', ['white wine', 'wine'], 82, 0.1, 2.6, 0, { servingMl: 150, density: 0.99 }),
+  drink('Whisky, vodka, gin, rum (40%)', ['whisky', 'whiskey', 'vodka', 'gin', 'rum', 'tequila', 'brandy', 'spirit'], 231, 0, 0, 0, { servingMl: 30, density: 0.95 }),
   drink('Cocktail (mixed, sweet)', ['cocktail', 'mojito', 'margarita', 'pina colada', 'long island'], 120, 0.1, 14, 0, { calorieVariance: 0.4 }),
 
   /* --------------------------------------------------------- hot drinks --- */
@@ -67,37 +73,37 @@ export const TYPICAL_FOODS: FoodReference[] = [
   drink('Latte / cappuccino (whole milk)', ['latte', 'cappuccino', 'flat white', 'cafe latte'], 55, 3, 5.3, 2.4),
 
   /* -------------------------------------------------------- cold drinks --- */
-  drink('Cola / soft drink (regular)', ['cola', 'coke', 'pepsi', 'soft drink', 'soda', 'fizzy drink', 'sprite', 'fanta', 'thums up'], 42, 0, 10.6, 0, { density: 1.04 }),
+  drink('Cola / soft drink (regular)', ['cola', 'coke', 'pepsi', 'soft drink', 'soda', 'fizzy drink', 'sprite', 'fanta', 'thums up'], 42, 0, 10.6, 0, { servingMl: 200, density: 1.04 }),
   drink('Diet soft drink', ['diet coke', 'coke zero', 'diet soda', 'pepsi max'], 0.4, 0, 0.1, 0, { calorieVariance: 0.5 }),
-  drink('Orange juice', ['orange juice', 'juice', 'mosambi juice'], 45, 0.7, 10.4, 0.2, { density: 1.05 }),
-  drink('Apple juice', ['apple juice'], 46, 0.1, 11.3, 0.1, { density: 1.05 }),
-  drink('Mango shake / lassi (sweet)', ['mango shake', 'lassi', 'sweet lassi', 'milkshake', 'thickshake'], 95, 2.6, 15, 2.6, { density: 1.05 }),
-  drink('Buttermilk / chaas', ['buttermilk', 'chaas', 'chhach'], 30, 1.6, 3.2, 1, { density: 1.03 }),
-  drink('Coconut water', ['coconut water', 'nariyal pani'], 19, 0.7, 3.7, 0.2, { density: 1.01 }),
-  drink('Energy drink', ['energy drink', 'red bull', 'monster'], 45, 0, 11, 0, { density: 1.04 }),
-  drink('Sports drink', ['gatorade', 'sports drink', 'electrolyte drink'], 25, 0, 6, 0, { density: 1.03 }),
-  drink('Protein shake (whey, water)', ['protein shake', 'whey shake', 'protein drink'], 45, 8.5, 1.8, 0.7, { density: 1.02, calorieVariance: 0.3 }),
+  drink('Orange juice', ['orange juice', 'juice', 'mosambi juice'], 45, 0.7, 10.4, 0.2, { servingMl: 200, density: 1.05 }),
+  drink('Apple juice', ['apple juice'], 46, 0.1, 11.3, 0.1, { servingMl: 200, density: 1.05 }),
+  drink('Mango shake / lassi (sweet)', ['mango shake', 'lassi', 'sweet lassi', 'milkshake', 'thickshake'], 95, 2.6, 15, 2.6, { servingMl: 200, density: 1.05 }),
+  drink('Buttermilk / chaas', ['buttermilk', 'chaas', 'chhach'], 30, 1.6, 3.2, 1, { servingMl: 240, density: 1.03 }),
+  drink('Coconut water', ['coconut water', 'nariyal pani'], 19, 0.7, 3.7, 0.2, { servingMl: 200, density: 1.01 }),
+  drink('Energy drink', ['energy drink', 'red bull', 'monster'], 45, 0, 11, 0, { servingMl: 200, density: 1.04 }),
+  drink('Sports drink', ['gatorade', 'sports drink', 'electrolyte drink'], 25, 0, 6, 0, { servingMl: 300, density: 1.03 }),
+  drink('Protein shake (whey, water)', ['protein shake', 'whey shake', 'protein drink'], 45, 8.5, 1.8, 0.7, { servingMl: 200, density: 1.02, calorieVariance: 0.3 }),
 
   /* -------------------------------------------------- western mains ------- */
   t('Pizza (cheese, thin base)', ['pizza', 'margherita'], 266, 11, 33, 10, { pieceG: 107, pieceVariance: 0.3, calorieVariance: 0.28 }),
   t('Burger (beef, with bun)', ['burger', 'hamburger', 'cheeseburger', 'whopper'], 250, 13, 20, 12, { pieceG: 180, pieceVariance: 0.3, calorieVariance: 0.3 }),
   t('Chicken burger', ['chicken burger', 'chicken sandwich', 'mcchicken'], 230, 14, 22, 10, { pieceG: 170, pieceVariance: 0.3, calorieVariance: 0.3 }),
   t('Sandwich (filled)', ['sandwich', 'sub', 'panini'], 230, 10, 26, 9, { pieceG: 200, pieceVariance: 0.35, calorieVariance: 0.35 }),
-  t('Pasta with tomato sauce (cooked)', ['pasta', 'spaghetti', 'penne', 'macaroni'], 130, 4.5, 22, 2.6, { density: 0.7, densityVariance: 0.15 }),
-  t('Pasta with cream sauce (cooked)', ['white sauce pasta', 'alfredo', 'carbonara', 'creamy pasta'], 190, 6, 20, 9.5, { density: 0.72, densityVariance: 0.15, calorieVariance: 0.3 }),
-  t('Instant noodles (prepared)', ['maggi', 'instant noodles', 'ramen', 'cup noodles'], 145, 3.5, 19, 6, { density: 0.6, densityVariance: 0.2 }),
-  t('Hakka / stir-fried noodles', ['hakka noodles', 'chow mein', 'noodles', 'chowmein'], 165, 5, 24, 5.5, { density: 0.6, densityVariance: 0.2 }),
-  t('Fried rice', ['fried rice', 'egg fried rice'], 165, 4.5, 25, 5, { density: 0.8, densityVariance: 0.15 }),
-  t('French fries', ['french fries', 'fries', 'chips (fried)', 'wedges'], 310, 3.4, 41, 15, { density: 0.5, densityVariance: 0.2 }),
+  t('Pasta with tomato sauce (cooked)', ['pasta', 'spaghetti', 'penne', 'macaroni'], 130, 4.5, 22, 2.6, { servingMl: 250, density: 0.7, densityVariance: 0.15 }),
+  t('Pasta with cream sauce (cooked)', ['white sauce pasta', 'alfredo', 'carbonara', 'creamy pasta'], 190, 6, 20, 9.5, { servingMl: 250, density: 0.72, densityVariance: 0.15, calorieVariance: 0.3 }),
+  t('Instant noodles (prepared)', ['maggi', 'instant noodles', 'ramen', 'cup noodles'], 145, 3.5, 19, 6, { servingMl: 500, density: 0.6, densityVariance: 0.2 }),
+  t('Hakka / stir-fried noodles', ['hakka noodles', 'chow mein', 'noodles', 'chowmein'], 165, 5, 24, 5.5, { servingMl: 400, density: 0.6, densityVariance: 0.2 }),
+  t('Fried rice', ['fried rice', 'egg fried rice'], 165, 4.5, 25, 5, { servingMl: 330, density: 0.8, densityVariance: 0.15 }),
+  t('French fries', ['french fries', 'fries', 'chips (fried)', 'wedges'], 310, 3.4, 41, 15, { servingMl: 330, density: 0.5, densityVariance: 0.2 }),
   t('Chicken nuggets', ['nuggets', 'chicken nuggets'], 290, 15, 18, 18, { pieceG: 17, pieceVariance: 0.2 }),
   t('Fried chicken (coated)', ['fried chicken', 'kfc', 'broasted chicken'], 260, 20, 10, 16, { pieceG: 120, pieceVariance: 0.3 }),
   t('Omelette (2 eggs, oil)', ['omelette', 'omelet'], 165, 11, 1.2, 13, { pieceG: 120, pieceVariance: 0.25 }),
   t('Scrambled eggs', ['scrambled eggs', 'scrambled egg', 'bhurji'], 160, 11, 2, 12),
-  t('Soup (clear / vegetable)', ['soup', 'clear soup', 'tomato soup'], 40, 1.5, 6, 1.2, { density: 1.0, densityVariance: 0.05, calorieVariance: 0.35 }),
-  t('Salad with dressing', ['salad', 'caesar salad', 'green salad'], 90, 2.5, 7, 6, { density: 0.4, densityVariance: 0.25, calorieVariance: 0.4 }),
+  t('Soup (clear / vegetable)', ['soup', 'clear soup', 'tomato soup'], 40, 1.5, 6, 1.2, { servingMl: 330, density: 1.0, densityVariance: 0.05, calorieVariance: 0.35 }),
+  t('Salad with dressing', ['salad', 'caesar salad', 'green salad'], 90, 2.5, 7, 6, { servingMl: 330, density: 0.4, densityVariance: 0.25, calorieVariance: 0.4 }),
 
   /* --------------------------------------------------- indian mains ------- */
-  t('Paneer curry (butter / makhani)', ['paneer butter masala', 'butter paneer', 'shahi paneer', 'paneer curry', 'kadai paneer'], 220, 8, 9, 17, { density: 0.95, densityVariance: 0.12, calorieVariance: 0.3 }),
+  t('Paneer curry (butter / makhani)', ['paneer butter masala', 'butter paneer', 'shahi paneer', 'paneer curry', 'kadai paneer'], 220, 8, 9, 17, { servingMl: 330, density: 0.95, densityVariance: 0.12, calorieVariance: 0.3 }),
   t('Palak paneer', ['palak paneer', 'saag paneer'], 165, 8, 7, 12, { density: 0.95, densityVariance: 0.12, calorieVariance: 0.3 }),
   t('Paneer tikka (dry)', ['paneer tikka'], 235, 15, 6, 17, { calorieVariance: 0.28 }),
   t('Butter chicken', ['butter chicken', 'murgh makhani', 'chicken tikka masala', 'tikka masala'], 195, 12, 6, 13, { density: 0.95, densityVariance: 0.12, calorieVariance: 0.3 }),

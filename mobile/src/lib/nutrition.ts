@@ -37,18 +37,42 @@ function numberValue(value?: string) {
   return numberWords[value] ?? Number.parseFloat(value);
 }
 
+/**
+ * Every spelling of a unit, mapped explicitly.
+ *
+ * This used to strip a trailing "s" and patch up the damage afterwards, which
+ * quietly turned "glass" into "glas" — a unit nothing matched, so "a glass of
+ * beer" asked how much beer you had. A table cannot go wrong that way.
+ */
+const UNIT_ALIASES: Record<string, string> = {
+  kg: 'kg', kgs: 'kg', kilo: 'kg', kilos: 'kg', kilogram: 'kg', kilograms: 'kg',
+  g: 'g', gm: 'g', gms: 'g', gram: 'g', grams: 'g',
+  ml: 'ml', millilitre: 'ml', millilitres: 'ml', milliliter: 'ml', milliliters: 'ml',
+  l: 'l', litre: 'l', litres: 'l', liter: 'l', liters: 'l',
+  bowl: 'bowl', bowls: 'bowl', katori: 'bowl', katoris: 'bowl',
+  cup: 'cup', cups: 'cup', mug: 'cup', mugs: 'cup',
+  glass: 'glass', glasses: 'glass',
+  piece: 'piece', pieces: 'piece', slice: 'piece', slices: 'piece',
+  roti: 'piece', rotis: 'piece',
+  bottle: 'serving', bottles: 'serving', can: 'serving', cans: 'serving',
+  pint: 'pint', pints: 'pint', peg: 'peg', pegs: 'peg', shot: 'peg', shots: 'peg',
+  plate: 'serving', plates: 'serving', serving: 'serving', servings: 'serving',
+  tbsp: 'tbsp', tsp: 'tsp',
+};
+
+/** A pint and a peg are fixed measures; everything else is per-food. */
+const FIXED_ML: Record<string, number> = { pint: 568, peg: 30 };
+
 function normalizeUnit(raw: string | undefined, reference: FoodReference) {
-  const unit = (raw ?? (reference.pieceG ? 'piece' : 'unknown'))
-    .replace(/s$/, '')
-    .replace(/^glasse$/, 'glass')
-    .replace(/^gram$/, 'g')
-    .replace(/^litre$|^liter$/, 'l')
-    .replace(/^slice$/, 'piece')
-    .replace(/^katori$/, 'bowl');
-  return unit;
+  if (raw) return UNIT_ALIASES[raw] ?? raw;
+  // No unit said at all: "two beers", "a banana". Count it as one of whatever
+  // one of this food is.
+  if (reference.servingMl) return 'serving';
+  if (reference.pieceG) return 'piece';
+  return 'unknown';
 }
 
-const UNITS = 'kg|g|grams?|ml|l|litres?|liters?|bowls?|katoris?|cups?|glass(?:es)?|pieces?|slices?|tbsp|tsp';
+const UNITS = 'kgs?|kilos?|kilograms?|g|gms?|grams?|ml|millilit(?:re|er)s?|l|lit(?:re|er)s?|bowls?|katoris?|cups?|mugs?|glass(?:es)?|pieces?|slices?|rotis?|bottles?|cans?|pints?|pegs?|shots?|plates?|servings?|tbsp|tsp';
 const NUMBER = '\\d+(?:\\.\\d+)?|a|an|one|two|three|four|five|six|half|quarter';
 
 /**
@@ -449,7 +473,7 @@ function gramsFor(
   if (!amount) return amountQuestion(food, alias);
   if (unit === 'kg') return { grams: amount * 1000, low: amount * 980, high: amount * 1020, label: `${amount} kg` };
   if (unit === 'g') return { grams: amount, low: amount * 0.98, high: amount * 1.02, label: `${amount} g` };
-  if (unit === 'piece') {
+  if (unit === 'piece' || (unit === 'serving' && !food.servingMl && food.pieceG)) {
     const pieceG = food.pieceG ?? resolved?.pieceGrams.get(alias);
     if (!pieceG) {
       return {
@@ -487,6 +511,12 @@ function gramsFor(
   } else if (unit === 'l') {
     volumeMl = amount * 1000;
     label = `${amount} l`;
+  } else if (unit === 'serving' && food.servingMl) {
+    volumeMl = amount * food.servingMl;
+    label = amount === 1 ? `1 serving (${food.servingMl} ml)` : `${amount} × ${food.servingMl} ml`;
+  } else if (FIXED_ML[unit]) {
+    volumeMl = amount * FIXED_ML[unit];
+    label = `${amount} × ${FIXED_ML[unit]} ml ${unit}`;
   } else if (unit === 'tbsp' || unit === 'tsp') {
     volumeMl = amount * (unit === 'tbsp' ? 15 : 5);
     label = `${amount} ${unit}`;
@@ -726,7 +756,12 @@ export function parseCommandLocally(
             assumptions: ['label rounding and serving accuracy still apply'],
           }],
         });
-      } else {
+      } else if (!operations.length) {
+        // Only claim not to know the food when nothing else in the sentence was
+        // understood. This used to return unconditionally, throwing away the
+        // water, steps or workout already read out of the same sentence — so
+        // "I had 2 glasses of water" lost the water and asked about a food that
+        // was never there, because "had" alone made it look like a meal.
         return clarification(
           text,
           'I don’t have a verified reference for that food yet. Give its label calories, or log the main parts with amounts.',
