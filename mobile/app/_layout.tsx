@@ -116,6 +116,7 @@ function SessionRouter() {
           <Stack.Protected guard={onboardingComplete && canEnterApp}>
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen name="quick-log" options={{ presentation: 'modal', headerShown: false }} />
+            <Stack.Screen name="weight-log" options={{ presentation: 'modal', headerShown: false }} />
             <Stack.Screen name="settings" options={modalScreen('Profile & goals')} />
             <Stack.Screen name="account" options={modalScreen('Account & privacy')} />
             <Stack.Screen
@@ -128,6 +129,7 @@ function SessionRouter() {
             <Stack.Screen name="workout/[id]" options={{ title: 'Workout' }} />
             <Stack.Screen name="exercise/[id]" options={{ headerShown: false }} />
           </Stack.Protected>
+          <Stack.Screen name="auth-reset" options={{ headerShown: false }} />
         </Stack>
         <StatusBar style="light" />
       </WorkoutProvider>

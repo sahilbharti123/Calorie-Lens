@@ -38,6 +38,7 @@ import { healthSetupCopy, healthSnapshotHasSamples, syncNativeHealth } from '@/s
 import { useReducedMotion } from '@/src/lib/accessibility';
 import { calculatePersonalTargets, goalLabel } from '@/src/lib/personalization';
 import { ensureSpeechPermission, speechAvailable } from '@/src/lib/speech';
+import { targetWeightError } from '@/src/lib/weight';
 import { useApp } from '@/src/store/app-store';
 import { useAuth } from '@/src/store/auth-store';
 import { macroColor, motion, palette, radius, shadow, space, tabular, text } from '@/src/theme';
@@ -48,6 +49,7 @@ import type {
   EquationSex,
   ExperienceLevel,
   GoalPace,
+  Goals,
   MainChallenge,
   PersonalProfile,
   PrimaryGoal,
@@ -115,15 +117,16 @@ export default function OnboardingScreen() {
     hydrated,
     savePersonalization,
     updateCoachMemory,
+    updateGoals,
   } = useApp();
-  const { completeOnboarding, continueOffline } = useAuth();
+  const { completeOnboarding } = useAuth();
   const [step, setStep] = useState(0);
   const [primaryGoal, setPrimaryGoal] = useState<PrimaryGoal | null>(data.profile.primaryGoal ?? null);
   const [equationSex, setEquationSex] = useState<EquationSex | null>(data.profile.equationSex ?? null);
   const [age, setAge] = useState(data.profile.age ? String(data.profile.age) : '');
   const [height, setHeight] = useState(data.profile.heightCm ? String(data.profile.heightCm) : '');
   const [weight, setWeight] = useState(data.profile.weightKg ? String(data.profile.weightKg) : '');
-  const [targetWeight] = useState(data.profile.targetWeightKg ? String(data.profile.targetWeightKg) : '');
+  const [targetWeight, setTargetWeight] = useState(data.profile.targetWeightKg ? String(data.profile.targetWeightKg) : '');
   const [goalPace] = useState<GoalPace | null>(data.profile.goalPace ?? null);
   const [activityLevel] = useState<ActivityLevel | null>(data.profile.activityLevel ?? null);
   const [workoutPreference] = useState<WorkoutPreference | null>(data.profile.workoutPreference ?? null);
@@ -141,6 +144,8 @@ export default function OnboardingScreen() {
   const [healthMessage, setHealthMessage] = useState('');
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [voiceMessage, setVoiceMessage] = useState('');
+  const [voiceReady, setVoiceReady] = useState(false);
+  const [customGoals, setCustomGoals] = useState<Goals | null>(null);
   const setup = healthSetupCopy();
   const scroller = useRef<ScrollView>(null);
 
@@ -185,6 +190,7 @@ export default function OnboardingScreen() {
     workoutPreference,
   ]);
   const preview = useMemo(() => calculatePersonalTargets(profile), [profile]);
+  const targetError = targetWeightError(primaryGoal, numeric(weight), numeric(targetWeight));
 
   const canContinue = step === 0
     || (step === 1 && Boolean(primaryGoal))
@@ -192,7 +198,8 @@ export default function OnboardingScreen() {
       && Boolean(equationSex)
       && inRange(age, 18, 90)
       && inRange(height, 125, 230)
-      && inRange(weight, 35, 250))
+      && inRange(weight, 35, 250)
+      && !targetError)
     || step >= 3;
 
   useEffect(() => {
@@ -204,10 +211,12 @@ export default function OnboardingScreen() {
     setVoiceMessage('');
     try {
       if (!speechAvailable()) {
+        setVoiceReady(false);
         setVoiceMessage('This device cannot transcribe speech. Use the keyboard to log.');
         return;
       }
       const permission = await ensureSpeechPermission();
+      setVoiceReady(permission.granted);
       setVoiceMessage(
         permission.granted
           ? 'Microphone and on-device dictation are ready. Speech is transcribed on this phone — no account and no connection needed.'
@@ -216,6 +225,7 @@ export default function OnboardingScreen() {
             : 'Microphone or speech access is off. Turn it on in Settings to log by voice.',
       );
     } catch (error) {
+      setVoiceReady(false);
       setVoiceMessage(
         `${error instanceof Error ? error.message : 'Voice setup could not be checked.'} Typed logging always works.`,
       );
@@ -245,6 +255,7 @@ export default function OnboardingScreen() {
 
   async function finish() {
     savePersonalization(profile, numeric(bowl));
+    if (customGoals) updateGoals(customGoals);
     const diet = dietChoices.find((choice) => choice.value === dietStyle)?.title;
     const workout = workoutChoices.find((choice) => choice.value === workoutPreference)?.title;
     const challenge = challengeChoices.find((choice) => choice.value === mainChallenge)?.title;
@@ -268,8 +279,7 @@ export default function OnboardingScreen() {
       ].filter(Boolean).join(' '),
     });
     await completeOnboarding();
-    continueOffline();
-    router.replace('/(tabs)' as Href);
+    router.replace('/auth' as Href);
   }
 
   if (!hydrated) {
@@ -327,22 +337,32 @@ export default function OnboardingScreen() {
                   setAge={setAge}
                   setEquationSex={setEquationSex}
                   setHeight={setHeight}
+                  setTargetWeight={setTargetWeight}
                   setWeight={setWeight}
+                  targetError={targetError}
+                  targetWeight={targetWeight}
                   weight={weight}
                 />
               ) : (
                 <PlanPreview
+                  customized={Boolean(customGoals)}
                   goal={primaryGoal}
                   healthBusy={healthBusy}
                   healthMessage={healthMessage}
                   onConnectHealth={() => void connectHealth()}
+                  onCustomizeGoals={setCustomGoals}
+                  onResetGoals={() => setCustomGoals(null)}
                   onTestVoice={() => void checkVoice()}
                   plan={preview.plan}
-                  goals={preview.goals}
+                  goals={customGoals ?? preview.goals}
+                  recommendedGoals={preview.goals}
                   setupDetail={setup.detail}
                   setupTitle={setup.title}
+                  currentWeightKg={profile.weightKg}
+                  targetWeightKg={profile.targetWeightKg}
                   voiceBusy={voiceBusy}
                   voiceMessage={voiceMessage}
+                  voiceReady={voiceReady}
                 />
               )}
           </View>
@@ -365,7 +385,7 @@ export default function OnboardingScreen() {
             <PrimaryButton icon="check" label="Start with this plan" onPress={() => void finish()} />
           )}
           {step === TOTAL_STEPS - 1 ? (
-            <Text style={styles.footerHint}>No account required. Refine activity, food and training preferences later.</Text>
+            <Text style={styles.footerHint}>Next, create an account to sync this plan—or choose guest mode for this device.</Text>
           ) : null}
         </GlassFooter>
       </KeyboardAvoidingView>
@@ -583,7 +603,10 @@ function BodyBasics({
   setAge,
   setEquationSex,
   setHeight,
+  setTargetWeight,
   setWeight,
+  targetError,
+  targetWeight,
   weight,
 }: {
   age: string;
@@ -592,7 +615,10 @@ function BodyBasics({
   setAge: (value: string) => void;
   setEquationSex: (value: EquationSex) => void;
   setHeight: (value: string) => void;
+  setTargetWeight: (value: string) => void;
   setWeight: (value: string) => void;
+  targetError: string | null;
+  targetWeight: string;
   weight: string;
 }) {
   return (
@@ -601,7 +627,7 @@ function BodyBasics({
         <StepIntro
           eyebrow="YOUR STARTING POINT"
           title="Calculate energy from your body—not a generic 2,200."
-          body="Age, height and weight estimate resting energy. The equation option is about physiology used by the formula, not gender identity."
+          body="Current weight estimates today’s energy needs. Target weight gives the plan a direction and stays editable as your needs change."
         />
       </Reveal>
 
@@ -611,6 +637,13 @@ function BodyBasics({
             <NumberField label="Age" onChange={setAge} placeholder="29" unit="years" value={age} />
             <NumberField label="Height" onChange={setHeight} placeholder="172" unit="cm" value={height} />
             <NumberField label="Current weight" onChange={setWeight} placeholder="74" unit="kg" value={weight} />
+            <NumberField label="Target weight" onChange={setTargetWeight} placeholder="68" unit="kg" value={targetWeight} />
+          </View>
+          <View style={styles.noteRow}>
+            <Glyph color={targetError ? palette.danger : palette.inkLow} name={targetError ? 'alert' : 'target'} size={14} />
+            <Text style={targetError ? styles.errorText : styles.helperText}>
+              {targetError ?? 'Your calorie target uses your current body; the adjustment and progress guidance use the target direction.'}
+            </Text>
           </View>
         </Card>
       </Reveal>
@@ -624,30 +657,46 @@ function BodyBasics({
 }
 
 function PlanPreview({
+  currentWeightKg,
+  customized,
   goal,
   goals,
   healthBusy,
   healthMessage,
   onConnectHealth,
+  onCustomizeGoals,
+  onResetGoals,
   onTestVoice,
   plan,
+  recommendedGoals,
   setupDetail,
   setupTitle,
+  targetWeightKg,
   voiceBusy,
   voiceMessage,
+  voiceReady,
 }: {
+  currentWeightKg?: number;
+  customized: boolean;
   goal: PrimaryGoal | null;
-  goals: ReturnType<typeof calculatePersonalTargets>['goals'];
+  goals: Goals;
   healthBusy: boolean;
   healthMessage: string;
   onConnectHealth: () => void;
+  onCustomizeGoals: (goals: Goals) => void;
+  onResetGoals: () => void;
   onTestVoice: () => void;
   plan: ReturnType<typeof calculatePersonalTargets>['plan'];
+  recommendedGoals: Goals;
   setupDetail: string;
   setupTitle: string;
+  targetWeightKg?: number;
   voiceBusy: boolean;
   voiceMessage: string;
+  voiceReady: boolean;
 }) {
+  const [editingTargets, setEditingTargets] = useState(false);
+
   return (
     <>
       <Reveal>
@@ -660,12 +709,36 @@ function PlanPreview({
 
       <Reveal index={1}>
         <Card glow raised>
-          <Text style={styles.planLabel}>DAILY TARGETS</Text>
+          <View style={styles.planHead}>
+            <Text style={styles.planLabel}>{customized ? 'CUSTOM DAILY TARGETS' : 'RECOMMENDED DAILY TARGETS'}</Text>
+            <Tap
+              accessibilityLabel="Customize recommended targets"
+              onPress={() => setEditingTargets((current) => !current)}
+              scaleTo={0.95}>
+              <Text style={styles.planEdit}>{editingTargets ? 'Close' : 'Customize'}</Text>
+            </Tap>
+          </View>
           <View style={styles.planValueRow}>
             <CountUp style={styles.planValue} value={goals.calories} />
             <Text style={styles.planUnit}>kcal</Text>
           </View>
-          <Text style={styles.planSummary}>{plan.summary}</Text>
+          <Text style={styles.planSummary}>
+            {customized ? 'Adjusted to your preferences. You can reset to the calculated recommendation at any time.' : plan.summary}
+          </Text>
+
+          {currentWeightKg && targetWeightKg ? (
+            <Well style={styles.targetJourney}>
+              <View>
+                <Text style={styles.methodLabel}>CURRENT</Text>
+                <Text style={styles.targetValue}>{currentWeightKg.toFixed(1)} kg</Text>
+              </View>
+              <Glyph color={palette.inkLow} name="chevron" size={15} />
+              <View style={styles.targetEnd}>
+                <Text style={styles.methodLabel}>TARGET</Text>
+                <Text style={styles.targetValue}>{targetWeightKg.toFixed(1)} kg</Text>
+              </View>
+            </Well>
+          ) : null}
 
           <View style={styles.macros}>
             <MacroChip color={macroColor.protein} goal={goals.protein} label="Protein" value={goals.protein} />
@@ -682,24 +755,41 @@ function PlanPreview({
         </Card>
       </Reveal>
 
-      <Reveal index={2} style={styles.metrics}>
+      {editingTargets ? (
+        <Reveal index={2} style={styles.group}>
+          <TargetEditor
+            goals={goals}
+            onApply={(next) => {
+              onCustomizeGoals(next);
+              setEditingTargets(false);
+            }}
+            onReset={() => {
+              onResetGoals();
+              setEditingTargets(false);
+            }}
+            recommended={recommendedGoals}
+          />
+        </Reveal>
+      ) : null}
+
+      <Reveal index={editingTargets ? 3 : 2} style={styles.metrics}>
         <Metric
           accent={palette.info}
-          detail="Daily target"
+          detail={customized ? 'Your target' : 'Recommended'}
           icon="water"
           label="Water"
           value={`${(goals.waterMl / 1000).toFixed(1)} L`}
         />
         <Metric
           accent={palette.lime}
-          detail="Daily target"
+          detail={customized ? 'Your target' : 'Recommended'}
           icon="steps"
           label="Steps"
           value={goals.steps.toLocaleString()}
         />
         <Metric
           accent={palette.fat}
-          detail="Per week"
+          detail={customized ? 'Your weekly target' : 'Recommended / week'}
           icon="timer"
           label="Training"
           value={`${goals.weeklyWorkoutMinutes} min`}
@@ -737,7 +827,8 @@ function PlanPreview({
         <SetupCard
           body="Checks microphone and speech permission. Dictation is transcribed on this device, so voice logging is free and needs no account."
           busy={voiceBusy}
-          button="Test voice"
+          button={voiceReady ? 'Voice configured' : 'Turn on voice'}
+          configured={voiceReady}
           icon="mic"
           message={voiceMessage}
           onPress={onTestVoice}
@@ -752,6 +843,7 @@ function SetupCard({
   body,
   busy,
   button,
+  configured = false,
   icon,
   message,
   onPress,
@@ -760,6 +852,7 @@ function SetupCard({
   body: string;
   busy: boolean;
   button: string;
+  configured?: boolean;
   icon: GlyphName;
   message: string;
   onPress: () => void;
@@ -783,14 +876,80 @@ function SetupCard({
       ) : null}
       <Tap
         accessibilityLabel={button}
-        disabled={busy}
+        disabled={busy || configured}
         onPress={onPress}
         scaleTo={0.975}
-        style={styles.setupAction}>
+        style={[styles.setupAction, configured && styles.setupActionConfigured]}>
         {busy
           ? <ActivityIndicator color={palette.lime} size="small" />
-          : <Text style={styles.setupActionLabel}>{button}</Text>}
+          : (
+            <View style={styles.setupActionContent}>
+              {configured ? <Glyph color={palette.lime} name="check" size={15} /> : null}
+              <Text style={styles.setupActionLabel}>{button}</Text>
+            </View>
+          )}
       </Tap>
+    </Card>
+  );
+}
+
+function TargetEditor({
+  goals,
+  onApply,
+  onReset,
+  recommended,
+}: {
+  goals: Goals;
+  onApply: (goals: Goals) => void;
+  onReset: () => void;
+  recommended: Goals;
+}) {
+  const [draft, setDraft] = useState<Record<keyof Goals, string>>(() => ({
+    calories: String(goals.calories),
+    protein: String(goals.protein),
+    carbs: String(goals.carbs),
+    fat: String(goals.fat),
+    waterMl: String(goals.waterMl),
+    steps: String(goals.steps),
+    weeklyWorkoutMinutes: String(goals.weeklyWorkoutMinutes),
+    strengthDays: String(goals.strengthDays),
+  }));
+
+  function field(key: keyof Goals) {
+    return (value: string) => setDraft((current) => ({ ...current, [key]: value }));
+  }
+
+  function apply() {
+    onApply({
+      calories: Math.max(500, Number(draft.calories) || recommended.calories),
+      protein: Math.max(10, Number(draft.protein) || recommended.protein),
+      carbs: Math.max(20, Number(draft.carbs) || recommended.carbs),
+      fat: Math.max(20, Number(draft.fat) || recommended.fat),
+      waterMl: Math.max(250, Number(draft.waterMl) || recommended.waterMl),
+      steps: Math.max(500, Number(draft.steps) || recommended.steps),
+      weeklyWorkoutMinutes: Math.max(10, Number(draft.weeklyWorkoutMinutes) || recommended.weeklyWorkoutMinutes),
+      strengthDays: Math.min(7, Math.max(0, Number(draft.strengthDays) || recommended.strengthDays)),
+    });
+  }
+
+  return (
+    <Card>
+      <Text style={styles.cardTitle}>Customize the recommendation</Text>
+      <Text style={styles.cardBody}>These values become your active targets. You can change them again from Profile & goals.</Text>
+      <View style={[styles.grid, styles.targetGrid]}>
+        <NumberField label="Calories" onChange={field('calories')} placeholder={String(recommended.calories)} unit="kcal" value={draft.calories} />
+        <NumberField label="Protein" onChange={field('protein')} placeholder={String(recommended.protein)} unit="g" value={draft.protein} />
+        <NumberField label="Carbs" onChange={field('carbs')} placeholder={String(recommended.carbs)} unit="g" value={draft.carbs} />
+        <NumberField label="Fat" onChange={field('fat')} placeholder={String(recommended.fat)} unit="g" value={draft.fat} />
+        <NumberField label="Water" onChange={field('waterMl')} placeholder={String(recommended.waterMl)} unit="ml" value={draft.waterMl} />
+        <NumberField label="Steps" onChange={field('steps')} placeholder={String(recommended.steps)} unit="steps" value={draft.steps} />
+        <NumberField label="Weekly training" onChange={field('weeklyWorkoutMinutes')} placeholder={String(recommended.weeklyWorkoutMinutes)} unit="min" value={draft.weeklyWorkoutMinutes} />
+        <NumberField label="Strength days" onChange={field('strengthDays')} placeholder={String(recommended.strengthDays)} unit="/ week" value={draft.strengthDays} />
+      </View>
+      <View style={styles.editorActions}>
+        <GhostButton compact label="Reset recommendation" onPress={onReset} />
+        <PrimaryButton icon="check" label="Use these targets" onPress={apply} />
+      </View>
     </Card>
   );
 }
@@ -986,16 +1145,23 @@ const styles = StyleSheet.create({
   cardBody: { ...text.caption, color: palette.inkMid, marginTop: 6 },
 
   /* plan payoff */
+  planHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
   planLabel: { ...text.label, color: palette.lime },
+  planEdit: { ...text.value, fontSize: 12, color: palette.lime, paddingVertical: 6 },
   planValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 12 },
   planValue: { ...text.hero, ...tabular, color: palette.ink },
   planUnit: { ...text.caption, color: palette.inkMid },
   planSummary: { ...text.caption, color: palette.inkMid, marginTop: 8 },
+  targetJourney: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: 14 },
+  targetEnd: { flex: 1, alignItems: 'flex-end' },
+  targetValue: { ...text.value, ...tabular, color: palette.ink, marginTop: 3 },
   macros: { flexDirection: 'row', gap: 7, marginTop: 18 },
   method: { marginTop: 14 },
   methodLabel: { ...text.label, fontSize: 8.5, letterSpacing: 1.2, color: palette.inkLow },
   methodText: { ...text.caption, fontSize: 11, color: palette.inkMid, marginTop: 4 },
   metrics: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  targetGrid: { marginTop: 16 },
+  editorActions: { gap: 8, marginTop: 16 },
 
   /* permission cards */
   setupHead: { flexDirection: 'row', alignItems: 'center', gap: 12 },
@@ -1019,6 +1185,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  setupActionConfigured: { borderColor: `${palette.lime}55`, backgroundColor: palette.limeSoft },
+  setupActionContent: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   setupActionLabel: { ...text.value, color: palette.lime },
 
   footerHint: { ...text.caption, fontSize: 11, color: palette.inkLow, textAlign: 'center' },

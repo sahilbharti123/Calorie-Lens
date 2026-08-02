@@ -30,7 +30,6 @@ import {
   Well,
 } from '@/src/components/ui';
 import { apiRequest } from '@/src/lib/api-client';
-import { readRecoveryCode } from '@/src/lib/session';
 import { mergeAppData, normalizeData, useApp } from '@/src/store/app-store';
 import { useAuth } from '@/src/store/auth-store';
 import { palette, radius, space, tabular, text } from '@/src/theme';
@@ -85,16 +84,11 @@ export default function AccountScreen() {
     coachingStyle: data.coachMemory.coachingStyle,
     notes: data.coachMemory.notes,
   });
-  const [recoveryCode, setRecoveryCode] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
   const [aiUsage, setAIUsage] = useState<AIUsage | null>(null);
-
-  useEffect(() => {
-    void readRecoveryCode(session?.user.id).then((value) => setRecoveryCode(value ?? ''));
-  }, [session?.user.id]);
 
   useEffect(() => {
     if (!session) {
@@ -200,7 +194,7 @@ export default function AccountScreen() {
   function confirmDelete() {
     Alert.alert(
       'Delete account and cloud data?',
-      'This permanently removes your account and encrypted server vault. Export a backup first if you may need the data later.',
+      'This permanently removes your Supabase account and cloud fitness data. Export a backup first if you may need the data later.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -208,8 +202,8 @@ export default function AccountScreen() {
           style: 'destructive',
           onPress: () => {
             setBusy('delete');
-            void clearLocalData()
-              .then(deleteAccount)
+            void deleteAccount()
+              .then(clearLocalData)
               .catch((reason) => setMessage(
                 reason instanceof Error ? reason.message : 'Could not delete the account.',
               ))
@@ -277,7 +271,7 @@ export default function AccountScreen() {
 
               <Text style={styles.heroBody}>
                 {session
-                  ? 'Automatic encrypted sync is active for this account.'
+                  ? 'Supabase sync is active. Row-level security limits this cloud vault to your account.'
                   : 'Local records are encrypted with a device-only key.'}
               </Text>
 
@@ -399,14 +393,13 @@ export default function AccountScreen() {
             </Card>
           </Reveal>
 
-          {/* ---------- Backup & recovery ---------- */}
+          {/* ---------- Backup & restore ---------- */}
           <Reveal index={4}>
-            <SectionTitle title="Backup & recovery" />
+            <SectionTitle title="Backup & restore" />
             <Card padded={false} style={styles.rowCard}>
               <ListRow
                 detail="Portable JSON copy of all fitness records"
                 icon="download"
-                last={!recoveryCode}
                 onPress={busy === 'export' ? undefined : () => void exportBackup()}
                 right={busy === 'export'
                   ? <ActivityIndicator color={palette.lime} size="small" />
@@ -424,20 +417,6 @@ export default function AccountScreen() {
                 title="Restore a backup"
               />
             </Card>
-            {recoveryCode ? (
-              <Card style={styles.recovery}>
-                <View style={styles.recoveryHead}>
-                  <Glyph color={palette.lime} name="lock" size={14} />
-                  <Text style={styles.recoveryLabel}>ACCOUNT RECOVERY CODE</Text>
-                </View>
-                <Well style={styles.recoveryWell}>
-                  <Text selectable style={styles.recoveryCode}>{recoveryCode}</Text>
-                </Well>
-                <Text style={styles.recoveryHelp}>
-                  Keep a second copy somewhere private. It is not included in fitness backups.
-                </Text>
-              </Card>
-            ) : null}
           </Reveal>
 
           {/* ---------- Security ---------- */}
@@ -493,7 +472,7 @@ export default function AccountScreen() {
                 />
               ) : (
                 <ListRow
-                  detail="Enable recovery and cross-device sync"
+                  detail="Enable Supabase backup, recovery and cross-device sync"
                   icon="cloud"
                   last
                   onPress={exitOfflineMode}
@@ -526,7 +505,7 @@ export default function AccountScreen() {
                     tone="danger"
                   />
                   <Text style={styles.dangerNote}>
-                    Permanently remove the account and cloud vault
+                    Permanently remove your Supabase account and cloud data
                   </Text>
                 </>
               ) : null}
@@ -535,7 +514,7 @@ export default function AccountScreen() {
 
           <Reveal index={8}>
             <Text style={styles.footnote}>
-              Local fitness data uses authenticated encryption. Account sessions and recovery data are held in the platform secure credential store.
+              Local fitness data uses authenticated encryption. Supabase Auth handles credentials; database row-level security scopes cloud fitness data to your user ID.
             </Text>
           </Reveal>
         </ScrollView>
@@ -652,13 +631,6 @@ const styles = StyleSheet.create({
   },
   inputMultiline: { minHeight: 92, textAlignVertical: 'top' },
   inputFocused: { borderColor: palette.lime },
-
-  recovery: { marginTop: space.sm },
-  recoveryHead: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  recoveryLabel: { ...text.label, color: palette.lime },
-  recoveryWell: { marginTop: 11 },
-  recoveryCode: { ...text.value, fontSize: 14, letterSpacing: 0.7, color: palette.lime, ...tabular },
-  recoveryHelp: { ...text.caption, fontSize: 11, color: palette.inkLow, marginTop: 11 },
 
   notice: {
     flexDirection: 'row',

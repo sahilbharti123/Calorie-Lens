@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { type Href, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -21,6 +21,7 @@ import { healthSetupCopy, healthSnapshotHasSamples, syncNativeHealth } from '@/s
 import { dayTotals } from '@/src/lib/stats';
 import { loggingStreak } from '@/src/lib/streak';
 import { completedSessions } from '@/src/lib/training';
+import { weightToTargetCopy } from '@/src/lib/weight';
 import { useApp } from '@/src/store/app-store';
 import { palette, radius, space, tabular, text } from '@/src/theme';
 
@@ -175,6 +176,8 @@ export default function ProgressScreen() {
   }
 
   const currentWeight = data.weights.at(-1)?.kg;
+  const targetWeight = data.profile.targetWeightKg;
+  const targetCopy = weightToTargetCopy(currentWeight, targetWeight);
   const mealDays = week.filter((day) => day.calories > 0).length;
   const stepDays = week.filter((day) => day.steps >= data.goals.steps).length;
 
@@ -189,7 +192,7 @@ export default function ProgressScreen() {
   const streak = loggingStreak(data);
   const hydration = Math.round((today.waterMl / data.goals.waterMl) * 100);
   const weightPrompt = data.weights.length === 0
-    ? 'Say “my weight is 82.4 kg” to start your trend.'
+    ? 'Tap Log weight, then type the scale number or say it aloud.'
     : weightPoints.length === 1
       ? 'One weigh-in in this window. Log another and the line appears.'
       : 'No weigh-ins in this window yet. Step on the scale to restart the line.';
@@ -223,7 +226,7 @@ export default function ProgressScreen() {
               </View>
               <Tap
                 accessibilityLabel="Log weight"
-                onPress={() => router.push({ pathname: '/quick-log', params: { prefill: 'My weight is ' } })}
+                onPress={() => router.push('/weight-log' as Href)}
                 scaleTo={0.94}
                 style={styles.action}>
                 <Glyph color={palette.lime} name="scale" size={13} />
@@ -248,6 +251,23 @@ export default function ProgressScreen() {
                 <Text style={styles.deltaCaption}>over {rangeLabel.toLowerCase()}</Text>
               </View>
             )}
+
+            <Well style={styles.targetWell}>
+              <View style={styles.targetRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.targetLabel}>TARGET WEIGHT</Text>
+                  <Text style={styles.targetText}>
+                    {targetWeight ? `${targetWeight.toFixed(1)} kg${targetCopy ? ` · ${targetCopy}` : ''}` : 'Not set yet'}
+                  </Text>
+                </View>
+                <Tap
+                  accessibilityLabel={targetWeight ? 'Edit target weight' : 'Add target weight'}
+                  onPress={() => router.push('/settings')}
+                  scaleTo={0.95}>
+                  <Text style={styles.targetAction}>{targetWeight ? 'Edit' : 'Add target'}</Text>
+                </Tap>
+              </View>
+            </Well>
 
             <TrendChart emptyBody={weightPrompt} height={152} points={weightPoints} unit=" kg" />
           </Card>
@@ -531,6 +551,11 @@ const styles = StyleSheet.create({
   delta: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.sm },
   deltaValue: { ...text.value, fontSize: 12.5, color: palette.ink, ...tabular },
   deltaCaption: { ...text.caption, fontSize: 11, color: palette.inkLow },
+  targetWell: { marginTop: space.md },
+  targetRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  targetLabel: { ...text.label, fontSize: 8.5, color: palette.inkLow },
+  targetText: { ...text.caption, color: palette.inkMid, marginTop: 4 },
+  targetAction: { ...text.value, fontSize: 11.5, color: palette.lime, paddingVertical: 8 },
 
   tiles: { flexDirection: 'row', gap: space.sm, marginTop: space.md },
   tile: { flex: 1, minHeight: 112, padding: 11 },

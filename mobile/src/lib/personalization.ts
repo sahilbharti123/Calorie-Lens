@@ -72,6 +72,9 @@ export function calculatePersonalTargets(profile: PersonalProfile): {
   const pace = profile.goalPace ?? 'gentle';
   const activity = profile.activityLevel ?? 'lightly-active';
   const weight = clamp(profile.weightKg ?? 70, 35, 250);
+  const targetWeight = profile.targetWeightKg
+    ? clamp(profile.targetWeightKg, 35, 250)
+    : undefined;
   const height = clamp(profile.heightCm ?? 170, 125, 230);
   const age = clamp(profile.age ?? 30, 18, 90);
   const sexOffset = profile.equationSex === 'male'
@@ -81,14 +84,31 @@ export function calculatePersonalTargets(profile: PersonalProfile): {
       : -78;
   const restingCalories = Math.round((10 * weight) + (6.25 * height) - (5 * age) + sexOffset);
   const maintenanceCalories = roundTo(restingCalories * activityFactors[activity], 25);
-  const requestedAdjustment = goalAdjustments[goal][pace];
+  const targetDirectionAdjustment = targetWeight == null
+    ? 0
+    : targetWeight < weight - 0.5
+      ? -250
+      : targetWeight > weight + 0.5
+        ? 150
+        : 0;
+  // Habit/fitness goals can still include a weight destination. Keep the
+  // adjustment gentle, while explicit fat-loss and muscle-gain goals retain
+  // their selected pace.
+  const requestedAdjustment = goal === 'improve-fitness' || goal === 'build-habits'
+    ? targetDirectionAdjustment
+    : goalAdjustments[goal][pace];
   const floor = profile.equationSex === 'male' ? 1500 : profile.equationSex === 'female' ? 1200 : 1350;
   const rawCalories = maintenanceCalories + requestedAdjustment;
   const calories = roundTo(Math.max(floor, rawCalories), 50);
   const appliedAdjustment = calories - maintenanceCalories;
 
   const heightMetres = height / 100;
-  const referenceWeight = Math.min(weight, 27.5 * heightMetres * heightMetres);
+  // Protein is anchored to the lower of current and target weight for a loss
+  // plan, avoiding an inflated prescription while still respecting the goal.
+  const goalReferenceWeight = goal === 'lose-fat' && targetWeight
+    ? Math.min(weight, targetWeight)
+    : weight;
+  const referenceWeight = Math.min(goalReferenceWeight, 27.5 * heightMetres * heightMetres);
   const protein = roundTo(clamp(referenceWeight * proteinFactors[goal], 45, 220), 5);
   const fat = roundTo(Math.max(45, (calories * 0.28) / 9), 5);
   const carbs = roundTo(Math.max(100, (calories - (protein * 4) - (fat * 9)) / 4), 5);
@@ -122,6 +142,12 @@ export function calculatePersonalTargets(profile: PersonalProfile): {
   if (pace === 'ambitious' && (goal === 'lose-fat' || goal === 'build-muscle')) {
     warnings.push('Ambitious pace is an estimate. Adjust using your 2–4 week weight and energy trend.');
   }
+  if (targetWeight && goal === 'lose-fat' && targetWeight >= weight) {
+    warnings.push('The target weight does not match a fat-loss direction. Update it before using the plan.');
+  }
+  if (targetWeight && goal === 'build-muscle' && targetWeight <= weight) {
+    warnings.push('The target weight does not match a muscle-gain direction. Update it before using the plan.');
+  }
   const bmi = weight / (heightMetres * heightMetres);
   if (bmi < 18.5 || bmi >= 35) {
     warnings.push('General equations can be less accurate at this body size; consider clinician or dietitian guidance.');
@@ -149,7 +175,7 @@ export function calculatePersonalTargets(profile: PersonalProfile): {
       calorieAdjustment: appliedAdjustment,
       restingCalories,
       method: 'Mifflin–St Jeor estimate × activity factor',
-      summary: `${goalLabel(goal)} · ${calories} kcal (${direction}) · ${protein} g protein`,
+      summary: `${goalLabel(goal)}${targetWeight ? ` toward ${targetWeight} kg` : ''} · ${calories} kcal (${direction}) · ${protein} g protein`,
       warnings,
       updatedAt: new Date().toISOString(),
     },

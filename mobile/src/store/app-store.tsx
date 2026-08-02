@@ -9,7 +9,6 @@ import React, {
 } from 'react';
 import { ActivityIndicator, AppState, View } from 'react-native';
 
-import { ApiError, apiRequest } from '@/src/lib/api-client';
 import { dateKey } from '@/src/lib/date';
 import { healthMetricHasSamples, healthSnapshotHasSamples } from '@/src/lib/health';
 import { mergeSavedMeals, savedMealFromGroup, type MealGroup } from '@/src/lib/meals';
@@ -20,6 +19,11 @@ import {
   takeUnreadableRecords,
   writeEncryptedJson,
 } from '@/src/lib/secure-storage';
+import {
+  CloudConflictError,
+  readCloudSnapshot,
+  writeCloudSnapshot,
+} from '@/src/lib/supabase-sync';
 import { initialTraining, mergeTraining, normalizeTraining } from '@/src/lib/training';
 import { useAuth } from '@/src/store/auth-store';
 import { palette } from '@/src/theme';
@@ -322,14 +326,8 @@ type AppContextValue = {
 
 const AppContext = createContext<AppContextValue | null>(null);
 
-type SyncResponse = {
-  payload: Partial<AppData>;
-  version: number;
-  updatedAt: string;
-};
-
 export function AppProvider({ children }: React.PropsWithChildren) {
-  const { session, justCreated } = useAuth();
+  const { session } = useAuth();
   const scope = session?.user.id ?? 'guest';
   const [data, setData] = useState<AppData>(initialData);
   const [hydrated, setHydrated] = useState(false);
@@ -361,7 +359,7 @@ export function AppProvider({ children }: React.PropsWithChildren) {
       if (!saved && !session) {
         saved = await readEncryptedJson<AppData>(LEGACY_STORAGE_KEY);
       }
-      if (!saved && session && justCreated) {
+      if (!saved && session) {
         saved = await readEncryptedJson<StoredEnvelope | AppData>(storageKey('guest'))
           ?? await readEncryptedJson<AppData>(LEGACY_STORAGE_KEY);
       }
@@ -370,14 +368,18 @@ export function AppProvider({ children }: React.PropsWithChildren) {
       let nextVersion = isEnvelope(saved) ? saved.cloudVersion : 0;
       if (session) {
         try {
-          const remote = await apiRequest<SyncResponse>('/v1/sync', {}, session);
+          const remote = await readCloudSnapshot(session.user.id);
           nextVersion = remote.version;
           const hasRemote = remote.payload && Object.keys(remote.payload).length > 0;
           nextData = hasRemote ? mergeAppData(localData, remote.payload) : localData;
-          const uploaded = await apiRequest<SyncResponse>('/v1/sync', {
-            method: 'PUT',
-            body: JSON.stringify({ payload: nextData, base_version: nextVersion }),
-          }, session);
+          let uploaded;
+          try {
+            uploaded = await writeCloudSnapshot(nextData, nextVersion);
+          } catch (error) {
+            if (!(error instanceof CloudConflictError)) throw error;
+            nextData = mergeAppData(nextData, error.snapshot.payload);
+            uploaded = await writeCloudSnapshot(nextData, error.snapshot.version);
+          }
           nextVersion = uploaded.version;
           setSyncState('synced');
         } catch (error) {
@@ -410,7 +412,7 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     return () => {
       active = false;
     };
-  }, [scope, session, justCreated]);
+  }, [scope, session]);
 
   const dismissVaultReset = useCallback(() => setVaultReset(false), []);
 
@@ -423,39 +425,21 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     setSyncState('syncing');
     setSyncError('');
     try {
-      const response = await apiRequest<SyncResponse>('/v1/sync', {
-        method: 'PUT',
-        body: JSON.stringify({
-          payload: dataRef.current,
-          base_version: versionRef.current,
-        }),
-      }, session);
+      let response;
+      let nextData = dataRef.current;
+      try {
+        response = await writeCloudSnapshot(nextData, versionRef.current);
+      } catch (error) {
+        if (!(error instanceof CloudConflictError)) throw error;
+        nextData = mergeAppData(nextData, error.snapshot.payload);
+        setData(nextData);
+        dataRef.current = nextData;
+        response = await writeCloudSnapshot(nextData, error.snapshot.version);
+      }
       setCloudVersion(response.version);
       versionRef.current = response.version;
       setSyncState('synced');
     } catch (error) {
-      if (error instanceof ApiError && error.status === 409) {
-        const conflict = error.detail as {
-          payload?: Partial<AppData>;
-          version?: number;
-        };
-        if (conflict.payload && typeof conflict.version === 'number') {
-          const merged = mergeAppData(dataRef.current, conflict.payload);
-          setData(merged);
-          dataRef.current = merged;
-          const response = await apiRequest<SyncResponse>('/v1/sync', {
-            method: 'PUT',
-            body: JSON.stringify({
-              payload: merged,
-              base_version: conflict.version,
-            }),
-          }, session);
-          setCloudVersion(response.version);
-          versionRef.current = response.version;
-          setSyncState('synced');
-          return;
-        }
-      }
       setSyncState('error');
       setSyncError(error instanceof Error ? error.message : 'Cloud sync failed.');
     } finally {

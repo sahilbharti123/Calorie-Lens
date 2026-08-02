@@ -1,28 +1,31 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { Linking } from 'react-native';
 
-import { ApiError, apiRequest, apiUrl } from '@/src/lib/api-client';
+import { authErrorMessage, parseAuthLink, toAuthSession } from '@/src/lib/supabase-auth';
 import {
-  clearRecoveryCode,
   clearSession,
+  readOfflineMode,
   readOnboardingComplete,
-  readSession,
+  saveOfflineMode,
   saveOnboardingComplete,
-  saveRecoveryCode,
   saveSession,
 } from '@/src/lib/session';
+import { requireSupabase, supabase, supabaseConfigured } from '@/src/lib/supabase';
 import type { AuthSession } from '@/src/types';
 
-type SignupResult = { recoveryCode: string };
+type SignupResult = { needsEmailConfirmation: boolean };
 type AuthContextValue = {
   session: AuthSession | null;
   loading: boolean;
   offlineMode: boolean;
   onboardingComplete: boolean;
-  justCreated: boolean;
   serviceConfigured: boolean;
+  passwordRecoveryReady: boolean;
+  recoveryError: string;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (displayName: string, email: string, password: string) => Promise<SignupResult>;
-  recover: (email: string, recoveryCode: string, newPassword: string) => Promise<SignupResult>;
+  requestPasswordReset: (email: string) => Promise<void>;
+  completeRecoveredPassword: (newPassword: string) => Promise<void>;
   continueOffline: () => void;
   completeOnboarding: () => Promise<void>;
   restartOnboarding: () => Promise<void>;
@@ -34,126 +37,153 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-type AuthResponse = AuthSession & { recoveryCode?: string };
-
 export function AuthProvider({ children }: React.PropsWithChildren) {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [offlineMode, setOfflineMode] = useState(false);
   const [onboardingComplete, setOnboardingComplete] = useState(false);
-  const [justCreated, setJustCreated] = useState(false);
-  const serviceConfigured = Boolean(apiUrl());
+  const [passwordRecoveryReady, setPasswordRecoveryReady] = useState(false);
+  const [recoveryError, setRecoveryError] = useState('');
 
   useEffect(() => {
-    Promise.all([readSession(), readOnboardingComplete()])
-      .then(async ([stored, hasOnboarded]) => {
-        setOnboardingComplete(hasOnboarded);
-        if (!stored) {
-          // Completing onboarding opts this device into the private offline
-          // vault. Do not turn account creation into a recurring launch gate.
-          setOfflineMode(hasOnboarded);
-          return;
-        }
-        setSession(stored);
-        try {
-          const response = await apiRequest<{ user: AuthSession['user'] }>('/v1/auth/me', {}, stored);
-          const refreshed = { ...stored, user: response.user };
-          setSession(refreshed);
-          await saveSession(refreshed);
-        } catch (error) {
-          if (error instanceof ApiError && error.status === 401) {
-            await clearSession();
-            setSession(null);
-          }
-        }
-      })
-      .finally(() => setLoading(false));
+    let active = true;
+    void Promise.all([
+      readOnboardingComplete(),
+      readOfflineMode(),
+      supabase?.auth.getSession() ?? Promise.resolve({ data: { session: null }, error: null }),
+    ]).then(([hasOnboarded, storedOfflineMode, result]) => {
+      if (!active) return;
+      setOnboardingComplete(hasOnboarded);
+      if (result.error) setRecoveryError(authErrorMessage(result.error));
+      if (result.data.session) {
+        const next = toAuthSession(result.data.session);
+        setSession(next);
+        setOfflineMode(false);
+        void saveSession(next);
+      } else {
+        setOfflineMode(storedOfflineMode);
+        void clearSession();
+      }
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+
+    const subscription = supabase?.auth.onAuthStateChange((event, nextSession) => {
+      if (!active) return;
+      if (event === 'PASSWORD_RECOVERY') setPasswordRecoveryReady(true);
+      if (nextSession) {
+        const next = toAuthSession(nextSession);
+        setSession(next);
+        setOfflineMode(false);
+        void Promise.all([saveSession(next), saveOfflineMode(false)]);
+      } else if (event === 'SIGNED_OUT') {
+        setSession(null);
+        void clearSession();
+      }
+    });
+
+    return () => {
+      active = false;
+      subscription?.data.subscription.unsubscribe();
+    };
   }, []);
 
-  const acceptSession = useCallback(async (response: AuthResponse) => {
-    const next: AuthSession = {
-      token: response.token,
-      expiresAt: response.expiresAt,
-      user: response.user,
-    };
-    await saveSession(next);
-    setOfflineMode(false);
-    setSession(next);
+  useEffect(() => {
+    async function handleUrl(url: string | null) {
+      if (!url || !supabase) return;
+      const tokens = parseAuthLink(url);
+      if (!tokens) return;
+      setRecoveryError('');
+      const { error } = await supabase.auth.setSession({
+        access_token: tokens.accessToken,
+        refresh_token: tokens.refreshToken,
+      });
+      if (error) {
+        setRecoveryError(authErrorMessage(error));
+        return;
+      }
+      if (tokens.type === 'recovery' || url.includes('auth-reset')) {
+        setPasswordRecoveryReady(true);
+      }
+    }
+
+    void Linking.getInitialURL().then(handleUrl);
+    const subscription = Linking.addEventListener('url', ({ url }) => void handleUrl(url));
+    return () => subscription.remove();
   }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    const response = await apiRequest<AuthResponse>('/v1/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    });
-    await acceptSession(response);
-    setJustCreated(false);
-  }, [acceptSession]);
+    const client = requireSupabase();
+    const { error } = await client.auth.signInWithPassword({ email: email.trim(), password });
+    if (error) throw new Error(authErrorMessage(error));
+  }, []);
 
   const signUp = useCallback(async (displayName: string, email: string, password: string) => {
-    const response = await apiRequest<AuthResponse>('/v1/auth/signup', {
-      method: 'POST',
-      body: JSON.stringify({ display_name: displayName, email, password }),
+    const client = requireSupabase();
+    const { data, error } = await client.auth.signUp({
+      email: email.trim(),
+      password,
+      options: {
+        data: { display_name: displayName.trim() },
+        emailRedirectTo: 'vigorly://auth',
+      },
     });
-    await acceptSession(response);
-    setJustCreated(true);
-    if (response.recoveryCode) {
-      await saveRecoveryCode(response.user.id, response.recoveryCode);
-    }
-    return { recoveryCode: response.recoveryCode ?? '' };
-  }, [acceptSession]);
+    if (error) throw new Error(authErrorMessage(error));
+    return { needsEmailConfirmation: !data.session };
+  }, []);
 
-  const recover = useCallback(async (email: string, recoveryCode: string, newPassword: string) => {
-    const response = await apiRequest<{
-      userId: string;
-      recoveryCode: string;
-    }>('/v1/auth/recover', {
-      method: 'POST',
-      body: JSON.stringify({
-        email,
-        recovery_code: recoveryCode,
-        new_password: newPassword,
-      }),
+  const requestPasswordReset = useCallback(async (email: string) => {
+    const client = requireSupabase();
+    const { error } = await client.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: 'vigorly://auth-reset',
     });
-    await saveRecoveryCode(response.userId, response.recoveryCode);
-    return { recoveryCode: response.recoveryCode };
+    if (error) throw new Error(authErrorMessage(error));
+  }, []);
+
+  const completeRecoveredPassword = useCallback(async (newPassword: string) => {
+    const client = requireSupabase();
+    const { error } = await client.auth.updateUser({ password: newPassword });
+    if (error) throw new Error(authErrorMessage(error));
+    setPasswordRecoveryReady(false);
   }, []);
 
   const signOut = useCallback(async () => {
-    if (session) {
-      try {
-        await apiRequest('/v1/auth/logout', { method: 'POST' }, session);
-      } catch {
-        // The local credential still has to be removed when the service is offline.
-      }
+    const client = supabase;
+    if (client) {
+      const { error } = await client.auth.signOut({ scope: 'global' });
+      if (error) await client.auth.signOut({ scope: 'local' });
     }
-    await clearSession();
+    await Promise.all([clearSession(), saveOfflineMode(false)]);
     setSession(null);
     setOfflineMode(false);
-    setJustCreated(false);
-  }, [session]);
+  }, []);
 
   const deleteAccount = useCallback(async () => {
-    if (!session) return;
-    await apiRequest('/v1/account', { method: 'DELETE' }, session);
-    await Promise.all([clearSession(), clearRecoveryCode()]);
+    const client = requireSupabase();
+    const { error } = await client.rpc('delete_own_account');
+    if (error) throw new Error(authErrorMessage(error));
+    // The user row and its auth session no longer exist after the RPC.
+    await client.auth.signOut({ scope: 'local' });
+    await Promise.all([clearSession(), saveOfflineMode(false)]);
     setSession(null);
     setOfflineMode(false);
-    setJustCreated(false);
-  }, [session]);
+  }, []);
 
   const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
-    if (!session) throw new ApiError(401, 'Sign in to change your password.');
-    await apiRequest('/v1/auth/change-password', {
-      method: 'POST',
-      body: JSON.stringify({
-        current_password: currentPassword,
-        new_password: newPassword,
-      }),
-    }, session);
+    const client = requireSupabase();
+    if (!session?.user.email) throw new Error('Sign in to change your password.');
+    const reauthenticated = await client.auth.signInWithPassword({
+      email: session.user.email,
+      password: currentPassword,
+    });
+    if (reauthenticated.error) throw new Error(authErrorMessage(reauthenticated.error));
+    const updated = await client.auth.updateUser({ password: newPassword });
+    if (updated.error) throw new Error(authErrorMessage(updated.error));
+    const signedOut = await client.auth.signOut({ scope: 'global' });
+    if (signedOut.error) await client.auth.signOut({ scope: 'local' });
     await clearSession();
     setSession(null);
-  }, [session]);
+  }, [session?.user.email]);
 
   const completeOnboarding = useCallback(async () => {
     await saveOnboardingComplete(true);
@@ -165,20 +195,32 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
     setOnboardingComplete(false);
   }, []);
 
+  const continueOffline = useCallback(() => {
+    setOfflineMode(true);
+    void saveOfflineMode(true);
+  }, []);
+
+  const exitOfflineMode = useCallback(() => {
+    setOfflineMode(false);
+    void saveOfflineMode(false);
+  }, []);
+
   const value = useMemo<AuthContextValue>(() => ({
     session,
     loading,
     offlineMode,
     onboardingComplete,
-    justCreated,
-    serviceConfigured,
+    serviceConfigured: supabaseConfigured,
+    passwordRecoveryReady,
+    recoveryError,
     signIn,
     signUp,
-    recover,
-    continueOffline: () => setOfflineMode(true),
+    requestPasswordReset,
+    completeRecoveredPassword,
+    continueOffline,
     completeOnboarding,
     restartOnboarding,
-    exitOfflineMode: () => setOfflineMode(false),
+    exitOfflineMode,
     signOut,
     deleteAccount,
     changePassword,
@@ -187,13 +229,16 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
     loading,
     offlineMode,
     onboardingComplete,
-    justCreated,
-    serviceConfigured,
+    passwordRecoveryReady,
+    recoveryError,
     signIn,
     signUp,
-    recover,
+    requestPasswordReset,
+    completeRecoveredPassword,
+    continueOffline,
     completeOnboarding,
     restartOnboarding,
+    exitOfflineMode,
     signOut,
     deleteAccount,
     changePassword,

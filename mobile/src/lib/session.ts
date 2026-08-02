@@ -10,8 +10,8 @@ import type { AuthSession } from '@/src/types';
  * The name a user sees is set in app.json; these are invisible.
  */
 const SESSION_KEY = 'calorie-lens.auth-session.v1';
-const RECOVERY_KEY = 'calorie-lens.recovery-code.v1';
 const ONBOARDING_KEY = 'calorie-lens.onboarding-complete.v2';
+const OFFLINE_MODE_KEY = 'calorie-lens.offline-mode.v1';
 const OPTIONS: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
 };
@@ -56,29 +56,6 @@ export async function clearSession() {
   await removeItem(SESSION_KEY);
 }
 
-export async function saveRecoveryCode(userId: string, code: string) {
-  await setItem(
-    RECOVERY_KEY,
-    JSON.stringify({ userId, code }),
-  );
-}
-
-export async function readRecoveryCode(userId?: string) {
-  const value = await getItem(RECOVERY_KEY);
-  if (!value) return null;
-  try {
-    const saved = JSON.parse(value) as { userId: string; code: string };
-    if (userId && saved.userId !== userId) return null;
-    return saved.code;
-  } catch {
-    return null;
-  }
-}
-
-export async function clearRecoveryCode() {
-  await removeItem(RECOVERY_KEY);
-}
-
 export async function readOnboardingComplete() {
   return (await getItem(ONBOARDING_KEY)) === 'true';
 }
@@ -89,4 +66,13 @@ export async function saveOnboardingComplete(complete: boolean) {
   } else {
     await removeItem(ONBOARDING_KEY);
   }
+}
+
+export async function readOfflineMode() {
+  return (await getItem(OFFLINE_MODE_KEY)) === 'true';
+}
+
+export async function saveOfflineMode(enabled: boolean) {
+  if (enabled) await setItem(OFFLINE_MODE_KEY, 'true');
+  else await removeItem(OFFLINE_MODE_KEY);
 }

@@ -41,7 +41,21 @@ function buildVocabulary() {
   for (const exercise of EXERCISES) {
     words.add(exercise.name);
   }
-  for (const unit of ['katori', 'roti', 'chapati', 'paratha', 'grams', 'millilitres', 'scoop', 'bowl']) {
+  for (const unit of [
+    'katori',
+    'roti',
+    'chapati',
+    'paratha',
+    'grams',
+    'millilitres',
+    'scoop',
+    'bowl',
+    'current weight',
+    'body weight',
+    'kilograms',
+    'kilos',
+    'pounds',
+  ]) {
     words.add(unit);
   }
   // iOS ignores very long contextual lists; keep the highest-value terms.

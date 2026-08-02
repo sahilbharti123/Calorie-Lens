@@ -1,6 +1,6 @@
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { type Href, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -145,6 +145,24 @@ export default function QuickLogScreen() {
     // "e.g." chips are editable starting points, not literal answers.
     if (suggestion.toLowerCase().startsWith('e.g.')) {
       setText(suggestion.slice(4).trim());
+      setShowKeyboard(true);
+      return;
+    }
+    // Category chips are navigation choices, not complete log entries. Sending
+    // the word "Weight" back through the parser used to produce the same
+    // question again, which made the chip feel dead.
+    if (parsed?.clarification?.question === 'What would you like me to log?') {
+      if (suggestion === 'Weight') {
+        router.replace('/weight-log' as Href);
+        return;
+      }
+      const starters: Record<string, string> = {
+        'A meal': 'I ate ',
+        Water: 'I drank ',
+        'A workout': 'I did ',
+      };
+      setParsed(null);
+      setText(starters[suggestion] ?? '');
       setShowKeyboard(true);
       return;
     }

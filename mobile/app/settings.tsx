@@ -22,13 +22,14 @@ import {
   SectionTitle,
 } from '@/src/components/ui';
 import { useApp } from '@/src/store/app-store';
+import { targetWeightError } from '@/src/lib/weight';
 import { palette, radius, space, tabular, text } from '@/src/theme';
 import type { Goals } from '@/src/types';
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { data, updateEstimationProfile, updateGoals } = useApp();
-  const currentWeight = data.weights.at(-1)?.kg;
+  const { data, savePersonalization, updateGoals } = useApp();
+  const currentWeight = data.weights.at(-1)?.kg ?? data.profile.weightKg;
   const [values, setValues] = useState<Record<keyof Goals, string>>({
     calories: String(data.goals.calories),
     protein: String(data.goals.protein),
@@ -40,20 +41,25 @@ export default function SettingsScreen() {
     strengthDays: String(data.goals.strengthDays),
   });
   const [weightKg, setWeightKg] = useState(currentWeight ? String(currentWeight) : '');
+  const [targetWeightKg, setTargetWeightKg] = useState(data.profile.targetWeightKg ? String(data.profile.targetWeightKg) : '');
   const [bowlMl, setBowlMl] = useState(data.estimation.bowlMl ? String(data.estimation.bowlMl) : '');
 
   function save() {
     const parsedWeight = Number(weightKg);
+    const parsedTargetWeight = Number(targetWeightKg);
     const parsedBowl = Number(bowlMl);
-    updateEstimationProfile(
+    savePersonalization(
       {
-        bowlMl: Number.isFinite(parsedBowl) && parsedBowl > 0
-          ? Math.min(1000, Math.max(50, parsedBowl))
+        ...data.profile,
+        weightKg: Number.isFinite(parsedWeight) && parsedWeight > 0
+          ? Math.min(250, Math.max(35, parsedWeight))
+          : data.profile.weightKg,
+        targetWeightKg: Number.isFinite(parsedTargetWeight) && parsedTargetWeight > 0
+          ? Math.min(250, Math.max(35, parsedTargetWeight))
           : undefined,
-        cupMl: data.estimation.cupMl || 200,
       },
-      Number.isFinite(parsedWeight) && parsedWeight > 0
-        ? Math.min(400, Math.max(20, parsedWeight))
+      Number.isFinite(parsedBowl) && parsedBowl > 0
+        ? Math.min(1000, Math.max(50, parsedBowl))
         : undefined,
     );
     updateGoals({
@@ -81,6 +87,11 @@ export default function SettingsScreen() {
   }
 
   const previewCalories = Number(values.calories) || 0;
+  const targetError = targetWeightError(
+    data.profile.primaryGoal,
+    Number(weightKg) || currentWeight,
+    Number(targetWeightKg) || undefined,
+  );
 
   return (
     <Screen edges={['bottom']}>
@@ -108,7 +119,7 @@ export default function SettingsScreen() {
               </View>
               <Text style={styles.heroTitle}>Calibrate once. Log faster.</Text>
               <Text style={styles.heroBody}>
-                Weight personalizes workout burn. Your usual bowl size narrows meal estimates.
+                Current weight calibrates energy. Target weight gives the plan and Progress trend a direction.
               </Text>
             </Card>
           </Reveal>
@@ -126,6 +137,13 @@ export default function SettingsScreen() {
                   value={weightKg}
                 />
                 <Field
+                  label="Target weight"
+                  onChangeText={setTargetWeightKg}
+                  placeholder="e.g. 82"
+                  unit="kg"
+                  value={targetWeightKg}
+                />
+                <Field
                   label="Usual bowl size"
                   onChangeText={setBowlMl}
                   placeholder="e.g. 200"
@@ -134,7 +152,10 @@ export default function SettingsScreen() {
                 />
               </View>
               <Text style={styles.helper}>
-                Fill your usual bowl with water and measure it once. If left blank, voice logging asks before estimating a bowl.
+                {targetError ?? 'The target should reflect the direction you selected during onboarding. Progress uses it as context, not judgment.'}
+              </Text>
+              <Text style={styles.helper}>
+                Fill your usual bowl with water and measure it once. If left blank, logging asks before estimating a bowl.
               </Text>
             </Card>
           </Reveal>
@@ -204,7 +225,7 @@ export default function SettingsScreen() {
         </ScrollView>
 
         <GlassFooter>
-          <PrimaryButton icon="check" label="Save profile and goals" onPress={save} />
+          <PrimaryButton disabled={Boolean(targetError)} icon="check" label="Save profile and goals" onPress={save} />
         </GlassFooter>
       </KeyboardAvoidingView>
     </Screen>

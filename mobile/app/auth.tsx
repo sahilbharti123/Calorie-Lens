@@ -1,4 +1,4 @@
-import { type ComponentProps, useCallback, useEffect, useState } from 'react';
+import { type ComponentProps, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -12,73 +12,54 @@ import {
 
 import { BrandMark } from '@/src/components/brand-mark';
 import { Glyph, type GlyphName } from '@/src/components/glyph';
-import {
-  GhostButton,
-  PrimaryButton,
-  Reveal,
-  Screen,
-  Segmented,
-  Tap,
-} from '@/src/components/ui';
-import { apiUrl, readServiceHealth } from '@/src/lib/api-client';
+import { GhostButton, PrimaryButton, Reveal, Screen, Segmented, Tap } from '@/src/components/ui';
 import { useAuth } from '@/src/store/auth-store';
 import { palette, radius, space, text } from '@/src/theme';
 
 type Mode = 'login' | 'signup' | 'recover';
-type ServiceProbe = 'checking' | 'online' | 'offline';
-
-const MODES: { value: Mode; label: string }[] = [
+const MODES: { value: 'login' | 'signup'; label: string }[] = [
   { value: 'login', label: 'Sign in' },
-  { value: 'signup', label: 'Create' },
-  { value: 'recover', label: 'Recover' },
+  { value: 'signup', label: 'Create account' },
 ];
 
 export default function AuthScreen() {
   const {
     continueOffline,
-    recover,
+    requestPasswordReset,
     serviceConfigured,
     signIn,
     signUp,
   } = useAuth();
-  const [mode, setMode] = useState<Mode>('signup');
+  const [mode, setMode] = useState<Mode>('login');
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [recoveryCode, setRecoveryCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [probe, setProbe] = useState<ServiceProbe>('checking');
+  const [message, setMessage] = useState('');
 
-  const checkService = useCallback(async () => {
-    if (!serviceConfigured) {
-      setProbe('offline');
-      return;
-    }
-    setProbe('checking');
-    try {
-      await readServiceHealth();
-      setProbe('online');
-    } catch {
-      setProbe('offline');
-    }
-  }, [serviceConfigured]);
-
-  useEffect(() => {
-    void checkService();
-  }, [checkService]);
+  function changeMode(next: 'login' | 'signup') {
+    setMode(next);
+    setError('');
+    setMessage('');
+  }
 
   async function submit() {
     setError('');
-    if (!email.trim() || !password) {
-      setError('Enter your email and password.');
+    setMessage('');
+    if (!email.trim()) {
+      setError('Enter your email address.');
+      return;
+    }
+    if (mode !== 'recover' && !password) {
+      setError('Enter your password.');
       return;
     }
     if (mode === 'signup' && !displayName.trim()) {
       setError('Tell us what to call you.');
       return;
     }
-    if (password.length < 10) {
+    if (mode !== 'recover' && password.length < 10) {
       setError('Use at least 10 characters for your password.');
       return;
     }
@@ -88,23 +69,17 @@ export default function AuthScreen() {
         await signIn(email, password);
       } else if (mode === 'signup') {
         const result = await signUp(displayName, email, password);
-        Alert.alert(
-          'Save your recovery code',
-          `${result.recoveryCode}\n\nThis is the only way to reset your password. It is also saved securely on this device.`,
-        );
-      } else {
-        if (!recoveryCode.trim()) {
-          setError('Enter your recovery code.');
-          return;
+        if (result.needsEmailConfirmation) {
+          setMode('login');
+          setPassword('');
+          Alert.alert(
+            'Confirm your email',
+            'We sent you a secure confirmation link. Open it on this phone, then sign in.',
+          );
         }
-        const result = await recover(email, recoveryCode, password);
-        setPassword('');
-        setRecoveryCode('');
-        setMode('login');
-        Alert.alert(
-          'Password reset',
-          `You can now sign in with your new password.\n\nNew recovery code:\n${result.recoveryCode}`,
-        );
+      } else {
+        await requestPasswordReset(email);
+        setMessage('Reset link sent. Open the email on this phone to choose a new password.');
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'That did not work. Try again.');
@@ -114,17 +89,10 @@ export default function AuthScreen() {
   }
 
   const title = mode === 'login'
-    ? 'Your fitness, remembered.'
+    ? 'Your progress, on every device.'
     : mode === 'signup'
-      ? 'Build your private fitness vault.'
-      : 'Recover your account.';
-
-  const probeTone = probe === 'online'
-    ? palette.lime
-    : probe === 'offline'
-      ? palette.danger
-      : palette.inkMid;
-  const probeIcon: GlyphName = probe === 'online' ? 'shield' : probe === 'offline' ? 'alert' : 'cloud';
+      ? 'Create your Vigorly account.'
+      : 'Reset your password.';
 
   return (
     <Screen edges={['top', 'bottom']}>
@@ -140,26 +108,38 @@ export default function AuthScreen() {
               <BrandMark size={64} />
               <View style={styles.brandCopy}>
                 <Text style={styles.wordmark}>VIGORLY</Text>
-                <Text style={styles.kicker}>PRIVATE · LIGHT · YOURS</Text>
+                <Text style={styles.kicker}>SECURE · SYNCED · YOURS</Text>
               </View>
             </View>
           </Reveal>
 
           <Reveal index={1} style={styles.intro}>
-            <Text style={styles.title}>{title}</Text>
+            <Text accessibilityRole="header" style={styles.title}>{title}</Text>
             <Text style={styles.subtitle}>
-              Log food, workouts, water and health data in seconds. Your account keeps it synced across your devices.
+              {mode === 'recover'
+                ? 'We’ll email a secure link. Your password is handled by Supabase Auth and is never stored in your fitness data.'
+                : 'Sign in to securely back up your plan, meals, workouts and progress with Supabase.'}
             </Text>
           </Reveal>
 
-          <Reveal index={2}>
-            <Segmented onChange={setMode} options={MODES} value={mode} />
-          </Reveal>
+          {mode !== 'recover' ? (
+            <Reveal index={2}>
+              <Segmented onChange={changeMode} options={MODES} value={mode} />
+            </Reveal>
+          ) : (
+            <Reveal index={2}>
+              <Tap accessibilityLabel="Back to sign in" onPress={() => changeMode('login')} style={styles.backLink}>
+                <Glyph color={palette.lime} name="chevron" size={14} />
+                <Text style={styles.linkText}>Back to sign in</Text>
+              </Tap>
+            </Reveal>
+          )}
 
           <Reveal index={3} style={styles.form}>
             {mode === 'signup' ? (
               <Field
                 autoCapitalize="words"
+                autoComplete="name"
                 label="Your name"
                 onChangeText={setDisplayName}
                 placeholder="Sahil"
@@ -168,66 +148,58 @@ export default function AuthScreen() {
             ) : null}
             <Field
               autoCapitalize="none"
+              autoComplete="email"
               keyboardType="email-address"
               label="Email"
               onChangeText={setEmail}
               placeholder="you@example.com"
               value={email}
             />
-            {mode === 'recover' ? (
+            {mode !== 'recover' ? (
               <Field
                 autoCapitalize="none"
-                label="Recovery code"
-                onChangeText={setRecoveryCode}
-                placeholder="xxxxxx-xxxxxx-xxxxxx-xxxxxx"
-                value={recoveryCode}
+                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                label="Password"
+                onChangeText={setPassword}
+                placeholder="At least 10 characters"
+                secureTextEntry
+                value={password}
               />
             ) : null}
-            <Field
-              autoCapitalize="none"
-              label={mode === 'recover' ? 'New password' : 'Password'}
-              onChangeText={setPassword}
-              placeholder="At least 10 characters"
-              secureTextEntry
-              value={password}
-            />
           </Reveal>
+
+          {mode === 'login' ? (
+            <Tap accessibilityLabel="Forgot password" onPress={() => {
+              setMode('recover');
+              setError('');
+              setMessage('');
+            }} style={styles.forgot}>
+              <Text style={styles.linkText}>Forgot password?</Text>
+            </Tap>
+          ) : null}
 
           <Reveal index={4} style={styles.status}>
             {error ? <Notice body={error} icon="alert" tone="danger" /> : null}
-
+            {message ? <Notice body={message} icon="check" tone="accent" /> : null}
             {!serviceConfigured ? (
               <Notice
-                body="Account service is not configured in this release. You can keep using the encrypted offline vault."
+                body="Supabase is not configured in this build yet. Add the project URL and publishable key to enable accounts. Guest mode remains available."
                 icon="info"
-                tone="info"
               />
             ) : (
-              <Tap
-                accessibilityLabel="Check the account service again"
-                haptic="none"
-                onPress={() => void checkService()}
-                scaleTo={0.99}>
-                <Notice
-                  body={probe === 'checking'
-                    ? `Checking the account service at ${apiUrl()}…`
-                    : probe === 'online'
-                      ? 'Account service is reachable.'
-                      : `Can’t reach the service at ${apiUrl()}. ${__DEV__
-                        ? 'Start it with `uvicorn api:app --host 0.0.0.0 --port 8000` on your computer, keep both devices on the same Wi-Fi, then tap to retry.'
-                        : 'Check your connection, then tap to retry.'}`}
-                  color={probeTone}
-                  icon={probeIcon}
-                />
-              </Tap>
+              <Notice
+                body="Supabase Auth protects your session. Row-level security keeps your fitness vault scoped to your user ID."
+                icon="shield"
+                tone="accent"
+              />
             )}
           </Reveal>
 
           <Reveal index={5} style={styles.actions}>
             <PrimaryButton
               disabled={busy || !serviceConfigured}
-              icon={mode === 'login' ? 'lock' : mode === 'signup' ? 'spark' : 'shield'}
-              label={mode === 'login' ? 'Sign in securely' : mode === 'signup' ? 'Create my account' : 'Reset password'}
+              icon={mode === 'login' ? 'lock' : mode === 'signup' ? 'spark' : 'cloud'}
+              label={mode === 'login' ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Email reset link'}
               loading={busy}
               onPress={() => void submit()}
             />
@@ -240,11 +212,11 @@ export default function AuthScreen() {
 
             <GhostButton
               icon="shield"
-              label="Continue without an account"
+              label="Use guest mode on this device"
               onPress={continueOffline}
             />
             <Text style={styles.offlineNote}>
-              Everything stays encrypted on this device — an account is only needed to sync across devices.
+              Guest data stays encrypted on this device. If you create an account later, Vigorly will merge it into your private cloud vault.
             </Text>
           </Reveal>
 
@@ -259,7 +231,6 @@ export default function AuthScreen() {
   );
 }
 
-/** Dark text field: inset well, hairline border that lights up on focus. */
 function Field({
   label,
   ...props
@@ -279,20 +250,16 @@ function Field({
   );
 }
 
-/** Inline message card — never a bare line of red text. */
 function Notice({
   body,
-  color,
   icon,
   tone = 'info',
 }: {
   body: string;
-  color?: string;
   icon: GlyphName;
   tone?: 'info' | 'danger' | 'accent';
 }) {
-  const hue = color
-    ?? (tone === 'danger' ? palette.danger : tone === 'accent' ? palette.lime : palette.info);
+  const hue = tone === 'danger' ? palette.danger : tone === 'accent' ? palette.lime : palette.info;
   return (
     <View style={[styles.notice, { borderColor: `${hue}33`, backgroundColor: `${hue}10` }]}>
       <Glyph color={hue} name={icon} size={15} />
@@ -309,16 +276,15 @@ const styles = StyleSheet.create({
     paddingTop: space.sm,
     paddingBottom: space.xxl,
   },
-
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   brandCopy: { flex: 1 },
   wordmark: { ...text.label, fontSize: 11, letterSpacing: 2.2, color: palette.ink },
   kicker: { ...text.label, color: palette.lime, marginTop: 6 },
-
   intro: { marginTop: space.xl, marginBottom: space.lg },
-  title: { ...text.title, color: palette.ink, maxWidth: 320 },
-  subtitle: { ...text.body, color: palette.inkMid, marginTop: space.sm, maxWidth: 330 },
-
+  title: { ...text.title, color: palette.ink, maxWidth: 340 },
+  subtitle: { ...text.body, color: palette.inkMid, marginTop: space.sm, maxWidth: 350 },
+  backLink: { flexDirection: 'row', alignItems: 'center', gap: 7, alignSelf: 'flex-start' },
+  linkText: { ...text.row, color: palette.lime },
   form: { gap: 12, marginTop: space.md },
   field: { gap: 7 },
   fieldLabel: { ...text.label, color: palette.inkLow },
@@ -334,8 +300,8 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   inputFocused: { borderColor: palette.lime },
-
-  status: { gap: 10, marginTop: space.md },
+  forgot: { alignSelf: 'flex-end', paddingVertical: 10, paddingLeft: 16 },
+  status: { gap: 10, marginTop: space.sm },
   notice: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -346,7 +312,6 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
   },
   noticeText: { ...text.caption, flex: 1 },
-
   actions: { gap: 12, marginTop: space.lg },
   divider: { flexDirection: 'row', alignItems: 'center', gap: 12, marginVertical: 2 },
   rule: { flex: 1, height: 1, backgroundColor: palette.line },
@@ -358,7 +323,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: space.sm,
   },
-
   privacyWrap: { marginTop: 'auto', paddingTop: space.xl },
   privacy: {
     ...text.caption,

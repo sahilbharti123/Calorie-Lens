@@ -1,6 +1,7 @@
 import { apiRequest, apiUrl } from '@/src/lib/api-client';
 import { FOODS, type FoodReference } from '@/src/lib/food-catalog';
 import { readSession } from '@/src/lib/session';
+import { parseWeightInput } from '@/src/lib/weight';
 import type {
   EstimationContext,
   LogOperation,
@@ -248,9 +249,13 @@ export function parseCommandLocally(
   if (steps) operations.push({ type: 'steps', action: 'set', amount: steps });
   const sleep = firstNumber(lowered, /(?:slept|sleep).{0,12}(\d+(?:\.\d+)?)|(\d+(?:\.\d+)?)\s*(?:hours?|hrs?).{0,12}sleep/);
   if (/sleep|slept/.test(lowered) && sleep) operations.push({ type: 'sleep', action: 'set', amount: sleep });
-  const weight = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*kg/);
+  const hasWeightIntent = /\b(?:weight|weigh|weighed)\b/.test(lowered);
+  const explicitWeight = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*kg/);
+  const weight = hasWeightIntent
+    ? (parseWeightInput(lowered)?.kg ?? explicitWeight)
+    : explicitWeight;
   const hasWorkoutLanguage = activities.some((activity) => activity.aliases.test(lowered));
-  if ((/weight|weigh/.test(lowered) || (hasWorkoutLanguage && !context.weightKg)) && weight) {
+  if ((hasWeightIntent || (hasWorkoutLanguage && !context.weightKg)) && weight) {
     operations.push({ type: 'weight', action: 'set', amount: weight });
   }
 
