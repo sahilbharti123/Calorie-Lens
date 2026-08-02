@@ -293,6 +293,45 @@ export type LogOperation =
   | { type: 'sleep'; action: 'set'; amount: number }
   | { type: 'weight'; action: 'set'; amount: number };
 
+/**
+ * What a clarifying question is actually asking about.
+ *
+ * The parser used to ask its question in prose only, and the answer was glued
+ * onto the end of the transcript and re-parsed. That could not work: an answer
+ * like "1 bowl" carries no reference to the food it belongs to, and quantities
+ * are only read next to the food they describe — so the same question came back
+ * forever while the transcript grew. Naming the target lets the answer be
+ * applied to the exact thing that was missing.
+ */
+export type ClarificationTarget =
+  | { kind: 'foodAmount'; alias: string; foodName: string }
+  | { kind: 'pieceGrams'; alias: string; foodName: string }
+  | { kind: 'bowlMl' }
+  | { kind: 'bodyWeight' }
+  | { kind: 'workoutMinutes'; activity: string }
+  | { kind: 'workoutIntensity'; activity: string }
+  | { kind: 'unknownFood' }
+  | { kind: 'intent' };
+
+/** A clarifying question, resolved into a value the parser can use. */
+export type ClarificationAnswer =
+  | { kind: 'foodAmount'; alias: string; amount: number; unit: string }
+  | { kind: 'pieceGrams'; alias: string; grams: number }
+  | { kind: 'bowlMl'; ml: number }
+  | { kind: 'bodyWeight'; kg: number }
+  | { kind: 'workoutMinutes'; minutes: number }
+  | { kind: 'workoutIntensity'; intensity: Workout['intensity'] };
+
+/**
+ * Carried by the logging screen between rounds. `transcript` is the original
+ * utterance and never grows; every answered detail is accumulated in `answers`.
+ */
+export type PendingClarification = {
+  transcript: string;
+  target: ClarificationTarget;
+  answers: ClarificationAnswer[];
+};
+
 export type ParsedCommand = {
   transcript: string;
   confirmation: string;
@@ -301,6 +340,7 @@ export type ParsedCommand = {
   clarification?: {
     question: string;
     suggestions: string[];
+    target: ClarificationTarget;
   };
   profileUpdates?: {
     weightKg?: number;

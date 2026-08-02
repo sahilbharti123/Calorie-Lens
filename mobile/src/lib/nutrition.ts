@@ -3,11 +3,15 @@ import { FOODS, type FoodReference } from '@/src/lib/food-catalog';
 import { readSession } from '@/src/lib/session';
 import { parseWeightInput } from '@/src/lib/weight';
 import type {
+  ClarificationAnswer,
+  ClarificationTarget,
   EstimationContext,
   LogOperation,
   MealItem,
   MealSlot,
   ParsedCommand,
+  PendingClarification,
+  Workout,
 } from '@/src/types';
 
 /** Remote language parsing is opt-in and off by default — the app ships with zero running cost. */
@@ -64,14 +68,159 @@ function firstNumber(text: string, pattern: RegExp) {
   return raw ? Number.parseFloat(raw) : 0;
 }
 
-function clarification(transcript: string, question: string, suggestions: string[]): ParsedCommand {
+function clarification(
+  transcript: string,
+  question: string,
+  suggestions: string[],
+  target: ClarificationTarget,
+): ParsedCommand {
   return {
     transcript,
     confirmation: 'One detail will improve this estimate',
     operations: [],
     source: 'local',
-    clarification: { question, suggestions },
+    clarification: { question, suggestions, target },
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * Clarification answers
+ *
+ * A question is asked about one specific missing detail, and the answer is
+ * applied to that detail. It is never appended to the transcript: an answer
+ * like "1 bowl" says nothing about *which* food it belongs to, and quantities
+ * are only ever read next to the food they describe, so re-parsing a grown
+ * transcript re-asks the same question forever.
+ * ------------------------------------------------------------------ */
+
+/** Everything the user has already told us, keyed by what it answers. */
+type Resolved = {
+  amounts: Map<string, Quantity>;
+  pieceGrams: Map<string, number>;
+  minutes?: number;
+  intensity?: Workout['intensity'];
+  bowlMl?: number;
+  weightKg?: number;
+};
+
+function resolveAnswers(answers: ClarificationAnswer[] = []): Resolved {
+  const resolved: Resolved = { amounts: new Map(), pieceGrams: new Map() };
+  for (const answer of answers) {
+    if (answer.kind === 'foodAmount') {
+      resolved.amounts.set(answer.alias, { amount: answer.amount, unit: answer.unit });
+    } else if (answer.kind === 'pieceGrams') {
+      resolved.pieceGrams.set(answer.alias, answer.grams);
+    } else if (answer.kind === 'bowlMl') {
+      resolved.bowlMl = answer.ml;
+    } else if (answer.kind === 'bodyWeight') {
+      resolved.weightKg = answer.kg;
+    } else if (answer.kind === 'workoutMinutes') {
+      resolved.minutes = answer.minutes;
+    } else {
+      resolved.intensity = answer.intensity;
+    }
+  }
+  return resolved;
+}
+
+/** True when an answer already given covers the detail being asked about. */
+function answers(answer: ClarificationAnswer, target: ClarificationTarget) {
+  if (answer.kind !== target.kind) return false;
+  if ('alias' in answer && 'alias' in target) return answer.alias === target.alias;
+  return true;
+}
+
+const INTENSITY_WORDS: [RegExp, Workout['intensity']][] = [
+  [/hard|intense|vigorous|brisk|fast|heavy/, 'hard'],
+  [/light|easy|gentle|slow|casual/, 'light'],
+  [/moderate|medium|normal|steady/, 'moderate'],
+];
+
+/**
+ * Turns a spoken or typed reply into a value for the detail that was asked
+ * about, or null when the reply does not answer that question at all.
+ *
+ * Returning null matters as much as returning a value: it lets the screen say
+ * "that isn't a number" once, instead of silently re-asking and looking stuck.
+ */
+export function interpretClarificationAnswer(
+  target: ClarificationTarget,
+  reply: string,
+): ClarificationAnswer | null {
+  const lowered = reply.toLowerCase().trim();
+  if (!lowered) return null;
+
+  if (target.kind === 'workoutIntensity') {
+    for (const [pattern, intensity] of INTENSITY_WORDS) {
+      if (pattern.test(lowered)) return { kind: 'workoutIntensity', intensity };
+    }
+    return null;
+  }
+
+  if (target.kind === 'bodyWeight') {
+    const parsed = parseWeightInput(lowered);
+    return parsed ? { kind: 'bodyWeight', kg: parsed.kg } : null;
+  }
+
+  // Everything below needs a number.
+  const numberMatch = lowered.match(/(\d+(?:\.\d+)?)|\b(a|an|one|two|three|four|five|six|half|quarter)\b/);
+  if (!numberMatch) return null;
+  const amount = numberValue(numberMatch[1] ?? numberMatch[2]);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+
+  if (target.kind === 'workoutMinutes') {
+    // An hour is a normal way to answer "how many minutes".
+    const hours = /\bhours?\b|\bhrs?\b/.test(lowered);
+    const minutes = hours ? amount * 60 : amount;
+    if (minutes < 1 || minutes > 600) return null;
+    return { kind: 'workoutMinutes', minutes };
+  }
+
+  if (target.kind === 'bowlMl') {
+    const ml = /\bl\b|\blitres?\b|\bliters?\b/.test(lowered) ? amount * 1000 : amount;
+    if (ml < 50 || ml > 2000) return null;
+    return { kind: 'bowlMl', ml };
+  }
+
+  if (target.kind === 'pieceGrams') {
+    if (amount < 1 || amount > 2000) return null;
+    return { kind: 'pieceGrams', alias: target.alias, grams: amount };
+  }
+
+  if (target.kind === 'foodAmount') {
+    const food = foodFor(target.alias);
+    const unitMatch = lowered.match(
+      /\b(kgs?|kilos?|kilograms?|grams?|gms?|g|ml|millilitres?|litres?|liters?|l|bowls?|katoris?|cups?|glass(?:es)?|pieces?|slices?|rotis?|tbsp|tsp)\b/,
+    );
+    if (unitMatch) {
+      const unit = normalizeAnswerUnit(unitMatch[1]);
+      // Reject a unit this food cannot be converted from, rather than accept it
+      // and ask the same question again. Idli has a piece weight and no
+      // density, so "1 bowl" is unanswerable however many times we ask.
+      if (VOLUME_UNITS.has(unit) && food && !food.density) return null;
+      return { kind: 'foodAmount', alias: target.alias, amount, unit };
+    }
+    // A bare number: "2" almost always means two of the thing, "150" means
+    // grams. Nobody eats 150 rotis, and nobody weighs out 2 grams of rice.
+    const bare = amount >= 20 ? 'g' : food?.pieceG ? 'piece' : food?.density ? 'bowl' : 'g';
+    return { kind: 'foodAmount', alias: target.alias, amount, unit: bare };
+  }
+
+  // 'unknownFood' and 'intent' are not single values — the caller re-parses
+  // the reply as ordinary text instead.
+  return null;
+}
+
+function normalizeAnswerUnit(raw: string) {
+  const unit = raw.replace(/s$/, '');
+  if (/^(kilo|kilogram|kg)$/.test(unit)) return 'kg';
+  if (/^(gram|gm|g)$/.test(unit)) return 'g';
+  if (/^(millilitre|ml)$/.test(unit)) return 'ml';
+  if (/^(litre|liter|l)$/.test(unit)) return 'l';
+  if (/^(katori|bowl)$/.test(unit)) return 'bowl';
+  if (/^glasse?$/.test(unit)) return 'glass';
+  if (/^(slice|roti|piece)$/.test(unit)) return 'piece';
+  return unit;
 }
 
 const UNKNOWN_FOOD_MARK = 'verified reference';
@@ -82,6 +231,15 @@ const UNKNOWN_FOOD_MARK = 'verified reference';
  * service or the label-calories path instead of a wrong local match.
  */
 const COMPLEX_DISHES = /butter chicken|paneer tikka|palak paneer|shahi paneer|kadai paneer|tikka masala|fried rice|noodles?|maggi|pizza|burger|pasta|sandwich|milkshake|smoothie|pav bhaji|chole bhature|masala dosa/;
+
+/**
+ * Words that mean "this is food". Word-anchored on purpose: an unanchored
+ * `ate` matches "w-ate-r" and "moder-ate", which sent every glass of water and
+ * every moderate workout down the unknown-food path and lost the entry.
+ */
+const MEAL_WORDS = /\b(?:ate|eat|eating|had|having|breakfast|lunch|dinner|snack|khaya|khayi|khana)\b/;
+
+const WATER_WORDS = /\b(?:water|paani|pani)\b/;
 
 export function inferMealSlot(text = ''): MealSlot {
   const lowered = text.toLowerCase();
@@ -96,33 +254,75 @@ export function inferMealSlot(text = ''): MealSlot {
   return 'dinner';
 }
 
+type Measured = { grams: number; low: number; high: number; label: string };
+type Missing = { question: string; suggestions: string[]; target: ClarificationTarget };
+
+const VOLUME_UNITS = new Set(['bowl', 'cup', 'glass', 'ml', 'l', 'tbsp', 'tsp']);
+
+function foodFor(alias: string) {
+  return foods.find((food) => food.aliases.includes(alias));
+}
+
+/**
+ * Asks for an amount in the units this particular food can actually be
+ * measured in. Idli has a piece weight and no density, so offering "1 bowl"
+ * invites an answer the catalog cannot convert — and a question the user
+ * cannot get past.
+ */
+function amountQuestion(food: FoodReference, alias: string): Missing {
+  const countable = Boolean(food.pieceG);
+  const pourable = Boolean(food.density);
+  const suggestions = countable && pourable
+    ? ['1 piece', '1 bowl', '100 g', '150 g']
+    : countable
+      ? ['1 piece', '2 pieces', '3 pieces', '100 g']
+      : pourable
+        ? ['1 bowl', '1 cup', '100 g', '150 g']
+        : ['50 g', '100 g', '150 g', '200 g'];
+  const question = countable && !pourable
+    ? `How many ${food.name.toLowerCase()} did you have?`
+    : `How much ${food.name.toLowerCase()} did you have?`;
+  return { question, suggestions, target: { kind: 'foodAmount', alias, foodName: food.name } };
+}
+
 function gramsFor(
   quantity: Quantity,
   food: FoodReference,
   context: EstimationContext,
-): { grams: number; low: number; high: number; label: string } | { question: string; suggestions: string[] } {
+  alias: string,
+  resolved?: Resolved,
+): Measured | Missing {
   const amount = quantity.amount;
   const unit = quantity.unit;
-  if (!amount) {
-    return {
-      question: `How much ${food.name.toLowerCase()} did you have?`,
-      suggestions: ['100 g', '1 piece', '1 bowl', '1 cup'],
-    };
-  }
+  if (!amount) return amountQuestion(food, alias);
   if (unit === 'kg') return { grams: amount * 1000, low: amount * 980, high: amount * 1020, label: `${amount} kg` };
   if (unit === 'g') return { grams: amount, low: amount * 0.98, high: amount * 1.02, label: `${amount} g` };
   if (unit === 'piece') {
-    if (!food.pieceG) return { question: `About how many grams was each ${food.name.toLowerCase()}?`, suggestions: ['30 g', '50 g', '75 g', '100 g'] };
-    const grams = amount * food.pieceG;
+    const pieceG = food.pieceG ?? resolved?.pieceGrams.get(alias);
+    if (!pieceG) {
+      return {
+        question: `About how many grams was each ${food.name.toLowerCase()}?`,
+        suggestions: ['30 g', '50 g', '75 g', '100 g'],
+        target: { kind: 'pieceGrams', alias, foodName: food.name },
+      };
+    }
+    const grams = amount * pieceG;
     const variance = food.pieceVariance ?? 0.12;
-    return { grams, low: grams * (1 - variance), high: grams * (1 + variance), label: `${amount} × ${food.pieceG} g standard piece` };
+    return { grams, low: grams * (1 - variance), high: grams * (1 + variance), label: `${amount} × ${pieceG} g standard piece` };
   }
   let volumeMl = 0;
   let label = '';
   if (unit === 'bowl') {
-    if (!context.bowlMl) return { question: 'About how large is your usual bowl?', suggestions: ['150 ml', '200 ml', '250 ml', '300 ml'] };
-    volumeMl = amount * context.bowlMl;
-    label = `${amount} × ${context.bowlMl} ml bowl`;
+    const bowlMl = context.bowlMl ?? resolved?.bowlMl;
+    if (!bowlMl) {
+      return {
+        question: 'About how large is your usual bowl?',
+        suggestions: ['150 ml', '200 ml', '250 ml', '300 ml'],
+        target: { kind: 'bowlMl' },
+      };
+    }
+    volumeMl = amount * bowlMl;
+    label = `${amount} × ${bowlMl} ml bowl`;
   } else if (unit === 'cup') {
     volumeMl = amount * context.cupMl;
     label = `${amount} × ${context.cupMl} ml cup`;
@@ -139,9 +339,8 @@ function gramsFor(
     volumeMl = amount * (unit === 'tbsp' ? 15 : 5);
     label = `${amount} ${unit}`;
   }
-  if (!volumeMl || !food.density) {
-    return { question: `Can you give the grams for ${food.name.toLowerCase()}?`, suggestions: ['50 g', '100 g', '150 g', '200 g'] };
-  }
+  // A volume for a food with no published density, or a unit we do not know.
+  if (!volumeMl || !food.density) return amountQuestion(food, alias);
   const grams = volumeMl * food.density;
   const variance = food.densityVariance ?? 0.12;
   return { grams, low: grams * (1 - variance), high: grams * (1 + variance), label };
@@ -152,9 +351,11 @@ function estimateFood(
   quantity: Quantity,
   text: string,
   context: EstimationContext,
+  alias: string,
   suppressOilAssumption = false,
-): Omit<MealItem, 'id' | 'slot' | 'loggedAt'> | { question: string; suggestions: string[] } {
-  const measured = gramsFor(quantity, food, context);
+  resolved?: Resolved,
+): Omit<MealItem, 'id' | 'slot' | 'loggedAt'> | Missing {
+  const measured = gramsFor(quantity, food, context, alias, resolved);
   if ('question' in measured) return measured;
   const scale = measured.grams / 100;
   let calories = food.calories * scale;
@@ -192,25 +393,62 @@ function estimateFood(
 }
 
 type Activity = { name: string; aliases: RegExp; mets: [number, number, number]; sourceId: string };
+/**
+ * Activity names are anchored to the start of a word. Without the anchor,
+ * `run` matches "c-run-ches" and a set of crunches is logged as a run.
+ */
 const activities: Activity[] = [
-  { name: 'Walking', aliases: /walk/, mets: [2.8, 3.8, 4.8], sourceId: 'walking' },
-  { name: 'Running', aliases: /run|jog/, mets: [6.5, 8.5, 11], sourceId: 'running' },
-  { name: 'Cycling', aliases: /cycl|bike/, mets: [4.3, 7, 9], sourceId: 'bicycling' },
-  { name: 'Strength training', aliases: /strength|weight training|weights|lifting|gym/, mets: [3.5, 5, 6], sourceId: 'conditioning-exercise' },
-  { name: 'HIIT', aliases: /hiit|high intensity interval/, mets: [7, 9, 11], sourceId: 'conditioning-exercise' },
-  { name: 'Yoga', aliases: /yoga|vinyasa|hatha/, mets: [2.3, 2.7, 4], sourceId: 'conditioning-exercise' },
+  { name: 'Walking', aliases: /\bwalk/, mets: [2.8, 3.8, 4.8], sourceId: 'walking' },
+  { name: 'Running', aliases: /\brun|\bjog|\bsprint/, mets: [6.5, 8.5, 11], sourceId: 'running' },
+  { name: 'Cycling', aliases: /\bcycl|\bbike|\bbiking|\bspin class/, mets: [4.3, 7, 9], sourceId: 'bicycling' },
+  { name: 'Strength training', aliases: /\bstrength|\bweight training|\bweights\b|\blifting|\bgym\b|\bresistance training/, mets: [3.5, 5, 6], sourceId: 'conditioning-exercise' },
+  { name: 'HIIT', aliases: /\bhiit\b|\bhigh intensity interval/, mets: [7, 9, 11], sourceId: 'conditioning-exercise' },
+  { name: 'Yoga', aliases: /\byoga\b|\bvinyasa\b|\bhatha\b/, mets: [2.3, 2.7, 4], sourceId: 'conditioning-exercise' },
 ];
 
-function estimateWorkout(text: string, context: EstimationContext): LogOperation | ParsedCommand | null {
+function estimateWorkout(
+  text: string,
+  context: EstimationContext,
+  resolved?: Resolved,
+): LogOperation | ParsedCommand | null {
   const activity = activities.find((candidate) => candidate.aliases.test(text));
   if (!activity) return null;
-  const duration = firstNumber(text, /(\d+(?:\.\d+)?)\s*(?:min|minute)/);
-  if (!duration) return clarification(text, `How many minutes did you do ${activity.name.toLowerCase()}?`, ['15 min', '30 min', '45 min', '60 min']);
-  if (!context.weightKg) return clarification(text, 'What is your current body weight? I need it to estimate active calories.', ['60 kg', '70 kg', '80 kg', '90 kg']);
-  const hasIntensity = /hard|intense|vigorous|brisk|moderate|easy|light/.test(text);
-  if (!hasIntensity) return clarification(text, `How hard was the ${activity.name.toLowerCase()}?`, ['Light', 'Moderate', 'Hard']);
-  const intensityIndex = /hard|intense|vigorous|brisk/.test(text) ? 2 : /easy|light/.test(text) ? 0 : 1;
-  const intensity = (['light', 'moderate', 'hard'] as const)[intensityIndex];
+  const spokenDuration = firstNumber(text, /(\d+(?:\.\d+)?)\s*(?:min|minute)/);
+  const spokenHours = firstNumber(text, /(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)\b/);
+  const duration = resolved?.minutes ?? (spokenDuration || spokenHours * 60);
+  if (!duration) {
+    return clarification(
+      text,
+      `How many minutes did you do ${activity.name.toLowerCase()}?`,
+      ['15 min', '30 min', '45 min', '60 min'],
+      { kind: 'workoutMinutes', activity: activity.name },
+    );
+  }
+  if (!context.weightKg) {
+    return clarification(
+      text,
+      'What is your current body weight? I need it to estimate active calories.',
+      ['60 kg', '70 kg', '80 kg', '90 kg'],
+      { kind: 'bodyWeight' },
+    );
+  }
+  const spokenIntensity = /hard|intense|vigorous|brisk/.test(text)
+    ? 'hard'
+    : /easy|light/.test(text)
+      ? 'light'
+      : /moderate/.test(text)
+        ? 'moderate'
+        : undefined;
+  const intensity = resolved?.intensity ?? spokenIntensity;
+  if (!intensity) {
+    return clarification(
+      text,
+      `How hard was the ${activity.name.toLowerCase()}?`,
+      ['Light', 'Moderate', 'Hard'],
+      { kind: 'workoutIntensity', activity: activity.name },
+    );
+  }
+  const intensityIndex = intensity === 'hard' ? 2 : intensity === 'light' ? 0 : 1;
   const met = activity.mets[intensityIndex];
   const metLow = intensityIndex ? activity.mets[intensityIndex - 1] : met * 0.9;
   const metHigh = intensityIndex < 2 ? activity.mets[intensityIndex + 1] : met * 1.1;
@@ -235,14 +473,22 @@ function estimateWorkout(text: string, context: EstimationContext): LogOperation
 export function parseCommandLocally(
   text: string,
   preferredSlot: MealSlot | undefined,
-  context: EstimationContext,
+  rawContext: EstimationContext,
+  resolved?: Resolved,
 ): ParsedCommand {
+  // Details the user has already supplied outrank anything inferred, and a
+  // bowl size or body weight given as an answer is true for the whole update.
+  const context: EstimationContext = {
+    ...rawContext,
+    bowlMl: resolved?.bowlMl ?? rawContext.bowlMl,
+    weightKg: resolved?.weightKg ?? rawContext.weightKg,
+  };
   const lowered = text.toLowerCase().trim();
   const operations: LogOperation[] = [];
   const water = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*(?:ml|millilit)/);
   const waterLitres = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*(?:l|litre|liter)\b/);
   const glasses = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*glass/);
-  if (/water|paani|pani/.test(lowered) || (/glass/.test(lowered) && !foods.some((food) => food.aliases.some((alias) => lowered.includes(alias))))) {
+  if (WATER_WORDS.test(lowered) || (/\bglass(?:es)?\b/.test(lowered) && !foods.some((food) => food.aliases.some((alias) => lowered.includes(alias))))) {
     operations.push({ type: 'water', action: 'add', amount: water || waterLitres * 1000 || glasses * GLASS_ML || GLASS_ML });
   }
   const steps = firstNumber(lowered, /(\d[\d,]*)\s*steps?/);
@@ -260,7 +506,7 @@ export function parseCommandLocally(
   }
 
   const effectiveContext = { ...context, weightKg: (context.weightKg ?? weight) || undefined };
-  const workout = estimateWorkout(lowered, effectiveContext);
+  const workout = estimateWorkout(lowered, effectiveContext, resolved);
   if (workout && !('type' in workout)) return workout;
   if (workout) operations.push(workout);
 
@@ -276,9 +522,7 @@ export function parseCommandLocally(
   ));
   const hasExplicitOil = matches.some(({ food }) => food.name === 'Olive oil');
 
-  const looksLikeMeal = /ate|had|breakfast|lunch|dinner|snack|khaya|khayi|khaya tha/.test(lowered)
-    || matches.length > 0
-    || complexDish;
+  const looksLikeMeal = MEAL_WORDS.test(lowered) || matches.length > 0 || complexDish;
   if (looksLikeMeal) {
     if (!matches.length) {
       const declaredCalories = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*(?:kcal|calories?)/);
@@ -310,13 +554,17 @@ export function parseCommandLocally(
           text,
           'I don’t have a verified reference for that food yet. Give its label calories, or log the main parts with amounts.',
           ['e.g. 350 kcal from the label', 'e.g. 150 g rice and 1 bowl dal', 'e.g. 2 rotis and 100 g paneer'],
+          { kind: 'unknownFood' },
         );
       }
     }
     const items: Omit<MealItem, 'id' | 'slot' | 'loggedAt'>[] = [];
     for (const { food, alias } of matches) {
-      const estimate = estimateFood(food, quantityNear(lowered, alias, food), lowered, context, hasExplicitOil);
-      if ('question' in estimate) return clarification(text, estimate.question, estimate.suggestions);
+      const quantity = resolved?.amounts.get(alias) ?? quantityNear(lowered, alias, food);
+      const estimate = estimateFood(food, quantity, lowered, context, alias, hasExplicitOil, resolved);
+      if ('question' in estimate) {
+        return clarification(text, estimate.question, estimate.suggestions, estimate.target);
+      }
       items.push(estimate);
     }
     if (items.length) {
@@ -329,7 +577,14 @@ export function parseCommandLocally(
       });
     }
   }
-  if (!operations.length) return clarification(text, 'What would you like me to log?', ['A meal', 'Water', 'A workout', 'Weight']);
+  if (!operations.length) {
+    return clarification(
+      text,
+      'What would you like me to log?',
+      ['A meal', 'Water', 'A workout', 'Weight'],
+      { kind: 'intent' },
+    );
+  }
   return {
     transcript: text.trim(),
     confirmation: operations.length === 1 ? '1 evidence-backed update ready' : `${operations.length} evidence-backed updates ready`,
@@ -338,22 +593,38 @@ export function parseCommandLocally(
   };
 }
 
-type ClarificationContext = {
-  previousTranscript?: string;
-  clarificationQuestion?: string;
-};
-
-function requestPayload(
-  context: EstimationContext,
-  clarification?: ClarificationContext,
-) {
+function requestPayload(context: EstimationContext, pending?: PendingClarification) {
   return {
     weight_kg: context.weightKg,
     bowl_ml: context.bowlMl,
     cup_ml: context.cupMl,
-    previous_transcript: clarification?.previousTranscript,
-    clarification_question: clarification?.clarificationQuestion,
+    previous_transcript: pending?.transcript,
+    clarification_question: pending?.target.kind,
   };
+}
+
+/** Answered details that belong on the profile rather than only this entry. */
+function profileUpdatesFrom(answers: ClarificationAnswer[]) {
+  const updates: ParsedCommand['profileUpdates'] = {};
+  for (const answer of answers) {
+    if (answer.kind === 'bowlMl') updates.bowlMl = answer.ml;
+    if (answer.kind === 'bodyWeight') updates.weightKg = answer.kg;
+  }
+  return Object.keys(updates).length ? updates : undefined;
+}
+
+/**
+ * Reached only if a question comes back that an answer should already have
+ * settled. That is a bug rather than a user error, so it says something true
+ * and offers a way forward instead of asking a fourth time.
+ */
+function stalled(transcript: string): ParsedCommand {
+  return clarification(
+    transcript,
+    'I still cannot pin that down. Say it again in one line with the amount included, for example “2 rotis and 150 g rajma”.',
+    ['Start over'],
+    { kind: 'intent' },
+  );
 }
 
 /**
@@ -368,43 +639,156 @@ export async function parseFitnessCommand(
   text: string,
   preferredSlot: MealSlot | undefined,
   context: EstimationContext,
-  clarification?: ClarificationContext,
-) {
-  const combined = clarification?.previousTranscript
-    ? `${clarification.previousTranscript}. ${text}`
-    : text;
-  const local = parseCommandLocally(combined, preferredSlot, context);
-  const fragments = combined
+  pending?: PendingClarification,
+): Promise<ParsedCommand> {
+  // The utterance being parsed is always the original one. Answers are applied
+  // as resolved details, never concatenated — see ClarificationTarget.
+  const utterance = pending?.transcript ?? text;
+  const resolved = resolveAnswers(pending?.answers);
+  const local = parseCommandLocally(utterance, preferredSlot, context, resolved);
+
+  if (pending?.answers.length && local.clarification) {
+    // A question we have already answered must never come back.
+    const repeat = pending.answers.some((answer) => answers(answer, local.clarification!.target));
+    if (repeat) return { ...stalled(utterance), profileUpdates: profileUpdatesFrom(pending.answers) };
+  }
+
+  const withProfile: ParsedCommand = pending?.answers.length
+    ? { ...local, profileUpdates: { ...profileUpdatesFrom(pending.answers), ...local.profileUpdates } }
+    : local;
+
+  const fragments = utterance
     .split(/\b(?:and|plus|aur|with|then)\b|,/i)
     .map((fragment) => fragment.trim())
     .filter((fragment) => fragment.length > 2);
   const fragmentUnknown = fragments.some((fragment) => {
-    const fragmentResult = parseCommandLocally(fragment, preferredSlot, context);
+    const fragmentResult = parseCommandLocally(fragment, preferredSlot, context, resolved);
     return fragmentResult.clarification?.question.includes(UNKNOWN_FOOD_MARK)
       || (!fragmentResult.operations.length && !fragmentResult.clarification);
   });
   const localUnknown = local.clarification?.question.includes(UNKNOWN_FOOD_MARK) ?? false;
   const needsAi = localUnknown || (Boolean(local.operations.length) && fragmentUnknown);
-  if (!needsAi) return local;
+  if (!needsAi) return withProfile;
   // Off by default. The local result already asks the user for the missing
   // detail rather than guessing, so the app costs nothing to run and works
   // offline. The branch below stays here so the service can be switched back
   // on with EXPO_PUBLIC_ENABLE_AI_PARSING=1.
-  if (!AI_PARSING_ENABLED) return local;
-  if (!apiUrl()) return local;
+  if (!AI_PARSING_ENABLED) return withProfile;
+  if (!apiUrl()) return withProfile;
   try {
     const session = await readSession();
-    if (!session) return local;
+    if (!session) return withProfile;
     const response = await apiRequest<ParsedCommand>('/v1/parse-command', {
       method: 'POST',
       body: JSON.stringify({
-        text: combined,
+        text: utterance,
         preferred_slot: preferredSlot,
-        ...requestPayload(context, clarification),
+        ...requestPayload(context, pending),
       }),
     }, session);
     return { ...response, source: 'ai' } as ParsedCommand;
   } catch {
-    return local;
+    return withProfile;
   }
+}
+
+/**
+ * Advances a clarification by one round.
+ *
+ * `unknownFood` and `intent` are not single missing values, so their replies
+ * are treated as ordinary text: an unknown food keeps the original wording so
+ * "rajma chawal thali" still names the entry when label calories arrive, while
+ * an unclear intent starts fresh from whatever the user just said.
+ */
+export async function advanceClarification(
+  pending: PendingClarification,
+  reply: string,
+  preferredSlot: MealSlot | undefined,
+  context: EstimationContext,
+): Promise<Conversation> {
+  const trimmed = reply.trim();
+  if (!trimmed) return conversation(stalled(pending.transcript), []);
+
+  // A restart: the reply is ordinary text, not a value, so nothing carries over.
+  if (pending.target.kind === 'unknownFood') {
+    return conversation(
+      await parseFitnessCommand(`${pending.transcript}. ${trimmed}`, preferredSlot, context),
+      [],
+    );
+  }
+  if (pending.target.kind === 'intent') {
+    return conversation(await parseFitnessCommand(trimmed, preferredSlot, context), []);
+  }
+
+  const answer = interpretClarificationAnswer(pending.target, trimmed);
+  if (!answer) {
+    // Say why once, keep the question, and keep everything already answered.
+    return {
+      result: {
+        ...clarification(
+          pending.transcript,
+          rejection(pending.target),
+          rejectionSuggestions(pending.target),
+          pending.target,
+        ),
+        profileUpdates: profileUpdatesFrom(pending.answers),
+      },
+      pending,
+    };
+  }
+
+  const settled = [...pending.answers.filter((existing) => !answers(existing, pending.target)), answer];
+  const result = await parseFitnessCommand(pending.transcript, preferredSlot, context, {
+    ...pending,
+    answers: settled,
+  });
+  return conversation(result, settled);
+}
+
+/** Where a logging conversation stands: what to show, and what is still open. */
+export type Conversation = { result: ParsedCommand; pending: PendingClarification | null };
+
+function conversation(result: ParsedCommand, settled: ClarificationAnswer[]): Conversation {
+  return { result, pending: openQuestion(result, settled) };
+}
+
+/** The open question after a parse, or null when there is nothing left to ask. */
+export function openQuestion(
+  result: ParsedCommand,
+  settled: ClarificationAnswer[] = [],
+): PendingClarification | null {
+  return result.clarification
+    ? { transcript: result.transcript, target: result.clarification.target, answers: settled }
+    : null;
+}
+
+/** Chips for a rejected reply, in units the thing being asked about accepts. */
+function rejectionSuggestions(target: ClarificationTarget) {
+  if (target.kind === 'workoutIntensity') return ['Light', 'Moderate', 'Hard'];
+  if (target.kind === 'workoutMinutes') return ['15 min', '30 min', '45 min', '60 min'];
+  if (target.kind === 'bodyWeight') return ['60 kg', '70 kg', '80 kg', '90 kg'];
+  if (target.kind === 'bowlMl') return ['150 ml', '200 ml', '250 ml', '300 ml'];
+  if (target.kind === 'pieceGrams') return ['30 g', '50 g', '75 g', '100 g'];
+  if (target.kind === 'foodAmount') {
+    const food = foodFor(target.alias);
+    if (food) return amountQuestion(food, target.alias).suggestions;
+  }
+  return ['100 g', '1 bowl', '1 piece', '1 cup'];
+}
+
+/** Said once, in the same words as the question, when a reply does not fit. */
+function rejection(target: ClarificationTarget) {
+  if (target.kind === 'workoutIntensity') return 'Was that light, moderate or hard?';
+  if (target.kind === 'bodyWeight') return 'I need a weight, like “72 kg” or “160 lb”.';
+  if (target.kind === 'workoutMinutes') return 'I need the time in minutes, like “30 min”.';
+  if (target.kind === 'bowlMl') return 'I need a size in millilitres, like “250 ml”.';
+  if (target.kind === 'pieceGrams') return 'I need a weight in grams, like “50 g”.';
+  if (target.kind === 'foodAmount') {
+    const food = foodFor(target.alias);
+    if (food && food.pieceG && !food.density) {
+      return `${food.name} is counted in pieces — how many did you have, or how many grams?`;
+    }
+    return 'I need an amount, like “1 bowl”, “2 pieces” or “150 g”.';
+  }
+  return 'I need an amount, like “1 bowl”, “2 pieces” or “150 g”.';
 }

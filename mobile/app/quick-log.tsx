@@ -40,7 +40,7 @@ import {
   Tap,
   Well,
 } from '@/src/components/ui';
-import { parseFitnessCommand } from '@/src/lib/nutrition';
+import { advanceClarification, openQuestion, parseFitnessCommand } from '@/src/lib/nutrition';
 import { ensureSpeechPermission, speechAvailable, useDictation } from '@/src/lib/speech';
 import { slotLabels } from '@/src/lib/stats';
 import { useApp } from '@/src/store/app-store';
@@ -61,6 +61,7 @@ import type {
   LogOperation,
   MealSlot,
   ParsedCommand,
+  PendingClarification,
 } from '@/src/types';
 
 /** Bar heights of the level meter behind the record button. */
@@ -106,6 +107,8 @@ export default function QuickLogScreen() {
   const [draft, setText] = useState(params.prefill ?? '');
   const [showKeyboard, setShowKeyboard] = useState(Boolean(params.prefill));
   const [parsed, setParsed] = useState<ParsedCommand | null>(null);
+  /** The question currently open, plus every detail already settled. */
+  const [pending, setPending] = useState<PendingClarification | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>({
@@ -123,23 +126,6 @@ export default function QuickLogScreen() {
   useEffect(() => {
     setVoiceStatus(speechAvailable() ? VOICE_READY : VOICE_UNSUPPORTED);
   }, []);
-
-  function followUp() {
-    if (!parsed?.clarification) return undefined;
-    return {
-      previousTranscript: parsed.transcript,
-      clarificationQuestion: parsed.clarification.question,
-    };
-  }
-
-  function calibrationFromAnswer(value: string) {
-    const question = parsed?.clarification?.question.toLowerCase() ?? '';
-    const numeric = Number.parseFloat(value);
-    if (!Number.isFinite(numeric)) return {};
-    if (question.includes('bowl') && numeric >= 50 && numeric <= 1000) return { bowlMl: numeric };
-    if (question.includes('body weight') && numeric >= 20 && numeric <= 400) return { weightKg: numeric };
-    return {};
-  }
 
   function onSuggestion(suggestion: string) {
     // "e.g." chips are editable starting points, not literal answers.
@@ -162,6 +148,7 @@ export default function QuickLogScreen() {
         'A workout': 'I did ',
       };
       setParsed(null);
+      setPending(null);
       setText(starters[suggestion] ?? '');
       setShowKeyboard(true);
       return;
@@ -177,18 +164,31 @@ export default function QuickLogScreen() {
     );
   }
 
-  async function understandTyped(value = draft.trim()) {
-    if (!value) return;
+  /**
+   * One path for everything the user says or types, spoken or tapped.
+   *
+   * When a question is open the input is an *answer* to that question and is
+   * applied to the detail it answers. It is never appended to the transcript:
+   * "1 bowl" says nothing about which food it belongs to, so re-parsing a grown
+   * transcript asked the same question forever while the sentence got longer.
+   */
+  async function understand(value: string) {
+    const said = value.trim();
+    if (!said) return;
     setBusy(true);
     setError('');
-    // A leftover dictation error should not sit above a typed answer.
+    // A leftover dictation error should not sit above a fresh answer.
     dictation.setError(null);
     try {
-      const answerUpdate = calibrationFromAnswer(value);
-      const effectiveContext = { ...context, ...answerUpdate };
-      const result = await parseFitnessCommand(value, params.slot, effectiveContext, followUp());
-      saveProfileUpdates({ ...answerUpdate, ...result.profileUpdates });
-      setParsed(result);
+      const next = pending
+        ? await advanceClarification(pending, said, params.slot, context)
+        : await parseFitnessCommand(said, params.slot, context).then((result) => ({
+          result,
+          pending: openQuestion(result),
+        }));
+      saveProfileUpdates(next.result.profileUpdates);
+      setParsed(next.result);
+      setPending(next.pending);
       setText('');
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (reason) {
@@ -198,22 +198,15 @@ export default function QuickLogScreen() {
     }
   }
 
-  /** The dictated text goes through the same local parser the keyboard uses. */
-  async function understandSpoken(spoken: string) {
-    const value = spoken.trim();
-    if (!value) return;
-    setBusy(true);
-    setError('');
-    try {
-      const result = await parseFitnessCommand(value, params.slot, context, followUp());
-      saveProfileUpdates(result.profileUpdates);
-      setParsed(result);
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Voice logging failed.');
-    } finally {
-      setBusy(false);
-    }
+  // Declarations, not consts: `useDictation` above closes over
+  // `understandSpoken` before this point in the file.
+  function understandTyped(value = draft) {
+    return understand(value);
+  }
+
+  /** Dictation goes through exactly the same path the keyboard does. */
+  function understandSpoken(spoken: string) {
+    return understand(spoken);
   }
 
   async function toggleDictation() {
@@ -258,6 +251,7 @@ export default function QuickLogScreen() {
   function reset() {
     dictation.reset();
     setParsed(null);
+    setPending(null);
     setText(params.prefill ?? '');
     setError('');
   }
