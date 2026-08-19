@@ -5,6 +5,7 @@ import {
   advanceClarification,
   openQuestion,
   parseFitnessCommand,
+  refineRecipeMeal,
 } from '../src/lib/nutrition.ts';
 
 /**
@@ -263,12 +264,12 @@ const CASES = [
     ],
   },
   {
-    name: 'a second food with no amount does not kill the whole sentence',
+    name: 'a second food with no amount does not kill the whole multi-food command',
     say: '2 rotis and dal',
     context: { bowlMl: 250 },
     check: (r) => [
       [meal(r)?.items.length === 2, `expected 2 items, got ${meal(r)?.items.length}`],
-      [(meal(r)?.items ?? []).some((i) => i.quantity.includes('assumed')), 'the dal should be an assumed helping'],
+      [(meal(r)?.items ?? []).some((i) => /assumed/i.test(i.quantity)), 'the unmeasured food should say it was assumed'],
     ],
   },
   {
@@ -622,4 +623,114 @@ test('a question that cannot be settled gives up instead of looping', async () =
   });
   assert.ok(stuck.clarification, 'expected it to stop and say so');
   assert.match(stuck.clarification.question, /^I still cannot pin that down/);
+});
+
+test('a partly unknown meal is never silently saved without the missing food', async () => {
+  const result = await parseFitnessCommand('150 g rice and 100 g edamame', 'lunch', BASE);
+  assert.deepEqual(result.operations, []);
+  assert.match(result.clarification?.question ?? '', /recognized only part/i);
+  assert.match(result.clarification?.question ?? '', /edamame/i);
+});
+
+for (const phrase of ['250 ml almond milk', '2 slices gluten free bread', 'vegan chicken burger']) {
+  test(`a protected dietary variant is not replaced by a generic food: ${phrase}`, async () => {
+    const result = await parseFitnessCommand(phrase, 'snack', BASE);
+    assert.deepEqual(result.operations, []);
+    assert.match(result.clarification?.question ?? '', /verified reference/i);
+  });
+}
+
+test('explicit label calories and macros beat a generic catalog match', async () => {
+  const result = await parseFitnessCommand(
+    'one serving BrandX yogurt 120 calories 15 g protein 10 g carbs 2 g fat',
+    'snack',
+    BASE,
+  );
+  const item = meal(result)?.items[0];
+  assert.equal(item?.source, 'label');
+  assert.equal(item?.calories, 120);
+  assert.equal(item?.protein, 15);
+  assert.equal(item?.carbs, 10);
+  assert.equal(item?.fat, 2);
+});
+
+test('a composed poha dish asks for the finished-dish quantity and does not double-count named ingredients', async () => {
+  const first = await parseFitnessCommand('poha with onion', 'breakfast', BASE);
+  assert.equal(first.clarification?.target.kind, 'foodAmount');
+  assert.match(first.clarification?.question ?? '', /how much poha/i);
+
+  const pending = openQuestion(first);
+  assert.ok(pending);
+  const settled = await advanceClarification(pending, '250 g', 'breakfast', BASE);
+  const entry = meal(settled.result);
+  assert.equal(entry?.items.length, 1);
+  assert.equal(entry?.items[0]?.name, 'Poha');
+  assert.equal(entry?.items[0]?.quantity, '250 g');
+  assert.deepEqual(entry?.items[0]?.recipe?.ingredients.map((ingredient) => ingredient.name), ['Onion']);
+  assert.equal(entry?.items[0]?.recipe?.mode, 'dish-estimate');
+});
+
+test('a bare composed dish stays quick to log and exposes recipe refinement metadata', async () => {
+  const result = await parseFitnessCommand('poha for breakfast', 'breakfast', BASE);
+  assert.equal(result.clarification, undefined);
+  assert.deepEqual(names(result), ['Poha']);
+  assert.equal(meal(result)?.items[0]?.recipe?.mode, 'dish-estimate');
+  assert.match(meal(result)?.items[0]?.quantity ?? '', /assumed/i);
+});
+
+for (const phrase of ['coffee without sugar', 'one cup coffee without sugar', 'coffee no sugar', 'unsweetened coffee']) {
+  test(`a negative ingredient modifier excludes sugar: ${phrase}`, async () => {
+    const result = await parseFitnessCommand(phrase, 'snack', BASE);
+    assert.equal(result.clarification, undefined);
+    assert.deepEqual(names(result), ['Black coffee']);
+    assert.ok(kcal(result) <= 5, `unsweetened coffee should stay near zero, got ${kcal(result)} kcal`);
+  });
+}
+
+test('milk coffee without sugar is one unsweetened drink, not coffee plus milk plus sugar', async () => {
+  const result = await parseFitnessCommand('one cup coffee with milk without sugar', 'snack', BASE);
+  assert.deepEqual(names(result), ['Coffee with milk, no sugar']);
+  assert.ok(kcal(result) >= 40 && kcal(result) <= 60, `expected an unsweetened 200 ml milk coffee, got ${kcal(result)}`);
+});
+
+test('the composed-dish rule generalizes beyond poha', async () => {
+  const result = await parseFitnessCommand('one bowl upma with onion', 'breakfast', { ...BASE, bowlMl: 250 });
+  assert.deepEqual(names(result), ['Upma']);
+  assert.deepEqual(meal(result)?.items[0]?.recipe?.ingredients.map((ingredient) => ingredient.name), ['Onion']);
+});
+
+test('negative modifiers work for ingredients other than sugar', async () => {
+  const result = await parseFitnessCommand('one sandwich without mayo', 'lunch', BASE);
+  assert.deepEqual(names(result), ['Sandwich (filled)']);
+});
+
+test('recipe ingredients calculate one parent dish instead of separate logged foods', async () => {
+  const first = await parseFitnessCommand('250 g poha', 'breakfast', BASE);
+  const original = meal(first);
+  assert.ok(original);
+  const refined = await refineRecipeMeal(
+    original,
+    '60 g dry poha, 30 g onion and 1 tsp oil',
+    BASE,
+  );
+  assert.ok('operation' in refined, 'the measured recipe should refine successfully');
+  if (!('operation' in refined)) return;
+  assert.equal(refined.operation.items.length, 1);
+  const dish = refined.operation.items[0];
+  assert.equal(dish.name, 'Poha');
+  assert.equal(dish.recipe?.mode, 'ingredient-sum');
+  assert.deepEqual(
+    dish.recipe?.ingredients.map((ingredient) => ingredient.name).sort(),
+    ['Flattened rice (dry)', 'Olive oil', 'Onion'],
+  );
+  assert.ok(dish.calories >= 250 && dish.calories <= 290, `expected the ingredient sum, got ${dish.calories}`);
+});
+
+test('recipe refinement refuses to invent an omitted ingredient amount', async () => {
+  const first = await parseFitnessCommand('250 g poha', 'breakfast', BASE);
+  const original = meal(first);
+  assert.ok(original);
+  const refined = await refineRecipeMeal(original, '60 g dry poha and onion', BASE);
+  assert.ok('error' in refined);
+  if ('error' in refined) assert.match(refined.error, /amount for onion/i);
 });

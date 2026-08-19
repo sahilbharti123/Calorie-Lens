@@ -334,8 +334,21 @@ function CardGlow() {
 export function Well({
   children,
   style,
-}: React.PropsWithChildren<{ style?: StyleProp<ViewStyle> }>) {
-  return <View style={[styles.well, style]}>{children}</View>;
+  accessible,
+  accessibilityLabel,
+}: React.PropsWithChildren<{
+  style?: StyleProp<ViewStyle>;
+  accessible?: boolean;
+  accessibilityLabel?: string;
+}>) {
+  return (
+    <View
+      accessibilityLabel={accessibilityLabel}
+      accessible={accessible ?? Boolean(accessibilityLabel)}
+      style={[styles.well, style]}>
+      {children}
+    </View>
+  );
 }
 /* ------------------------------------------------------------------ *
  * Progress
@@ -501,7 +514,7 @@ export function PrimaryButton({
         start={{ x: 0, y: 0 }}
         style={[styles.primary, compact && styles.primaryCompact]}>
         {icon ? <Glyph color={disabled ? palette.inkLow : palette.onLime} name={icon} size={17} /> : null}
-        <Text style={[styles.primaryLabel, disabled && { color: palette.inkLow }]}>
+        <Text maxFontSizeMultiplier={1.8} style={[styles.primaryLabel, disabled && { color: palette.inkLow }]}>
           {loading ? 'Working…' : label}
         </Text>
       </LinearGradient>
@@ -535,7 +548,7 @@ export function GhostButton({
         disabled && styles.ghostDisabled,
       ]}>
         {icon ? <Glyph color={color} name={icon} size={16} /> : null}
-        <Text style={[styles.ghostLabel, { color }]}>{label}</Text>
+        <Text maxFontSizeMultiplier={1.8} style={[styles.ghostLabel, { color }]}>{label}</Text>
       </View>
     </Tap>
   );
@@ -610,7 +623,7 @@ export function Segmented<T extends string>({
               onChange(option.value);
             }}
             style={styles.segmentedItem}>
-            <Text numberOfLines={1} style={[styles.segmentedLabel, active && styles.segmentedLabelOn]}>
+            <Text maxFontSizeMultiplier={1.4} numberOfLines={1} style={[styles.segmentedLabel, active && styles.segmentedLabelOn]}>
               {option.label}
             </Text>
           </Pressable>
@@ -629,6 +642,7 @@ export function Metric({
   detail,
   accent = palette.lime,
   onPress,
+  progress,
 }: {
   icon: GlyphName;
   label: string;
@@ -636,12 +650,22 @@ export function Metric({
   detail?: string;
   accent?: string;
   onPress?: () => void;
+  /** Optional 0–1 progress turns the icon into a compact visual gauge. */
+  progress?: number;
 }) {
   const body = (
     <View style={styles.metric}>
-      <View style={[styles.metricIcon, { backgroundColor: `${accent}1A` }]}>
-        <Glyph color={accent} name={icon} size={16} />
-      </View>
+      <Ring
+        colors={[accent, accent]}
+        delay={160}
+        size={44}
+        thickness={4}
+        track={`${accent}20`}
+        value={progress ?? 0}>
+        <View style={[styles.metricIcon, { backgroundColor: `${accent}14` }]}>
+          <Glyph color={accent} name={icon} size={15} />
+        </View>
+      </Ring>
       <Text style={styles.metricLabel}>{label.toUpperCase()}</Text>
       <Text numberOfLines={1} style={styles.metricValue}>{value}</Text>
       {detail ? <Text numberOfLines={1} style={styles.metricDetail}>{detail}</Text> : null}
@@ -879,7 +903,7 @@ const styles = StyleSheet.create({
   segmentedLabelOn: { color: palette.lime },
   metric: {
     flex: 1,
-    minHeight: 112,
+    minHeight: 126,
     backgroundColor: palette.surface,
     borderWidth: 1,
     borderColor: palette.line,
@@ -887,14 +911,13 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   metricIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 10,
   },
-  metricLabel: { ...text.label, fontSize: 9, letterSpacing: 1, color: palette.inkLow },
+  metricLabel: { ...text.label, fontSize: 8.5, letterSpacing: 0.9, color: palette.inkLow, marginTop: 9 },
   metricValue: { ...text.headline, fontSize: 18, color: palette.ink, marginTop: 3, ...tabular },
   metricDetail: { ...text.caption, fontSize: 10, color: palette.inkLow, marginTop: 1 },
   row: { minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 10 },

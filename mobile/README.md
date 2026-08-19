@@ -208,15 +208,21 @@ HealthKit, Health Connect, and speech recognition are native modules, so this
 app uses an Expo development client instead of Expo Go.
 
 ```bash
-npm run prebuild
 npm run ios
 # or
 npm run android
 ```
 
-The first Health sync asks for operating-system permissions. Apple Watch data
-already written to Apple Health is read through HealthKit. Android reads
-compatible health and wearable data through Health Connect.
+The checked-in `ios/` project contains the native Watch app and connectivity
+bridge. Do not run `expo prebuild --clean`: that regenerates the native project
+and removes manually maintained targets such as `VigorlyWatch`.
+
+The first Health sync asks for operating-system permissions. The Apple Watch
+companion can also start a full routine or quick workout, log sets with the
+Digital Crown, run set/rest timers, and stream live HealthKit heart-rate and
+active-calorie readings. It keeps session snapshots on the Watch and replays
+them to the iPhone after reconnecting. Android reads compatible health and
+wearable data through Health Connect.
 
 ### What to test where
 
@@ -227,9 +233,10 @@ compatible health and wearable data through Health Connect.
   unavailable or returns nothing there. Treat a voice failure in the Simulator
   as inconclusive and retest it on hardware. The Simulator may also contain no
   fitness samples and cannot receive Watch records.
-- **Physical iPhone development build:** the only honest test of dictation, and
-  of real Apple Health records. Apple Watch data reaches the app after the
-  Watch syncs it to Health on that iPhone.
+- **Physical iPhone + paired Apple Watch build:** the only honest test of
+  dictation, live heart rate/calories, phone-to-Watch routine sync, standalone
+  Watch logging, and offline replay. Verify weight/reps, duration sets, rest,
+  adding an exercise, finishing on Watch, then reopening the phone.
 - **Android emulator:** onboarding, typed logging, and Health Connect after
   Health Connect and sample data are installed. Dictation may work if the
   emulator image ships Google's speech services and a recognition language is

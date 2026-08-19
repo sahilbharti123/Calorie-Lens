@@ -542,6 +542,58 @@ function aliasSaid(lowered: string, alias: string) {
 }
 
 /**
+ * A named food is not consumed when it appears inside an exclusion. The old
+ * matcher saw the word `sugar` in “coffee without sugar” and confidently added
+ * a default spoonful—the opposite of what the user said.
+ */
+function aliasNegated(lowered: string, alias: string) {
+  const food = escapeRegex(alias);
+  const before = new RegExp(
+    `\\b(?:without|no|zero|skip|exclude|excluding|minus|hold)\\s+(?:any\\s+|added\\s+)?${food}(?:es|s)?\\b`,
+  );
+  const free = new RegExp(`\\b${food}(?:es|s)?[- ]free\\b`);
+  if (before.test(lowered) || free.test(lowered)) return true;
+  return /\bunsweetened\b/.test(lowered) && /^(?:sugar|sweetener)$/.test(alias);
+}
+
+type FoodMatch = { food: FoodReference; alias: string };
+
+// These are routinely described after “with” as the side that was eaten,
+// rather than an ingredient folded into the preceding dish. A recipe cue such
+// as “ingredients” still wins, because “ingredients: rice …” is unambiguous.
+const COMMON_ACCOMPANIMENT = /(?:roti|chapati|naan|paratha|bread|toast|rice|idli|dosa|sambar|raita|salad)/i;
+
+function isFinishedDish(match: FoodMatch, lowered: string) {
+  if (match.food.recipeDish) return true;
+  return /^(?:dal|daal|dhal|rajma|chole|chana)$/.test(match.alias)
+    && !/\b(?:plain|boiled|dry)\b/.test(lowered);
+}
+
+/**
+ * Returns true when another matched food is describing what went into a
+ * finished dish instead of a second thing eaten alongside it.
+ */
+function describesDishIngredient(lowered: string, dish: FoodMatch, other: FoodMatch) {
+  if (dish === other) return false;
+  const dishAt = lowered.indexOf(dish.alias);
+  const otherAt = lowered.indexOf(other.alias);
+  if (dishAt < 0 || otherAt < 0) return false;
+  if (/\b(?:recipe|ingredients?|made\s+with|prepared\s+with|containing)\b/.test(lowered)) return true;
+  if (otherAt > dishAt) {
+    const between = lowered.slice(dishAt + dish.alias.length, otherAt);
+    if (!/\b(?:with|containing)\b/.test(between)) return false;
+    // “with 2 naan” gives the second food its own amount, so it cannot be an
+    // unmeasured ingredient of the first. Likewise, ordinary breads and rice
+    // are overwhelmingly sides in this construction.
+    if (/\d|\b(?:a|an|one|two|three|four|half)\b/.test(between)) return false;
+    if (COMMON_ACCOMPANIMENT.test(other.food.name)) return false;
+    return true;
+  }
+  const between = lowered.slice(otherAt + other.alias.length, dishAt);
+  return between.trim() === '';
+}
+
+/**
  * Asks for an amount in the units this particular food can actually be
  * measured in. Idli has a piece weight and no density, so offering "1 bowl"
  * invites an answer the catalog cannot convert — and a question the user
@@ -908,18 +960,88 @@ export function parseCommandLocally(
     .map((food) => ({
       food,
       alias: food.aliases
-        .filter((candidate) => aliasSaid(lowered, candidate))
+        .filter((candidate) => aliasSaid(lowered, candidate) && !aliasNegated(lowered, candidate))
         .sort((a, b) => b.length - a.length)[0],
     }))
-    .filter((match): match is { food: FoodReference; alias: string } => Boolean(match.alias));
-  const matches = rawMatches.filter(({ alias }) => !rawMatches.some(
+    .filter((match): match is FoodMatch => Boolean(match.alias));
+  const hasPlantMilk = /\b(?:almond|oat|soy|coconut|cashew|pea)\s+milk\b/.test(lowered);
+  const hasGlutenFreeBread = /\bgluten[ -]?free\b[^,.]*(?:bread|toast)|(?:bread|toast)[^,.]*\bgluten[ -]?free\b/.test(lowered);
+  const hasVeganMeat = /\bvegan\b[^,.]*(?:chicken|beef|mutton|meat|fish|burger)|(?:chicken|beef|mutton|meat|fish|burger)[^,.]*\bvegan\b/.test(lowered);
+  const protectedVariant = hasPlantMilk || hasGlutenFreeBread || hasVeganMeat;
+  const specificRawMatches = rawMatches.filter(({ alias }) => !rawMatches.some(
     (other) => other.alias !== alias && other.alias.length > alias.length && other.alias.includes(alias),
   ));
+  const primaryDish = specificRawMatches
+    .filter((match) => isFinishedDish(match, lowered))
+    .sort((a, b) => b.alias.length - a.alias.length)[0];
+  const describedIngredients = primaryDish
+    ? specificRawMatches.filter((match) => describesDishIngredient(lowered, primaryDish, match))
+    : [];
+  // Do not interrupt a quick bare-dish log ("poha", "dal", "biryani") just
+  // because recipes can vary. Use the catalog's usual serving, show that it is
+  // an estimate, and let the review UI refine its ingredients. When the user is
+  // explicitly describing a recipe or naming ingredients, however, the eaten
+  // amount is essential: it anchors both the dish estimate and any later
+  // ingredient-sum calculation.
+  const hasRecipeIntent = describedIngredients.length > 0
+    || /\b(?:recipe|ingredients?|made\s+with|prepared\s+with|containing)\b/.test(lowered);
+  const matches = rawMatches.filter(({ alias, food }) => {
+    if (hasPlantMilk && /\bmilk\b/i.test(food.name)) return false;
+    if (hasGlutenFreeBread && /\bbread\b/i.test(food.name)) return false;
+    if (hasVeganMeat && /\b(?:chicken|beef|mutton|meat|fish|burger)\b/i.test(food.name)) return false;
+    if (describedIngredients.some((ingredient) => ingredient.food === food && ingredient.alias === alias)) return false;
+    return !rawMatches.some(
+      (other) => other.alias !== alias && other.alias.length > alias.length && other.alias.includes(alias),
+    );
+  });
   const hasExplicitOil = matches.some(({ food }) => food.name === 'Olive oil');
 
-  const looksLikeMeal = MEAL_WORDS.test(lowered) || matches.length > 0 || Boolean(taught);
+  const looksLikeMeal = MEAL_WORDS.test(lowered) || matches.length > 0 || Boolean(taught) || protectedVariant;
+  const declaredCalories = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*(?:kcal|calories?)/);
+  const declaredProtein = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*g(?:rams?)?\s*(?:of\s*)?protein/);
+  const declaredCarbs = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*g(?:rams?)?\s*(?:of\s*)?(?:carbs?|carbohydrates?)/);
+  const declaredFat = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*g(?:rams?)?\s*(?:of\s*)?fat/);
+  const labelClaim = Boolean(
+    declaredCalories
+    && (!matches.length || /\b(?:label|per serving|one serving|brand\w*)\b/.test(lowered)),
+  );
   if (looksLikeMeal) {
-    if (taught) {
+    if (labelClaim && declaredCalories) {
+      const labelName = text
+        .replace(/\b(?:one|1)\s+serving\b/i, '')
+        .replace(/\d+(?:\.\d+)?\s*(?:kcal|calories?)/ig, '')
+        .replace(/\d+(?:\.\d+)?\s*g(?:rams?)?\s*(?:of\s*)?(?:protein|carbs?|carbohydrates?|fat)/ig, '')
+        .replace(/\bfrom (?:the )?label\b/i, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim() || 'Packaged food';
+      operations.push({
+        type: 'meal',
+        action: 'add',
+        slot: preferredSlot ?? inferMealSlot(lowered),
+        description: labelName,
+        items: [{
+          name: labelName,
+          quantity: 'label serving described by user',
+          calories: Math.round(declaredCalories),
+          calorieLow: Math.round(declaredCalories * 0.95),
+          calorieHigh: Math.round(declaredCalories * 1.05),
+          protein: declaredProtein ?? 0,
+          carbs: declaredCarbs ?? 0,
+          fat: declaredFat ?? 0,
+          source: 'label',
+          sourceLabel: LABEL_SOURCE,
+          sourceId: 'declared serving',
+          confidence: 'medium',
+          basis: `${declaredCalories} kcal declared for the label serving`,
+          assumptions: [
+            'label rounding and serving accuracy still apply',
+            ...([declaredProtein, declaredCarbs, declaredFat].some((value) => value == null)
+              ? ['macros not stated were left at zero']
+              : []),
+          ],
+        }],
+      });
+    } else if (taught) {
       operations.push({
         type: 'meal',
         action: 'add',
@@ -928,7 +1050,6 @@ export function parseCommandLocally(
         items: [estimateLearned(taught.food, lowered, taught.alias)],
       });
     } else if (!matches.length) {
-      const declaredCalories = firstNumber(lowered, /(\d+(?:\.\d+)?)\s*(?:kcal|calories?)/);
       if (declaredCalories) {
         operations.push({
           type: 'meal',
@@ -941,9 +1062,9 @@ export function parseCommandLocally(
             calories: Math.round(declaredCalories),
             calorieLow: Math.round(declaredCalories * 0.95),
             calorieHigh: Math.round(declaredCalories * 1.05),
-            protein: 0,
-            carbs: 0,
-            fat: 0,
+            protein: declaredProtein ?? 0,
+            carbs: declaredCarbs ?? 0,
+            fat: declaredFat ?? 0,
             source: 'label',
             sourceLabel: LABEL_SOURCE,
             sourceId: 'declared serving',
@@ -967,12 +1088,29 @@ export function parseCommandLocally(
       }
     }
     const items: Omit<MealItem, 'id' | 'slot' | 'loggedAt'>[] = [];
-    for (const { food, alias } of taught ? [] : matches) {
+    for (const { food, alias } of taught || labelClaim ? [] : matches) {
       const quantity = resolved?.amounts.get(alias)
         ?? quantityNear(lowered, alias, food, matches.length === 1);
+      const finishedDish = primaryDish?.food === food && primaryDish.alias === alias;
+      if (finishedDish && hasRecipeIntent && !quantity.amount) {
+        const missing = amountQuestion(food, alias);
+        return clarification(text, missing.question, missing.suggestions, missing.target);
+      }
       const estimate = estimateFood(food, quantity, lowered, context, alias, hasExplicitOil, resolved);
       if ('question' in estimate) {
         return clarification(text, estimate.question, estimate.suggestions, estimate.target);
+      }
+      if (finishedDish) {
+        const ingredientNames = primaryDish?.food === food
+          ? describedIngredients.map(({ food: ingredient }) => ({ name: ingredient.name }))
+          : [];
+        estimate.recipe = { mode: 'dish-estimate', ingredients: ingredientNames };
+        if (ingredientNames.length) {
+          estimate.assumptions = [
+            ...(estimate.assumptions ?? []),
+            `${ingredientNames.map((ingredient) => ingredient.name).join(', ')} included in the finished-dish estimate; not added twice`,
+          ];
+        }
       }
       items.push(estimate);
     }
@@ -1070,11 +1208,24 @@ export async function parseFitnessCommand(
     .split(/\b(?:and|plus|aur|with|then)\b|,/i)
     .map((fragment) => fragment.trim())
     .filter((fragment) => fragment.length > 2);
-  const fragmentUnknown = fragments.some((fragment) => {
+  const localMealNames = local.operations
+    .filter((operation): operation is Extract<LogOperation, { type: 'meal' }> => operation.type === 'meal')
+    .flatMap((operation) => operation.items.map((item) => item.name.toLowerCase()));
+  const unknownFragments = fragments.filter((fragment) => {
     const fragmentResult = parseCommandLocally(fragment, preferredSlot, context, resolved);
+    const fragmentName = fragment
+      .toLowerCase()
+      .replace(/\d+(?:\.\d+)?\s*(?:kg|g|grams?|ml|l|litres?|pieces?|servings?)?/g, '')
+      .replace(/\b(?:for\s+(?:breakfast|lunch|dinner|snack)|khaya|khayi|khaaya|piya|had|ate)\b/g, '')
+      .trim();
+    const coveredByComposite = fragmentName.length > 2
+      && localMealNames.some((name) => name.includes(fragmentName));
+    if (coveredByComposite) return false;
     return fragmentResult.clarification?.question.includes(UNKNOWN_FOOD_MARK)
+      || fragmentResult.clarification?.target.kind === 'intent'
       || (!fragmentResult.operations.length && !fragmentResult.clarification);
   });
+  const fragmentUnknown = localMealNames.length > 0 && unknownFragments.length > 0;
   const localUnknown = local.clarification?.question.includes(UNKNOWN_FOOD_MARK) ?? false;
   const needsAi = localUnknown || (Boolean(local.operations.length) && fragmentUnknown);
   if (!needsAi) return withProfile;
@@ -1082,7 +1233,18 @@ export async function parseFitnessCommand(
   // detail rather than guessing, so the app costs nothing to run and works
   // offline. The branch below stays here so the service can be switched back
   // on with EXPO_PUBLIC_ENABLE_AI_PARSING=1.
-  if (!AI_PARSING_ENABLED) return withProfile;
+  if (!AI_PARSING_ENABLED) {
+    if (local.operations.length && fragmentUnknown) {
+      const missing = unknownFragments.slice(0, 2).map((fragment) => `“${fragment}”`).join(' and ');
+      return clarification(
+        utterance,
+        `I recognized only part of that update and will not save an incomplete meal. I could not verify ${missing}. Say the whole meal again using known foods, or give label calories for the missing item.`,
+        ['Say the whole meal again', 'Give the missing item’s label calories'],
+        { kind: 'intent' },
+      );
+    }
+    return withProfile;
+  }
   if (!apiUrl()) return withProfile;
   try {
     const session = await readSession();
@@ -1099,6 +1261,76 @@ export async function parseFitnessCommand(
   } catch {
     return withProfile;
   }
+}
+
+type MealOperation = Extract<LogOperation, { type: 'meal' }>;
+
+export type RecipeRefinement =
+  | { operation: MealOperation }
+  | { error: string };
+
+/**
+ * Replaces a broad finished-dish estimate with one parent dish calculated from
+ * the ingredients in the portion the user actually ate. Ingredients remain
+ * visible evidence under that parent; they are not logged as separate foods.
+ */
+export async function refineRecipeMeal(
+  operation: MealOperation,
+  ingredientText: string,
+  context: EstimationContext,
+): Promise<RecipeRefinement> {
+  const parent = operation.items.find((item) => item.recipe);
+  if (!parent) return { error: 'This meal does not contain a recipe dish to refine.' };
+  const input = ingredientText.trim();
+  if (!input) return { error: 'Add the ingredients and amounts for the portion you ate.' };
+
+  const parsed = await parseFitnessCommand(input, operation.slot, context);
+  if (parsed.clarification) return { error: parsed.clarification.question };
+  const ingredientItems = parsed.operations
+    .filter((candidate): candidate is MealOperation => candidate.type === 'meal')
+    .flatMap((candidate) => candidate.items);
+  if (!ingredientItems.length) return { error: 'I could not identify any recipe ingredients.' };
+  const assumed = ingredientItems.find((item) => item.assumptions?.some(
+    (assumption) => assumption.includes('amount not stated'),
+  ));
+  if (assumed) {
+    return { error: `Add an amount for ${assumed.name.toLowerCase()}, such as grams, teaspoons or pieces.` };
+  }
+
+  const sum = (read: (item: (typeof ingredientItems)[number]) => number) => ingredientItems
+    .reduce((total, item) => total + read(item), 0);
+  const calories = Math.round(sum((item) => item.calories));
+  const low = Math.round(sum((item) => item.calorieLow ?? item.calories));
+  const high = Math.round(sum((item) => item.calorieHigh ?? item.calories));
+  const macro = (key: 'protein' | 'carbs' | 'fat') => Math.round(sum((item) => item[key]) * 10) / 10;
+  const confidence: MealItem['confidence'] = ingredientItems.every((item) => item.confidence === 'high')
+    ? 'high'
+    : ingredientItems.some((item) => item.confidence === 'low') ? 'low' : 'medium';
+  const ingredientNames = ingredientItems.map((item) => ({
+    name: item.name,
+    quantity: item.quantity,
+    calories: item.calories,
+    protein: item.protein,
+    carbs: item.carbs,
+    fat: item.fat,
+  }));
+  const refined = {
+    ...parent,
+    calories,
+    calorieLow: low,
+    calorieHigh: high,
+    protein: macro('protein'),
+    carbs: macro('carbs'),
+    fat: macro('fat'),
+    confidence,
+    source: 'local' as const,
+    sourceLabel: 'Ingredient calculation',
+    sourceId: 'ingredients entered for this portion',
+    basis: `${parent.quantity} · ${ingredientItems.length} measured ingredient${ingredientItems.length === 1 ? '' : 's'}`,
+    assumptions: ['ingredient amounts describe the portion eaten; water and cooking loss do not add calories'],
+    recipe: { mode: 'ingredient-sum' as const, ingredients: ingredientNames, input },
+  };
+  return { operation: { ...operation, description: parent.name, items: [refined] } };
 }
 
 /**

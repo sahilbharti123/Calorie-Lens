@@ -67,6 +67,7 @@ test('repeating and saving preserve evidence but create add operations', () => {
   const savedOperation = savedMealToOperation(saved);
   assert.equal(savedOperation.description, 'Eggs');
   assert.equal(savedOperation.items[0].source, 'usda');
+  assert.equal(savedMealToOperation(saved, 'lunch').slot, 'lunch');
 });
 
 test('saved meal sync keeps the newest edit and never resurrects a deletion', () => {

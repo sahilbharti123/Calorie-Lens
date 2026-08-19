@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -56,7 +57,10 @@ export default function AuthResetScreen() {
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
         <ScrollView
           contentContainerStyle={styles.content}
+          keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
+          onScrollBeginDrag={Keyboard.dismiss}
+          onTouchMove={Keyboard.dismiss}
           showsVerticalScrollIndicator={false}>
           <View style={styles.brand}>
             <BrandMark size={60} />
@@ -125,6 +129,7 @@ function PasswordField({
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label.toUpperCase()}</Text>
       <TextInput
+        accessibilityLabel={label}
         autoCapitalize="none"
         autoComplete="new-password"
         onBlur={() => setFocused(false)}

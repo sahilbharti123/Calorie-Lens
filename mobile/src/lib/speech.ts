@@ -1,11 +1,11 @@
 /**
- * On-device dictation.
+ * Operating-system dictation.
  *
  * Speech is transcribed by the operating system's own recogniser (Apple's
  * Speech framework on iOS, the platform recogniser on Android). Nothing is
- * uploaded to a Vigorly server and there is no per-use cost, which is why
- * voice logging works without an account, without an API key, and offline
- * wherever the OS has an on-device model installed.
+ * uploaded to a Vigorly server and there is no per-use cost. Depending on the
+ * device, selected language and installed speech packs, the operating system
+ * may process recognition on-device or use its own speech service.
  *
  * The transcript is then handed to the deterministic parser in `nutrition.ts`
  * — the same code path typed input uses. No model ever produces a calorie.
@@ -209,11 +209,14 @@ export function useDictation({ onFinal }: { onFinal?: (transcript: string) => vo
     }
 
     try {
+      const lang = recognitionLocale();
+      const requiresOnDeviceRecognition = await canRecognizeOffline(lang);
       ExpoSpeechRecognitionModule.start({
-        lang: 'en-US',
+        lang,
         interimResults: true,
         continuous: true,
         addsPunctuation: false,
+        requiresOnDeviceRecognition,
         contextualStrings: vocabulary(),
         // Off by default in the module, and the level meter needs it.
         volumeChangeEventOptions: { enabled: true, intervalMillis: 100 },
@@ -249,4 +252,21 @@ export function useDictation({ onFinal }: { onFinal?: (transcript: string) => vo
   }, [clearTimers]);
 
   return { state, transcript, level, error, start, stop, reset, setError };
+}
+
+function recognitionLocale() {
+  const locale = Intl.DateTimeFormat().resolvedOptions().locale || 'en-US';
+  // en-IN recognises English gym terms while retaining the Indian acoustic
+  // model and the Hindi food vocabulary supplied in contextualStrings.
+  return /-IN$/i.test(locale) ? 'en-IN' : locale;
+}
+
+async function canRecognizeOffline(locale: string) {
+  if (!ExpoSpeechRecognitionModule.supportsOnDeviceRecognition()) return false;
+  try {
+    const { installedLocales } = await ExpoSpeechRecognitionModule.getSupportedLocales({});
+    return installedLocales.some((item) => item.toLowerCase() === locale.toLowerCase());
+  } catch {
+    return false;
+  }
 }

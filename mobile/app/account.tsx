@@ -7,6 +7,7 @@ import { type ComponentProps, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -30,8 +31,10 @@ import {
   Well,
 } from '@/src/components/ui';
 import { apiRequest } from '@/src/lib/api-client';
+import { isBackupPayload } from '@/src/lib/backup';
 import { mergeAppData, normalizeData, useApp } from '@/src/store/app-store';
 import { useAuth } from '@/src/store/auth-store';
+import { useAppleWatchSyncStatus } from '@/src/lib/live-workout';
 import { palette, radius, space, tabular, text } from '@/src/theme';
 import type { AppData, CoachMemory } from '@/src/types';
 
@@ -58,17 +61,27 @@ function commaList(value: string) {
     .slice(0, 30);
 }
 
+function syncClock(value?: string) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
 export default function AccountScreen() {
   const router = useRouter();
   const {
     data,
+    clearFitnessHistory,
     clearLocalData,
     replaceData,
+    lastSyncedAt,
     syncError,
     syncNow,
     syncState,
     updateCoachMemory,
   } = useApp();
+  const watchSync = useAppleWatchSyncStatus();
   const {
     changePassword,
     deleteAccount,
@@ -103,10 +116,20 @@ export default function AccountScreen() {
   const syncLabel = useMemo(() => {
     if (!session) return 'Encrypted on this device';
     if (syncState === 'syncing') return 'Syncing securely…';
-    if (syncState === 'synced') return 'Up to date';
+    if (syncState === 'synced') return `Cloud synced${lastSyncedAt ? ` · ${syncClock(lastSyncedAt)}` : ''}`;
     if (syncState === 'error') return 'Saved offline · sync needs attention';
     return 'Saved offline';
-  }, [session, syncState]);
+  }, [lastSyncedAt, session, syncState]);
+
+  const watchSyncLabel = useMemo(() => {
+    if (watchSync.state === 'unavailable') return 'Watch unavailable';
+    if (watchSync.state === 'synced') {
+      return `Watch synced${watchSync.lastSyncedAt ? ` · ${syncClock(watchSync.lastSyncedAt)}` : ''}`;
+    }
+    return watchSync.lastSyncedAt
+      ? `Watch pending · last ${syncClock(watchSync.lastSyncedAt)}`
+      : 'Waiting for Watch';
+  }, [watchSync]);
 
   function saveMemory() {
     const next: Partial<CoachMemory> = {
@@ -162,7 +185,7 @@ export default function AccountScreen() {
       if (result.canceled) return;
       const contents = await new File(result.assets[0].uri).text();
       const parsed = JSON.parse(contents) as Partial<BackupFile>;
-      if (parsed.format !== 'calorie-lens-backup-v1' || !parsed.payload) {
+      if (parsed.format !== 'calorie-lens-backup-v1' || !isBackupPayload(parsed.payload)) {
         throw new Error('This is not a Vigorly backup.');
       }
       replaceData(mergeAppData(data, normalizeData(parsed.payload)));
@@ -218,14 +241,14 @@ export default function AccountScreen() {
     Alert.alert(
       'Clear fitness history?',
       session
-        ? 'This clears the app and the next sync will replace your cloud history with an empty vault.'
-        : 'This permanently clears the encrypted fitness history on this device.',
+        ? 'This removes logged meals, workouts, water, weight progress and coach conversations here and from your cloud vault. Your profile, goals, routines and learned foods stay.'
+        : 'This removes logged meals, workouts, water, weight progress and coach conversations from this device. Your profile, goals, routines and learned foods stay.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Clear history',
           style: 'destructive',
-          onPress: () => void clearLocalData(),
+          onPress: clearFitnessHistory,
         },
       ],
     );
@@ -241,7 +264,10 @@ export default function AccountScreen() {
         style={styles.flex}>
         <ScrollView
           contentContainerStyle={styles.content}
+          keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
+          onScrollBeginDrag={Keyboard.dismiss}
+          onTouchMove={Keyboard.dismiss}
           showsVerticalScrollIndicator={false}>
 
           {/* ---------- Identity + sync ---------- */}
@@ -267,6 +293,13 @@ export default function AccountScreen() {
                   label={syncLabel}
                   tone={syncState === 'error' ? 'danger' : 'accent'}
                 />
+                {Platform.OS === 'ios' ? (
+                  <Pill
+                    icon="watch"
+                    label={watchSyncLabel}
+                    tone={watchSync.state === 'synced' ? 'accent' : 'default'}
+                  />
+                ) : null}
               </View>
 
               <Text style={styles.heroBody}>
@@ -464,7 +497,7 @@ export default function AccountScreen() {
             <Card padded={false} style={styles.rowCard}>
               {session ? (
                 <ListRow
-                  detail="Your local encrypted copy stays on this device"
+                  detail="Signs out all devices; this phone keeps its encrypted fitness copy"
                   icon="logout"
                   last
                   onPress={() => void signOut()}
@@ -534,6 +567,7 @@ function Field({
       <Text style={styles.fieldLabel}>{label.toUpperCase()}</Text>
       <TextInput
         {...props}
+        accessibilityLabel={props.accessibilityLabel ?? label}
         onBlur={() => setFocused(false)}
         onFocus={() => setFocused(true)}
         placeholderTextColor={palette.inkLow}

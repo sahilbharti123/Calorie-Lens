@@ -2,6 +2,7 @@ import { type Href, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -29,6 +30,7 @@ import {
   Metric,
   PrimaryButton,
   Reveal,
+  Ring,
   Screen,
   SectionTitle,
   Tap,
@@ -61,7 +63,7 @@ import type {
  * Everything else in this file remains available as progressive profile
  * setup, but none of it is allowed to delay the first useful log.
  */
-const TOTAL_STEPS = 4;
+const TOTAL_STEPS = 8;
 const THUMB = 9;
 
 type Choice<T extends string> = {
@@ -109,6 +111,31 @@ const challengeChoices: Choice<MainChallenge>[] = [
   { value: 'consistency', title: 'Staying consistent', body: 'I start well and then stop tracking.', icon: 'calendar' },
 ];
 
+const paceChoices: Choice<GoalPace>[] = [
+  { value: 'gentle', title: 'Gentle', body: 'Smaller changes that are easier to sustain.', icon: 'heart' },
+  { value: 'steady', title: 'Steady', body: 'A balanced pace for most people.', icon: 'trend' },
+  { value: 'ambitious', title: 'Ambitious', body: 'A faster pace within conservative safety limits.', icon: 'flame' },
+];
+
+const activityChoices: Choice<ActivityLevel>[] = [
+  { value: 'mostly-seated', title: 'Mostly seated', body: 'Desk-based days with little planned movement.', icon: 'home' },
+  { value: 'lightly-active', title: 'Lightly active', body: 'Some walking or one to two sessions each week.', icon: 'steps' },
+  { value: 'active', title: 'Active', body: 'Regular movement or three to five weekly sessions.', icon: 'steps' },
+  { value: 'very-active', title: 'Very active', body: 'Physical work or demanding training most days.', icon: 'dumbbell' },
+];
+
+const experienceChoices: Choice<ExperienceLevel>[] = [
+  { value: 'new', title: 'New to training', body: 'Prioritize simple movements and gradual progression.', icon: 'spark' },
+  { value: 'some', title: 'Some experience', body: 'Use familiar movements with clear progression.', icon: 'trend' },
+  { value: 'experienced', title: 'Experienced', body: 'Expose advanced set controls and performance detail.', icon: 'trophy' },
+];
+
+const toneChoices: Choice<CoachingTone>[] = [
+  { value: 'gentle', title: 'Gentle', body: 'Encouraging, practical and never guilt-based.', icon: 'heart' },
+  { value: 'direct', title: 'Direct', body: 'Short, clear next actions without extra explanation.', icon: 'target' },
+  { value: 'data-led', title: 'Data-led', body: 'Show the trend and explain why a suggestion changed.', icon: 'chart' },
+];
+
 export default function OnboardingScreen() {
   const router = useRouter();
   const {
@@ -127,18 +154,18 @@ export default function OnboardingScreen() {
   const [height, setHeight] = useState(data.profile.heightCm ? String(data.profile.heightCm) : '');
   const [weight, setWeight] = useState(data.profile.weightKg ? String(data.profile.weightKg) : '');
   const [targetWeight, setTargetWeight] = useState(data.profile.targetWeightKg ? String(data.profile.targetWeightKg) : '');
-  const [goalPace] = useState<GoalPace | null>(data.profile.goalPace ?? null);
-  const [activityLevel] = useState<ActivityLevel | null>(data.profile.activityLevel ?? null);
-  const [workoutPreference] = useState<WorkoutPreference | null>(data.profile.workoutPreference ?? null);
-  const [experienceLevel] = useState<ExperienceLevel | null>(data.profile.experienceLevel ?? null);
-  const [trainingDays] = useState(String(data.profile.trainingDays ?? 3));
-  const [availableMinutes] = useState(String(data.profile.availableMinutes ?? 30));
-  const [dietStyle] = useState<DietStyle | null>(data.profile.dietStyle ?? null);
-  const [mealsPerDay] = useState(String(data.profile.mealsPerDay ?? 3));
-  const [allergies] = useState(data.profile.allergies.join(', '));
-  const [injuries] = useState(data.profile.injuries.join(', '));
-  const [mainChallenge] = useState<MainChallenge | null>(data.profile.mainChallenge ?? null);
-  const [coachingTone] = useState<CoachingTone | null>(data.profile.coachingTone ?? null);
+  const [goalPace, setGoalPace] = useState<GoalPace | null>(data.profile.goalPace ?? null);
+  const [activityLevel, setActivityLevel] = useState<ActivityLevel | null>(data.profile.activityLevel ?? null);
+  const [workoutPreference, setWorkoutPreference] = useState<WorkoutPreference | null>(data.profile.workoutPreference ?? null);
+  const [experienceLevel, setExperienceLevel] = useState<ExperienceLevel | null>(data.profile.experienceLevel ?? null);
+  const [trainingDays, setTrainingDays] = useState(String(data.profile.trainingDays ?? 3));
+  const [availableMinutes, setAvailableMinutes] = useState(String(data.profile.availableMinutes ?? 30));
+  const [dietStyle, setDietStyle] = useState<DietStyle | null>(data.profile.dietStyle ?? null);
+  const [mealsPerDay, setMealsPerDay] = useState(String(data.profile.mealsPerDay ?? 3));
+  const [allergies, setAllergies] = useState(data.profile.allergies.join(', '));
+  const [injuries, setInjuries] = useState(data.profile.injuries.join(', '));
+  const [mainChallenge, setMainChallenge] = useState<MainChallenge | null>(data.profile.mainChallenge ?? null);
+  const [coachingTone, setCoachingTone] = useState<CoachingTone | null>(data.profile.coachingTone ?? null);
   const [bowl] = useState(data.estimation.bowlMl ? String(data.estimation.bowlMl) : '');
   const [healthBusy, setHealthBusy] = useState(false);
   const [healthMessage, setHealthMessage] = useState('');
@@ -160,7 +187,7 @@ export default function OnboardingScreen() {
     activityLevel: activityLevel ?? undefined,
     workoutPreference: workoutPreference ?? undefined,
     experienceLevel: experienceLevel ?? undefined,
-    trainingDays: numeric(trainingDays),
+    trainingDays: numericAllowZero(trainingDays),
     availableMinutes: numeric(availableMinutes),
     dietStyle: dietStyle ?? undefined,
     mealsPerDay: numeric(mealsPerDay),
@@ -200,7 +227,15 @@ export default function OnboardingScreen() {
       && inRange(height, 125, 230)
       && inRange(weight, 35, 250)
       && !targetError)
-    || step >= 3;
+    || (step === 3 && Boolean(goalPace) && Boolean(activityLevel))
+    || (step === 4
+      && Boolean(workoutPreference)
+      && Boolean(experienceLevel)
+      && inRangeAllowZero(trainingDays, 0, 7)
+      && inRange(availableMinutes, 10, 240))
+    || (step === 5 && Boolean(dietStyle) && inRange(mealsPerDay, 1, 8))
+    || (step === 6 && Boolean(mainChallenge) && Boolean(coachingTone))
+    || step >= 7;
 
   useEffect(() => {
     scroller.current?.scrollTo({ y: 0, animated: false });
@@ -219,7 +254,7 @@ export default function OnboardingScreen() {
       setVoiceReady(permission.granted);
       setVoiceMessage(
         permission.granted
-          ? 'Microphone and on-device dictation are ready. Speech is transcribed on this phone — no account and no connection needed.'
+          ? 'Microphone and dictation are ready. Vigorly never receives your audio; iOS or Android handles speech recognition and may require a connection.'
           : permission.canAskAgain
             ? 'Vigorly needs microphone and speech access to log by voice.'
             : 'Microphone or speech access is off. Turn it on in Settings to log by voice.',
@@ -314,7 +349,10 @@ export default function OnboardingScreen() {
 
         <ScrollView
           contentContainerStyle={styles.content}
+          keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
+          onScrollBeginDrag={Keyboard.dismiss}
+          onTouchMove={Keyboard.dismiss}
           ref={scroller}
           showsVerticalScrollIndicator={false}
           style={styles.fill}>
@@ -342,6 +380,42 @@ export default function OnboardingScreen() {
                   targetError={targetError}
                   targetWeight={targetWeight}
                   weight={weight}
+                />
+              ) : step === 3 ? (
+                <MovementProfile
+                  activityLevel={activityLevel}
+                  goalPace={goalPace}
+                  setActivityLevel={setActivityLevel}
+                  setGoalPace={setGoalPace}
+                />
+              ) : step === 4 ? (
+                <TrainingProfile
+                  availableMinutes={availableMinutes}
+                  experienceLevel={experienceLevel}
+                  setAvailableMinutes={setAvailableMinutes}
+                  setExperienceLevel={setExperienceLevel}
+                  setTrainingDays={setTrainingDays}
+                  setWorkoutPreference={setWorkoutPreference}
+                  trainingDays={trainingDays}
+                  workoutPreference={workoutPreference}
+                />
+              ) : step === 5 ? (
+                <FoodProfile
+                  allergies={allergies}
+                  dietStyle={dietStyle}
+                  mealsPerDay={mealsPerDay}
+                  setAllergies={setAllergies}
+                  setDietStyle={setDietStyle}
+                  setMealsPerDay={setMealsPerDay}
+                />
+              ) : step === 6 ? (
+                <CoachingProfile
+                  coachingTone={coachingTone}
+                  injuries={injuries}
+                  mainChallenge={mainChallenge}
+                  setCoachingTone={setCoachingTone}
+                  setInjuries={setInjuries}
+                  setMainChallenge={setMainChallenge}
                 />
               ) : (
                 <PlanPreview
@@ -375,7 +449,10 @@ export default function OnboardingScreen() {
                 disabled={!canContinue}
                 icon={step === 0 ? 'spark' : 'chevron'}
                 label={step === 0 ? 'Build my plan' : 'Continue'}
-                onPress={() => setStep((current) => current + 1)}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setStep((current) => current + 1);
+                }}
               />
               {step === 0 ? (
                 <GhostButton compact label="Log now, set up later" onPress={() => void finish()} />
@@ -437,7 +514,7 @@ function StepIntro({ body, eyebrow, title }: { body: string; eyebrow: string; ti
     <View style={styles.intro}>
       <Text style={styles.eyebrow}>{eyebrow}</Text>
       <Text style={styles.title}>{title}</Text>
-      <Text style={styles.body}>{body}</Text>
+      <Text numberOfLines={2} style={styles.body}>{body}</Text>
     </View>
   );
 }
@@ -446,22 +523,32 @@ function Welcome() {
   return (
     <>
       <Reveal>
-        <View style={styles.brandRow}>
-          <BrandMark size={54} />
+        <View style={styles.welcomeVisual}>
+          <View style={styles.welcomeHalo} />
+          <Ring size={156} thickness={8} value={0.76}>
+            <View style={styles.brandCore}>
+              <BrandMark size={58} />
+            </View>
+          </Ring>
+          <View style={[styles.floatingGlyph, styles.floatingFood]}>
+            <Glyph color={palette.protein} name="bowl" size={17} />
+          </View>
+          <View style={[styles.floatingGlyph, styles.floatingTrain]}>
+            <Glyph color={palette.info} name="dumbbell" size={17} />
+          </View>
+          <View style={[styles.floatingGlyph, styles.floatingProgress]}>
+            <Glyph color={palette.fat} name="trend" size={17} />
+          </View>
         </View>
         <Text style={styles.eyebrow}>VIGORLY</Text>
-        <Text style={styles.title}>Your plan should know who it is for.</Text>
-        <Text style={styles.body}>
-          A few honest answers will set your calories, macros, movement targets and coaching priorities. Every answer stays editable.
-        </Text>
+        <Text style={styles.title}>A plan built around you.</Text>
+        <Text style={styles.body}>Four quick steps. Every target stays editable.</Text>
       </Reveal>
 
-      <Reveal index={1} style={styles.group}>
-        <Card padded={false} style={styles.promiseCard}>
-          <PromiseRow icon="chart" text="Targets calculated from your body, routine and goal" />
-          <PromiseRow icon="dumbbell" text="Suggestions shaped around your time and training style" />
-          <PromiseRow icon="bowl" last text="Food guidance that respects how you actually eat" />
-        </Card>
+      <Reveal index={1} style={styles.promiseGrid}>
+        <PromiseRow icon="target" text="Your targets" />
+        <PromiseRow icon="dumbbell" text="Your training" />
+        <PromiseRow icon="bowl" text="Your food" />
       </Reveal>
 
       <Reveal index={2} style={styles.group}>
@@ -473,9 +560,9 @@ function Welcome() {
   );
 }
 
-function PromiseRow({ icon, last, text: copy }: { icon: GlyphName; last?: boolean; text: string }) {
+function PromiseRow({ icon, text: copy }: { icon: GlyphName; text: string }) {
   return (
-    <View style={[styles.promiseRow, !last && styles.promiseBorder]}>
+    <View style={styles.promiseRow}>
       <View style={styles.promiseIcon}>
         <Glyph color={palette.lime} name={icon} size={17} />
       </View>
@@ -527,7 +614,7 @@ function ChoiceList<T extends string>({
   return (
     <View style={styles.choices}>
       {choices.map((choice, index) => (
-        <Reveal index={startIndex + index} key={choice.value}>
+        <Reveal index={startIndex + index} key={choice.value} style={styles.choiceItem}>
           <ChoiceCard active={selected === choice.value} choice={choice} onSelect={onSelect} />
         </Reveal>
       ))}
@@ -551,11 +638,10 @@ function ChoiceCard<T extends string>({
       scaleTo={0.985}
       style={[styles.choice, active && styles.choiceOn]}>
       <View style={[styles.choiceIcon, active && styles.choiceIconOn]}>
-        <Glyph color={active ? palette.onLime : palette.inkMid} name={choice.icon} size={18} />
+        <Glyph color={active ? palette.onLime : palette.inkMid} name={choice.icon} size={22} />
       </View>
       <View style={styles.choiceCopy}>
         <Text style={styles.choiceTitle}>{choice.title}</Text>
-        <Text style={styles.choiceBody}>{choice.body}</Text>
       </View>
       <SelectMark active={active} />
     </Tap>
@@ -652,6 +738,163 @@ function BodyBasics({
         <SectionTitle title="Energy equation" />
       </Reveal>
       <ChoiceList choices={sexChoices} onSelect={setEquationSex} selected={equationSex} startIndex={3} />
+    </>
+  );
+}
+
+function MovementProfile({
+  activityLevel,
+  goalPace,
+  setActivityLevel,
+  setGoalPace,
+}: {
+  activityLevel: ActivityLevel | null;
+  goalPace: GoalPace | null;
+  setActivityLevel: (value: ActivityLevel) => void;
+  setGoalPace: (value: GoalPace) => void;
+}) {
+  return (
+    <>
+      <Reveal>
+        <StepIntro
+          eyebrow="YOUR WEEK"
+          title="Match the plan to real life."
+          body="Your usual movement sets maintenance energy. Your preferred pace controls how quickly targets change."
+        />
+      </Reveal>
+      <SectionTitle title="Usual activity" />
+      <ChoiceList choices={activityChoices} onSelect={setActivityLevel} selected={activityLevel} />
+      <SectionTitle title="Preferred pace" />
+      <ChoiceList choices={paceChoices} onSelect={setGoalPace} selected={goalPace} />
+    </>
+  );
+}
+
+function TrainingProfile({
+  availableMinutes,
+  experienceLevel,
+  setAvailableMinutes,
+  setExperienceLevel,
+  setTrainingDays,
+  setWorkoutPreference,
+  trainingDays,
+  workoutPreference,
+}: {
+  availableMinutes: string;
+  experienceLevel: ExperienceLevel | null;
+  setAvailableMinutes: (value: string) => void;
+  setExperienceLevel: (value: ExperienceLevel) => void;
+  setTrainingDays: (value: string) => void;
+  setWorkoutPreference: (value: WorkoutPreference) => void;
+  trainingDays: string;
+  workoutPreference: WorkoutPreference | null;
+}) {
+  return (
+    <>
+      <Reveal>
+        <StepIntro
+          eyebrow="TRAINING FIT"
+          title="Build a week you can finish."
+          body="Availability controls weekly minutes and strength frequency. Zero training days is valid during recovery."
+        />
+      </Reveal>
+      <SectionTitle title="Best fit" />
+      <ChoiceList choices={workoutChoices} onSelect={setWorkoutPreference} selected={workoutPreference} />
+      <SectionTitle title="Experience" />
+      <ChoiceList choices={experienceChoices} onSelect={setExperienceLevel} selected={experienceLevel} />
+      <Reveal index={2}>
+        <Card>
+          <View style={styles.grid}>
+            <NumberField label="Training days" onChange={setTrainingDays} placeholder="3" unit="/ week" value={trainingDays} />
+            <NumberField label="Time available" onChange={setAvailableMinutes} placeholder="30" unit="min / session" value={availableMinutes} />
+          </View>
+        </Card>
+      </Reveal>
+    </>
+  );
+}
+
+function FoodProfile({
+  allergies,
+  dietStyle,
+  mealsPerDay,
+  setAllergies,
+  setDietStyle,
+  setMealsPerDay,
+}: {
+  allergies: string;
+  dietStyle: DietStyle | null;
+  mealsPerDay: string;
+  setAllergies: (value: string) => void;
+  setDietStyle: (value: DietStyle) => void;
+  setMealsPerDay: (value: string) => void;
+}) {
+  return (
+    <>
+      <Reveal>
+        <StepIntro
+          eyebrow="FOOD FIT"
+          title="Make nutrition recognizably yours."
+          body="This changes meal examples and safety warnings. It never guesses that an allergy is only a preference."
+        />
+      </Reveal>
+      <ChoiceList choices={dietChoices} onSelect={setDietStyle} selected={dietStyle} />
+      <Reveal index={2}>
+        <Card>
+          <View style={styles.grid}>
+            <NumberField label="Meals per day" onChange={setMealsPerDay} placeholder="3" unit="meals" value={mealsPerDay} />
+          </View>
+          <ProfileTextField
+            label="Allergies or foods to avoid"
+            onChange={setAllergies}
+            placeholder="e.g. peanuts, dairy"
+            value={allergies}
+          />
+        </Card>
+      </Reveal>
+    </>
+  );
+}
+
+function CoachingProfile({
+  coachingTone,
+  injuries,
+  mainChallenge,
+  setCoachingTone,
+  setInjuries,
+  setMainChallenge,
+}: {
+  coachingTone: CoachingTone | null;
+  injuries: string;
+  mainChallenge: MainChallenge | null;
+  setCoachingTone: (value: CoachingTone) => void;
+  setInjuries: (value: string) => void;
+  setMainChallenge: (value: MainChallenge) => void;
+}) {
+  return (
+    <>
+      <Reveal>
+        <StepIntro
+          eyebrow="COACHING FIT"
+          title="Choose what help should feel like."
+          body="Your challenge sets the first priority. Injuries are remembered so training suggestions can stay conservative."
+        />
+      </Reveal>
+      <SectionTitle title="Main challenge" />
+      <ChoiceList choices={challengeChoices} onSelect={setMainChallenge} selected={mainChallenge} />
+      <SectionTitle title="Coaching style" />
+      <ChoiceList choices={toneChoices} onSelect={setCoachingTone} selected={coachingTone} />
+      <Reveal index={2}>
+        <Card>
+          <ProfileTextField
+            label="Injuries or movement limits"
+            onChange={setInjuries}
+            placeholder="e.g. recovering right knee"
+            value={injuries}
+          />
+          <Text style={styles.helperText}>Vigorly provides general wellness guidance, not injury diagnosis or rehabilitation advice.</Text>
+        </Card>
+      </Reveal>
     </>
   );
 }
@@ -778,6 +1021,7 @@ function PlanPreview({
           detail={customized ? 'Your target' : 'Recommended'}
           icon="water"
           label="Water"
+          progress={1}
           value={`${(goals.waterMl / 1000).toFixed(1)} L`}
         />
         <Metric
@@ -785,6 +1029,7 @@ function PlanPreview({
           detail={customized ? 'Your target' : 'Recommended'}
           icon="steps"
           label="Steps"
+          progress={1}
           value={goals.steps.toLocaleString()}
         />
         <Metric
@@ -792,6 +1037,7 @@ function PlanPreview({
           detail={customized ? 'Your weekly target' : 'Recommended / week'}
           icon="timer"
           label="Training"
+          progress={1}
           value={`${goals.weeklyWorkoutMinutes} min`}
         />
       </Reveal>
@@ -825,7 +1071,7 @@ function PlanPreview({
       </Reveal>
       <Reveal index={6} style={styles.group}>
         <SetupCard
-          body="Checks microphone and speech permission. Dictation is transcribed on this device, so voice logging is free and needs no account."
+          body="Your device handles dictation; Vigorly never receives the audio."
           busy={voiceBusy}
           button={voiceReady ? 'Voice configured' : 'Turn on voice'}
           configured={voiceReady}
@@ -866,7 +1112,7 @@ function SetupCard({
         </View>
         <View style={styles.choiceCopy}>
           <Text style={styles.choiceTitle}>{title}</Text>
-          <Text style={styles.choiceBody}>{body}</Text>
+          <Text numberOfLines={2} style={styles.setupBody}>{body}</Text>
         </View>
       </View>
       {message ? (
@@ -920,6 +1166,7 @@ function TargetEditor({
   }
 
   function apply() {
+    const parsedStrengthDays = Number(draft.strengthDays);
     onApply({
       calories: Math.max(500, Number(draft.calories) || recommended.calories),
       protein: Math.max(10, Number(draft.protein) || recommended.protein),
@@ -927,8 +1174,18 @@ function TargetEditor({
       fat: Math.max(20, Number(draft.fat) || recommended.fat),
       waterMl: Math.max(250, Number(draft.waterMl) || recommended.waterMl),
       steps: Math.max(500, Number(draft.steps) || recommended.steps),
-      weeklyWorkoutMinutes: Math.max(10, Number(draft.weeklyWorkoutMinutes) || recommended.weeklyWorkoutMinutes),
-      strengthDays: Math.min(7, Math.max(0, Number(draft.strengthDays) || recommended.strengthDays)),
+      weeklyWorkoutMinutes: Math.max(
+        0,
+        draft.weeklyWorkoutMinutes.trim() !== '' && Number.isFinite(Number(draft.weeklyWorkoutMinutes))
+          ? Number(draft.weeklyWorkoutMinutes)
+          : recommended.weeklyWorkoutMinutes,
+      ),
+      strengthDays: Math.min(7, Math.max(
+        0,
+        draft.strengthDays.trim() !== '' && Number.isFinite(parsedStrengthDays)
+          ? parsedStrengthDays
+          : recommended.strengthDays,
+      )),
     });
   }
 
@@ -995,6 +1252,40 @@ function NumberField({
   );
 }
 
+function ProfileTextField({
+  label,
+  onChange,
+  placeholder,
+  value,
+}: {
+  label: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  value: string;
+}) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <View style={[styles.textField, styles.stacked]}>
+      <Text style={styles.fieldLabel}>{label.toUpperCase()}</Text>
+      <View style={[styles.shell, focused && styles.shellOn]}>
+        <TextInput
+          accessibilityLabel={label}
+          autoCapitalize="sentences"
+          onBlur={() => setFocused(false)}
+          onChangeText={onChange}
+          onFocus={() => setFocused(true)}
+          placeholder={placeholder}
+          placeholderTextColor={palette.inkLow}
+          returnKeyType="done"
+          selectionColor={palette.lime}
+          style={styles.textInput}
+          value={value}
+        />
+      </View>
+    </View>
+  );
+}
+
 /* ------------------------------------------------------------------ *
  * Validation helpers — unchanged
  * ------------------------------------------------------------------ */
@@ -1004,8 +1295,18 @@ function numeric(value: string) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+function numericAllowZero(value: string) {
+  const parsed = Number(value);
+  return value.trim() !== '' && Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
 function inRange(value: string, min: number, max: number) {
   const parsed = numeric(value);
+  return parsed != null && parsed >= min && parsed <= max;
+}
+
+function inRangeAllowZero(value: string, min: number, max: number) {
+  const parsed = numericAllowZero(value);
   return parsed != null && parsed >= min && parsed <= max;
 }
 
@@ -1056,28 +1357,78 @@ const styles = StyleSheet.create({
   group: { marginTop: space.md },
 
   /* welcome */
-  brandRow: { marginTop: space.sm, marginBottom: space.lg },
-  promiseCard: { paddingHorizontal: 14 },
-  promiseRow: { minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 },
-  promiseBorder: { borderBottomWidth: 1, borderBottomColor: palette.line },
+  welcomeVisual: {
+    height: 214,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    marginTop: -8,
+    marginBottom: space.sm,
+  },
+  welcomeHalo: {
+    position: 'absolute',
+    width: 188,
+    height: 188,
+    borderRadius: 94,
+    backgroundColor: 'rgba(198,255,60,0.06)',
+  },
+  brandCore: {
+    width: 112,
+    height: 112,
+    borderRadius: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: palette.surfaceHi,
+    borderWidth: 1,
+    borderColor: palette.lineHi,
+  },
+  floatingGlyph: {
+    position: 'absolute',
+    width: 42,
+    height: 42,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.lineHi,
+    ...shadow.card,
+  },
+  floatingFood: { left: 26, top: 44 },
+  floatingTrain: { right: 30, top: 72 },
+  floatingProgress: { left: 54, bottom: 22 },
+  promiseGrid: { flexDirection: 'row', gap: space.sm, marginTop: space.lg },
+  promiseRow: {
+    flex: 1,
+    minHeight: 104,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 9,
+    padding: 10,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: palette.surface,
+  },
   promiseIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 12,
+    width: 40,
+    height: 40,
+    borderRadius: 14,
     backgroundColor: palette.limeSoft,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  promiseText: { ...text.body, flex: 1, color: palette.ink },
+  promiseText: { ...text.micro, fontFamily: text.value.fontFamily, color: palette.ink, textAlign: 'center' },
   fineprint: { ...text.caption, fontSize: 10.5, color: palette.inkLow },
 
   /* choice cards */
-  choices: { gap: 10 },
+  choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  choiceItem: { flexBasis: '47%', flexGrow: 1 },
   choice: {
-    minHeight: 78,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+    minHeight: 132,
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
     padding: 14,
     borderRadius: radius.md,
     borderWidth: 1,
@@ -1096,10 +1447,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   choiceIconOn: { borderColor: palette.lime, backgroundColor: palette.lime },
-  choiceCopy: { flex: 1 },
-  choiceTitle: { ...text.row, color: palette.ink },
-  choiceBody: { ...text.caption, color: palette.inkMid, marginTop: 3 },
+  choiceCopy: { minHeight: 40, justifyContent: 'flex-end' },
+  choiceTitle: { ...text.row, color: palette.ink, maxWidth: 112 },
   mark: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
     width: 22,
     height: 22,
     borderRadius: 11,
@@ -1165,6 +1518,7 @@ const styles = StyleSheet.create({
 
   /* permission cards */
   setupHead: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  setupBody: { ...text.caption, color: palette.inkMid, marginTop: 3 },
   setupIcon: {
     width: 40,
     height: 40,

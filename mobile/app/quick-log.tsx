@@ -4,6 +4,7 @@ import { type Href, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -45,6 +46,7 @@ import {
   learnableFrom,
   openQuestion,
   parseFitnessCommand,
+  refineRecipeMeal,
 } from '@/src/lib/nutrition';
 import { ensureSpeechPermission, speechAvailable, useDictation } from '@/src/lib/speech';
 import { slotLabels } from '@/src/lib/stats';
@@ -78,13 +80,14 @@ const EXAMPLES = [
   '“30 minute brisk walk, moderate effort”',
 ];
 
-type Stage = 'capture' | 'clarify' | 'review';
+type Stage = 'capture' | 'clarify' | 'review' | 'saved';
 type RecordState = 'idle' | 'listening' | 'thinking' | 'done';
 type VoiceStatus = { ready: boolean; title: string; detail: string };
+type SavedResult = { title: string; detail: string; anotherLabel: string };
 
 /**
  * Dictation is done by the operating system, so readiness is only ever about
- * this device: no account, no API key, no network. The wording below matches
+ * this device: no Vigorly account or API key. The wording below matches
  * what `useDictation` reports, so the card and the error banner agree.
  */
 const VOICE_READY: VoiceStatus = {
@@ -95,7 +98,7 @@ const VOICE_READY: VoiceStatus = {
 
 const VOICE_UNSUPPORTED: VoiceStatus = {
   ready: false,
-  title: 'Voice needs on-device speech',
+  title: 'Voice is unavailable',
   detail: 'This device cannot transcribe speech. Use the keyboard to log.',
 };
 
@@ -103,6 +106,7 @@ const HEADER: Record<Stage, { eyebrow: string; title: string }> = {
   capture: { eyebrow: 'Voice-first logging', title: 'Say what happened.' },
   clarify: { eyebrow: 'One quick detail', title: 'Let’s tighten the estimate.' },
   review: { eyebrow: 'Check the range', title: 'Review estimate' },
+  saved: { eyebrow: 'Added to today', title: 'Logged.' },
 };
 
 export default function QuickLogScreen() {
@@ -116,6 +120,10 @@ export default function QuickLogScreen() {
   const [pending, setPending] = useState<PendingClarification | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [recipeTarget, setRecipeTarget] = useState<number | null>(null);
+  const [recipeDraft, setRecipeDraft] = useState('');
+  const [recipeError, setRecipeError] = useState('');
+  const [savedResult, setSavedResult] = useState<SavedResult | null>(null);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>({
     ready: false,
     title: 'Checking voice setup…',
@@ -249,26 +257,114 @@ export default function QuickLogScreen() {
 
   function confirm() {
     if (!parsed?.operations.length) return;
-    applyOperations(parsed.operations);
+    const confirmed = parsed;
+    applyOperations(confirmed.operations);
     // Remember any figure the user supplied, so the same food is recognised
     // next time instead of asking for its label calories all over again.
-    for (const operation of parsed.operations) {
+    for (const operation of confirmed.operations) {
       if (operation.type !== 'meal') continue;
       for (const item of operation.items) {
-        const learnable = learnableFrom(parsed.transcript, item);
+        const learnable = learnableFrom(confirmed.transcript, item);
         if (learnable) learnFood(learnable);
       }
     }
+    const meals = confirmed.operations.filter(
+      (operation): operation is Extract<LogOperation, { type: 'meal' }> => operation.type === 'meal',
+    );
+    const itemCount = meals.reduce((total, operation) => total + operation.items.length, 0);
+    const onlyMeal = meals.length === confirmed.operations.length && itemCount > 0;
+    const mealName = itemCount === 1 ? meals[0]?.items[0]?.name : `${itemCount} meal items`;
+    setSavedResult({
+      title: onlyMeal ? `${mealName} added` : 'Update added',
+      detail: onlyMeal
+        ? `Saved to ${slotLabels[meals[0].slot]}. You can log the next dish without leaving this screen.`
+        : 'Saved to today. You can log another update without leaving this screen.',
+      anotherLabel: onlyMeal ? 'Log another dish' : 'Log another update',
+    });
+    dictation.reset();
+    setParsed(null);
+    setPending(null);
+    setText('');
+    setError('');
+    setRecipeTarget(null);
+    setRecipeDraft('');
+    setRecipeError('');
+    Keyboard.dismiss();
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    router.dismiss();
+  }
+
+  function logAnother() {
+    dictation.reset();
+    setSavedResult(null);
+    setParsed(null);
+    setPending(null);
+    setText('');
+    setError('');
+    setRecipeTarget(null);
+    setRecipeDraft('');
+    setRecipeError('');
   }
 
   function reset() {
     dictation.reset();
+    setSavedResult(null);
     setParsed(null);
     setPending(null);
     setText(params.prefill ?? '');
     setError('');
+    setRecipeTarget(null);
+    setRecipeDraft('');
+    setRecipeError('');
+  }
+
+  function editTranscript() {
+    if (!parsed) return;
+    dictation.reset();
+    setText(parsed.transcript);
+    setParsed(null);
+    setPending(null);
+    setError('');
+    setShowKeyboard(true);
+    setRecipeTarget(null);
+    setRecipeDraft('');
+    setRecipeError('');
+  }
+
+  function openRecipeEditor(operationIndex: number) {
+    if (!parsed) return;
+    const operation = parsed.operations[operationIndex];
+    if (operation?.type !== 'meal') return;
+    const recipe = operation.items.find((item) => item.recipe)?.recipe;
+    setRecipeTarget(operationIndex);
+    setRecipeDraft(recipe?.input ?? '');
+    setRecipeError('');
+  }
+
+  async function applyRecipeIngredients() {
+    if (!parsed || recipeTarget == null) return;
+    const operation = parsed.operations[recipeTarget];
+    if (operation?.type !== 'meal') return;
+    setBusy(true);
+    setRecipeError('');
+    try {
+      const refined = await refineRecipeMeal(operation, recipeDraft, context);
+      if ('error' in refined) {
+        setRecipeError(refined.error);
+        return;
+      }
+      setParsed({
+        ...parsed,
+        confirmation: '1 ingredient-calculated meal ready',
+        operations: parsed.operations.map((candidate, index) => (
+          index === recipeTarget ? refined.operation : candidate
+        )),
+      });
+      setRecipeTarget(null);
+      setRecipeDraft('');
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } finally {
+      setBusy(false);
+    }
   }
 
   const profileReady = Boolean(context.weightKg && context.bowlMl);
@@ -276,7 +372,7 @@ export default function QuickLogScreen() {
   const capturing = listening || dictation.state === 'finishing';
   const thinking = busy || dictation.state === 'finishing';
   const micState: RecordState = thinking ? 'thinking' : listening ? 'listening' : 'idle';
-  const stage: Stage = !parsed ? 'capture' : parsed.clarification ? 'clarify' : 'review';
+  const stage: Stage = savedResult ? 'saved' : !parsed ? 'capture' : parsed.clarification ? 'clarify' : 'review';
   // On-device dictation streams words as they are recognised, so the meta line
   // can show the sentence forming instead of a stopwatch.
   const heard = dictation.transcript.trim();
@@ -307,7 +403,10 @@ export default function QuickLogScreen() {
 
         <ScrollView
           contentContainerStyle={styles.content}
+          keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
+          onScrollBeginDrag={Keyboard.dismiss}
+          onTouchMove={Keyboard.dismiss}
           showsVerticalScrollIndicator={false}
           style={styles.fill}>
           {stage === 'capture' ? (
@@ -351,7 +450,7 @@ export default function QuickLogScreen() {
                       {capturing
                         ? liveLine
                         : voiceStatus.ready
-                          ? 'English, Hindi and Hinglish'
+                          ? 'English · understands common Hindi food terms'
                           : voiceStatus.detail}
                     </Text>
                   </View>
@@ -520,17 +619,80 @@ export default function QuickLogScreen() {
                   index={3 + index}
                   key={`${operation.type}-${index}`}
                   style={index === 0 ? styles.blockGap : styles.groupGap}>
-                  <OperationCard hero={index === 0} operation={operation} />
+                  <OperationCard
+                    hero={index === 0}
+                    onRefineRecipe={operation.type === 'meal' && operation.items.some((item) => item.recipe)
+                      ? () => openRecipeEditor(index)
+                      : undefined}
+                    operation={operation}
+                  />
                 </Reveal>
               ))}
 
-              <Reveal index={3 + parsed.operations.length} style={styles.blockGap}>
+              {recipeTarget != null ? (
+                <Reveal index={3 + parsed.operations.length} style={styles.blockGap}>
+                  <Card>
+                    <Text style={styles.recipeTitle}>Ingredients for the portion you ate</Text>
+                    <Text style={styles.recipeHelp}>
+                      Add an amount for every ingredient. Vigorly will sum them into one dish—not log each ingredient as another meal.
+                    </Text>
+                    <Well style={styles.inputWell}>
+                      <TextInput
+                        accessibilityLabel="Recipe ingredients with amounts"
+                        autoFocus
+                        multiline
+                        onChangeText={setRecipeDraft}
+                        placeholder="60 g dry poha, 30 g onion, 1 tsp oil"
+                        placeholderTextColor={palette.inkLow}
+                        style={styles.input}
+                        value={recipeDraft}
+                      />
+                    </Well>
+                    {recipeError ? <Text style={styles.recipeError}>{recipeError}</Text> : null}
+                    <PrimaryButton
+                      compact
+                      disabled={!recipeDraft.trim()}
+                      icon="check"
+                      label="Calculate this recipe"
+                      loading={busy}
+                      onPress={() => void applyRecipeIngredients()}
+                      style={styles.parseButton}
+                    />
+                    <GhostButton
+                      icon="close"
+                      label="Keep the dish estimate"
+                      onPress={() => {
+                        setRecipeTarget(null);
+                        setRecipeError('');
+                      }}
+                    />
+                  </Card>
+                </Reveal>
+              ) : null}
+
+              <Reveal index={4 + parsed.operations.length} style={styles.blockGap}>
                 <Well style={styles.notice}>
                   <Glyph color={palette.lime} name="info" size={15} />
                   <Text style={styles.noticeText}>
                     The range reflects portion, recipe or activity variation. Nothing is saved until you confirm.
                   </Text>
                 </Well>
+              </Reveal>
+            </View>
+          ) : null}
+
+          {stage === 'saved' && savedResult ? (
+            <View key="saved">
+              <Reveal index={1} style={styles.savedGap}>
+                <Card glow raised>
+                  <View style={styles.savedInner}>
+                    <View accessibilityElementsHidden style={styles.savedIcon}>
+                      <Glyph color={palette.bg} name="check" size={28} />
+                    </View>
+                    <Text accessibilityRole="header" style={styles.savedTitle}>{savedResult.title}</Text>
+                    <Text style={styles.savedDetail}>{savedResult.detail}</Text>
+                  </View>
+                </Card>
               </Reveal>
             </View>
           ) : null}
@@ -548,9 +710,16 @@ export default function QuickLogScreen() {
         {stage === 'review' ? (
           <GlassFooter>
             <PrimaryButton icon="check" label="Confirm and log" onPress={confirm} />
-            <Tap accessibilityLabel="Start over" onPress={reset} scaleTo={0.95}>
-              <Text style={styles.link}>Start over</Text>
+            <GhostButton icon="edit" label="Edit what I said" onPress={editTranscript} />
+            <Tap accessibilityLabel="Start over with an empty log" onPress={reset} scaleTo={0.95}>
+              <Text style={styles.link}>Clear and start over</Text>
             </Tap>
+          </GlassFooter>
+        ) : null}
+        {stage === 'saved' && savedResult ? (
+          <GlassFooter>
+            <PrimaryButton icon="plus" label={savedResult.anotherLabel} onPress={logAnother} />
+            <GhostButton icon="check" label="Done" onPress={() => router.dismiss()} />
           </GlassFooter>
         ) : null}
       </KeyboardAvoidingView>
@@ -771,11 +940,20 @@ function Composer({
  * Estimate review
  * ------------------------------------------------------------------ */
 
-function OperationCard({ operation, hero }: { operation: LogOperation; hero?: boolean }) {
+function OperationCard({
+  operation,
+  hero,
+  onRefineRecipe,
+}: {
+  operation: LogOperation;
+  hero?: boolean;
+  onRefineRecipe?: () => void;
+}) {
   if (operation.type === 'meal') {
     const total = operation.items.reduce((sum, item) => sum + item.calories, 0);
     const low = operation.items.reduce((sum, item) => sum + (item.calorieLow ?? item.calories), 0);
     const high = operation.items.reduce((sum, item) => sum + (item.calorieHigh ?? item.calories), 0);
+    const recipeItem = operation.items.find((item) => item.recipe);
     return (
       <Card glow={hero} raised={hero}>
         <OperationHeading icon="bowl" label="Meal" title={slotLabels[operation.slot]} />
@@ -800,6 +978,35 @@ function OperationCard({ operation, hero }: { operation: LogOperation; hero?: bo
             </View>
           </View>
         ))}
+        {recipeItem?.recipe ? (
+          <Well style={styles.recipeSummary}>
+            <View style={styles.recipeSummaryHead}>
+              <Glyph color={palette.lime} name="bowl" size={15} />
+              <Text style={styles.recipeSummaryTitle}>
+                {recipeItem.recipe.mode === 'ingredient-sum' ? 'Calculated recipe' : 'Finished-dish estimate'}
+              </Text>
+            </View>
+            {recipeItem.recipe.ingredients.length ? recipeItem.recipe.ingredients.map((ingredient) => (
+              <View key={`${ingredient.name}-${ingredient.quantity ?? 'included'}`} style={styles.recipeIngredientRow}>
+                <Text style={styles.recipeIngredientName}>{ingredient.name}</Text>
+                <Text style={styles.recipeIngredientValue}>
+                  {ingredient.calories != null
+                    ? `${ingredient.quantity} · ${ingredient.calories} kcal`
+                    : 'included in dish estimate'}
+                </Text>
+              </View>
+            )) : (
+              <Text style={styles.recipeHelp}>Recipe varies by oil and ingredients. Add yours for a tighter reading.</Text>
+            )}
+          </Well>
+        ) : null}
+        {recipeItem?.recipe && onRefineRecipe ? (
+          <GhostButton
+            icon="edit"
+            label={recipeItem.recipe.mode === 'ingredient-sum' ? 'Edit recipe ingredients' : 'Add recipe ingredients'}
+            onPress={onRefineRecipe}
+          />
+        ) : null}
       </Card>
     );
   }
@@ -988,6 +1195,27 @@ const styles = StyleSheet.create({
   link: { ...text.value, color: palette.inkMid, textAlign: 'center', paddingVertical: 6 },
   dim: { opacity: 0.5 },
 
+  /* ---------- saved ---------- */
+  savedGap: { marginTop: space.lg },
+  savedInner: { alignItems: 'center', paddingVertical: space.md },
+  savedIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 22,
+    backgroundColor: palette.lime,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: space.md,
+  },
+  savedTitle: { ...text.headline, color: palette.ink, textAlign: 'center' },
+  savedDetail: {
+    ...text.body,
+    color: palette.inkMid,
+    textAlign: 'center',
+    marginTop: space.xs,
+    maxWidth: 320,
+  },
+
   /* ---------- capture ---------- */
   voiceInner: { alignItems: 'center', paddingVertical: 4 },
   wave: { flexDirection: 'row', alignItems: 'center', gap: 7, height: 50 },
@@ -1084,6 +1312,16 @@ const styles = StyleSheet.create({
   itemBasis: { ...text.caption, color: palette.inkMid, marginTop: 5 },
   itemMeta: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 9 },
   itemSource: { ...text.micro, ...tabular, color: palette.inkLow, flex: 1 },
+
+  recipeSummary: { marginTop: 14, padding: 13, gap: 8 },
+  recipeSummaryHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  recipeSummaryTitle: { ...text.value, color: palette.ink },
+  recipeIngredientRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
+  recipeIngredientName: { ...text.caption, color: palette.ink, flex: 1 },
+  recipeIngredientValue: { ...text.micro, ...tabular, color: palette.inkMid, textAlign: 'right', flex: 1.4 },
+  recipeTitle: { ...text.section, color: palette.ink },
+  recipeHelp: { ...text.caption, color: palette.inkMid, marginTop: 5, marginBottom: 12 },
+  recipeError: { ...text.caption, color: palette.danger, marginTop: 9 },
 
   notice: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: 14 },
   noticeText: { ...text.caption, color: palette.inkMid, flex: 1 },

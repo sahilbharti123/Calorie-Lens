@@ -26,6 +26,12 @@ AI endpoints. See [`DEPLOY.md`](DEPLOY.md).
   optional RPE, automatic rest countdown and live PR detection; workout
   history, per-exercise records and charts; and an 85+ exercise library with
   step-by-step instructions and animated form demos
+- A native Apple Watch workout logger: start a synced routine or quick workout,
+  enter weight and reps with the Digital Crown, run duration sets and rest
+  timers, add exercises or sets, see notes and previous performance, and finish
+  the session without opening the iPhone. Heart rate and active calories come
+  from the live HealthKit workout and Watch-originated sessions replay to the
+  phone after an offline workout.
 - Shows a range, confidence, source, and calculation basis before saving
 - Asks a short follow-up instead of guessing when a portion or workout detail is missing
 - Tracks water, steps, sleep, weight, exercise, and daily notes
@@ -70,14 +76,18 @@ Examples:
 
 ## Apple Health and Apple Watch
 
-Open Health on iPhone, tap your profile, then **Export All Health Data**. Upload
-the generated `export.zip` in the Apple Health tab. The importer supports steps,
-water, sleep, body weight, and workouts and prevents the same export from being
-imported twice.
+The native iOS build includes a watchOS companion. Open Vigorly on the iPhone
+once to cache routines and the exercise catalog on the Watch; after that a
+workout can be started, logged, and finished from the Watch while the phone is
+away or offline. The Watch runs the HealthKit workout session for live heart
+rate and active-energy readings, persists the active log locally, and sends
+complete revisioned snapshots back to the phone so individual set messages are
+not lost.
 
-Direct background HealthKit sync requires a native iOS companion because
-HealthKit is not exposed to web apps. Snapshot import is the working web-app
-integration boundary.
+The web companion separately supports Apple Health XML/ZIP import. Open Health
+on iPhone, tap your profile, then **Export All Health Data** and upload the
+generated `export.zip`. The importer supports steps, water, sleep, body weight,
+and workouts and prevents duplicate imports.
 
 ## Run the native app
 

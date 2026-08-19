@@ -51,6 +51,8 @@ export type FoodReference = {
   pieceVariance?: number;
   density?: number;
   densityVariance?: number;
+  /** The reference describes a finished multi-ingredient dish, not a raw ingredient. */
+  recipeDish?: boolean;
 };
 
 export const USDA_FOODS: FoodReference[] = [
@@ -92,8 +94,8 @@ export const USDA_FOODS: FoodReference[] = [
 
   // -------------------------------------------------- mixed dishes (FNDDS)
   { name: 'Samosa', aliases: ['samosa', 'samosas'], calories: 309, protein: 5.1, carbs: 33.1, fat: 17.4, fdcId: 2344214, pieceG: 100, pieceVariance: 0.3 },
-  { name: 'Biryani with meat', aliases: ['chicken biryani', 'mutton biryani', 'biryani'], calories: 144, protein: 8.4, carbs: 12.1, fat: 6.8, fdcId: 2341916, density: 0.85, densityVariance: 0.18 },
-  { name: 'Chicken curry', aliases: ['chicken curry', 'chicken gravy'], calories: 82, protein: 5.7, carbs: 6.7, fat: 3.9, fdcId: 2341861, density: 0.95, densityVariance: 0.15 },
+  { name: 'Biryani with meat', aliases: ['chicken biryani', 'mutton biryani', 'biryani'], calories: 144, protein: 8.4, carbs: 12.1, fat: 6.8, fdcId: 2341916, density: 0.85, densityVariance: 0.18, recipeDish: true },
+  { name: 'Chicken curry', aliases: ['chicken curry', 'chicken gravy'], calories: 82, protein: 5.7, carbs: 6.7, fat: 3.9, fdcId: 2341861, density: 0.95, densityVariance: 0.15, recipeDish: true },
 ];
 
 /**

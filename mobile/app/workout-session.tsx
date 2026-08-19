@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -39,6 +40,17 @@ import {
 } from '@/src/components/ui';
 import { onNextExercisePick } from '@/src/lib/exercise-pick-bus';
 import {
+  elapsedSetSeconds,
+  pauseSetTimer,
+  remainingSetSeconds,
+  resumeSetTimer,
+  startSetTimer,
+} from '@/src/lib/set-timer';
+import {
+  sendAppleWatchWorkoutCommand,
+  startWorkoutOnAppleWatch,
+} from '@/src/lib/live-workout';
+import {
   RPE_CHOICES,
   REST_CHOICES,
   SET_TYPE_LABEL,
@@ -66,8 +78,9 @@ export default function WorkoutSessionScreen() {
   const session = training.activeSession;
 
   const [now, setNow] = useState(Date.now());
-  const [rest, setRest] = useState<{ endsAt: number; totalSec: number } | null>(null);
   const [prToast, setPrToast] = useState<string | null>(null);
+  const [watchState, setWatchState] = useState<'idle' | 'starting' | 'connected'>('idle');
+  const completingTimerRef = useRef<string | null>(null);
 
   // Live elapsed clock — only ticks while a workout is actually running, so the
   // empty state never re-renders the screen once a second.
@@ -84,13 +97,36 @@ export default function WorkoutSessionScreen() {
   // clock tick no longer re-runs (so it cannot cancel an armed dismissal), while
   // a +15s tap replaces `rest` and unsets `restExpired`, which cancels the
   // pending dismissal instead of letting it tear down a live timer.
+  const rest = session?.activeRestTimer ?? null;
   const restExpired = rest ? now >= rest.endsAt : false;
   useEffect(() => {
     if (!rest || !restExpired) return;
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    const timer = setTimeout(() => setRest(null), 900);
+    const timer = setTimeout(() => workouts.updateActiveSession((current) => ({
+      ...current,
+      activeRestTimer: undefined,
+    })), 900);
     return () => clearTimeout(timer);
-  }, [rest, restExpired]);
+  }, [rest, restExpired, workouts]);
+
+  const activeTimer = session?.activeSetTimer;
+  const activeTimerRemaining = activeTimer ? remainingSetSeconds(activeTimer, new Date(now)) : 0;
+  const activeTimerExpired = Boolean(activeTimer && activeTimer.pausedRemainingSec == null && activeTimerRemaining <= 0);
+
+  useEffect(() => {
+    if (!session || !activeTimer || !activeTimerExpired) return;
+    const timerKey = `${activeTimer.sessionExerciseId}:${activeTimer.setId}:${activeTimer.endsAt}`;
+    if (completingTimerRef.current === timerKey) return;
+    completingTimerRef.current = timerKey;
+    const entry = session.exercises.find((candidate) => candidate.id === activeTimer.sessionExerciseId);
+    const set = entry?.sets.find((candidate) => candidate.id === activeTimer.setId);
+    if (!entry || !set || set.completed) {
+      workouts.updateActiveSession((current) => ({ ...current, activeSetTimer: undefined }));
+      return;
+    }
+    completeSet(entry, set, activeTimer.targetSec);
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  }, [activeTimer, activeTimerExpired, session]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!session) {
     return (
@@ -121,12 +157,13 @@ export default function WorkoutSessionScreen() {
     }));
   }
 
-  function toggleComplete(entry: SessionExercise, set: WorkoutSet) {
-    if (set.completed) {
-      patchSet(entry.id, set.id, { completed: false, prFlags: undefined });
-      return;
-    }
-    const flags = workouts.completeSet(entry.id, set.id);
+  function completeSet(entry: SessionExercise, set: WorkoutSet, durationSec?: number) {
+    const flags = workouts.completeSet(
+      entry.id,
+      set.id,
+      durationSec != null ? { durationSec } : undefined,
+    );
+    workouts.updateActiveSession((current) => ({ ...current, activeSetTimer: undefined }));
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (flags.length) {
       setPrToast(`PR! ${flags.join(' · ')}`);
@@ -134,8 +171,33 @@ export default function WorkoutSessionScreen() {
       setTimeout(() => setPrToast(null), 2600);
     }
     if (entry.restSec > 0) {
-      setRest({ endsAt: Date.now() + entry.restSec * 1000, totalSec: entry.restSec });
+      workouts.updateActiveSession((current) => ({
+        ...current,
+        activeRestTimer: {
+          endsAt: Date.now() + entry.restSec * 1000,
+          totalSec: entry.restSec,
+        },
+      }));
     }
+  }
+
+  function toggleComplete(entry: SessionExercise, set: WorkoutSet, info: ExerciseInfo) {
+    if (set.completed) {
+      patchSet(entry.id, set.id, { completed: false, prFlags: undefined });
+      return;
+    }
+    if (info.kind === 'duration') {
+      const targetSec = Math.max(1, set.durationSec ?? 30);
+      Keyboard.dismiss();
+      workouts.updateActiveSession((current) => ({
+        ...current,
+        activeRestTimer: undefined,
+        activeSetTimer: startSetTimer(entry.id, set.id, targetSec),
+      }));
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      return;
+    }
+    completeSet(entry, set);
   }
 
   function addExercisesMidWorkout() {
@@ -184,6 +246,7 @@ export default function WorkoutSessionScreen() {
         text: 'Discard',
         style: 'destructive',
         onPress: () => {
+          sendAppleWatchWorkoutCommand('discard');
           workouts.discardActiveWorkout();
           router.back();
         },
@@ -194,6 +257,7 @@ export default function WorkoutSessionScreen() {
   function finish() {
     const hasIncomplete = session!.exercises.some((entry) => entry.sets.some((set) => !set.completed));
     const complete = () => {
+      sendAppleWatchWorkoutCommand('end');
       const finishedId = workouts.finishActiveWorkout();
       if (finishedId) {
         router.replace({ pathname: '/workout/[id]', params: { id: finishedId, celebrate: '1' } });
@@ -212,6 +276,19 @@ export default function WorkoutSessionScreen() {
       ]);
     } else {
       complete();
+    }
+  }
+
+  async function startWatchTracking() {
+    setWatchState('starting');
+    try {
+      await startWorkoutOnAppleWatch(session!, training);
+    } catch (error) {
+      setWatchState('idle');
+      Alert.alert(
+        'Apple Watch did not start',
+        error instanceof Error ? error.message : 'Check that your Watch is paired, unlocked, and wearing Vigorly.',
+      );
     }
   }
 
@@ -251,7 +328,12 @@ export default function WorkoutSessionScreen() {
 
         {prToast ? <PrBanner label={prToast} /> : null}
 
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          contentContainerStyle={styles.content}
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          onScrollBeginDrag={Keyboard.dismiss}
+          onTouchMove={Keyboard.dismiss}>
           {/* ---------- Hero ---------- */}
           <Reveal index={1}>
             <Card glow raised>
@@ -276,6 +358,14 @@ export default function WorkoutSessionScreen() {
                   </View>
                 </Well>
               </View>
+              {Platform.OS === 'ios' ? (
+                <WatchLiveCard
+                  calories={session.liveMetrics?.activeCalories}
+                  heartRate={session.liveMetrics?.heartRateBpm}
+                  onStart={startWatchTracking}
+                  state={session.liveMetrics ? 'connected' : watchState}
+                />
+              ) : null}
             </Card>
           </Reveal>
 
@@ -361,32 +451,68 @@ export default function WorkoutSessionScreen() {
                     <View style={styles.colCheck} />
                   </View>
 
-                  {entry.sets.map((set, setIndex) => (
-                    <SetRow
-                      fallback={previous[setIndex] ?? previous.at(-1)}
-                      index={setIndex}
-                      info={info}
-                      key={set.id}
-                      onCycleType={() => patchSet(entry.id, set.id, { type: nextSetType(set.type) })}
-                      onCycleRpe={() => {
+                  {entry.sets.map((set, setIndex) => {
+                    const isTimed = activeTimer?.sessionExerciseId === entry.id && activeTimer.setId === set.id;
+                    return (
+                      <View key={set.id}>
+                        <SetRow
+                          fallback={previous[setIndex] ?? previous.at(-1)}
+                          index={setIndex}
+                          info={info}
+                          onCycleType={() => patchSet(entry.id, set.id, { type: nextSetType(set.type) })}
+                          onCycleRpe={() => {
                         const currentIndex = set.rpe != null ? RPE_CHOICES.indexOf(set.rpe) : -1;
                         const nextRpe = currentIndex >= RPE_CHOICES.length - 1
                           ? undefined
                           : RPE_CHOICES[currentIndex + 1];
                         patchSet(entry.id, set.id, { rpe: nextRpe });
-                      }}
-                      onDelete={() => workouts.updateActiveSession((current) => ({
+                          }}
+                          onDelete={() => workouts.updateActiveSession((current) => ({
                         ...current,
+                        activeSetTimer: current.activeSetTimer?.setId === set.id
+                          ? undefined
+                          : current.activeSetTimer,
                         exercises: current.exercises.map((candidate) => candidate.id === entry.id
                           ? { ...candidate, sets: candidate.sets.filter((existing) => existing.id !== set.id) }
                           : candidate),
-                      }))}
-                      onPatch={(patch) => patchSet(entry.id, set.id, patch)}
-                      onToggle={() => toggleComplete(entry, set)}
-                      set={set}
-                      showRpe={showRpe}
-                    />
-                  ))}
+                          }))}
+                          onPatch={(patch) => patchSet(entry.id, set.id, patch)}
+                          onToggle={() => toggleComplete(entry, set, info)}
+                          running={isTimed}
+                          set={set}
+                          showRpe={showRpe}
+                        />
+                        {isTimed && activeTimer ? (
+                          <SetTimerPanel
+                            paused={activeTimer.pausedRemainingSec != null}
+                            remaining={activeTimerRemaining}
+                            target={activeTimer.targetSec}
+                            onCancel={() => workouts.updateActiveSession((current) => ({
+                              ...current,
+                              activeSetTimer: undefined,
+                            }))}
+                            onDone={() => completeSet(
+                              entry,
+                              set,
+                              Math.max(1, elapsedSetSeconds(activeTimer)),
+                            )}
+                            onPause={() => workouts.updateActiveSession((current) => ({
+                              ...current,
+                              activeSetTimer: current.activeSetTimer
+                                ? pauseSetTimer(current.activeSetTimer)
+                                : undefined,
+                            }))}
+                            onResume={() => workouts.updateActiveSession((current) => ({
+                              ...current,
+                              activeSetTimer: current.activeSetTimer
+                                ? resumeSetTimer(current.activeSetTimer)
+                                : undefined,
+                            }))}
+                          />
+                        ) : null}
+                      </View>
+                    );
+                  })}
 
                   <View style={styles.addSetSlot}>
                     <Tap
@@ -449,11 +575,26 @@ export default function WorkoutSessionScreen() {
 
         {rest ? (
           <RestDock
-            onMinus={() => setRest((current) => current ? { ...current, endsAt: current.endsAt - 15_000 } : null)}
-            onPlus={() => setRest((current) => current
-              ? { ...current, endsAt: current.endsAt + 15_000, totalSec: current.totalSec + 15 }
-              : null)}
-            onSkip={() => setRest(null)}
+            onMinus={() => workouts.updateActiveSession((current) => ({
+              ...current,
+              activeRestTimer: current.activeRestTimer
+                ? { ...current.activeRestTimer, endsAt: current.activeRestTimer.endsAt - 15_000 }
+                : undefined,
+            }))}
+            onPlus={() => workouts.updateActiveSession((current) => ({
+              ...current,
+              activeRestTimer: current.activeRestTimer
+                ? {
+                    ...current.activeRestTimer,
+                    endsAt: current.activeRestTimer.endsAt + 15_000,
+                    totalSec: current.activeRestTimer.totalSec + 15,
+                  }
+                : undefined,
+            }))}
+            onSkip={() => workouts.updateActiveSession((current) => ({
+              ...current,
+              activeRestTimer: undefined,
+            }))}
             remaining={restRemaining}
             total={rest.totalSec}
           />
@@ -478,6 +619,7 @@ function SetRow({
   onDelete,
   onPatch,
   onToggle,
+  running,
 }: {
   set: WorkoutSet;
   index: number;
@@ -489,6 +631,7 @@ function SetRow({
   onDelete: () => void;
   onPatch: (patch: Partial<WorkoutSet>) => void;
   onToggle: () => void;
+  running: boolean;
 }) {
   const reducedMotion = useReducedMotion();
   const pop = useSharedValue(0);
@@ -533,6 +676,7 @@ function SetRow({
 
         {info.kind === 'weight-reps' ? (
           <TextInput
+            accessibilityLabel={`Set ${index + 1} weight in kilograms`}
             // defaultValue + a key that changes on completion keeps
             // decimal typing free ("62." stays visible) while still
             // showing auto-prefilled values after check-off.
@@ -552,6 +696,9 @@ function SetRow({
         ) : null}
 
         <TextInput
+          accessibilityLabel={info.kind === 'duration'
+            ? `Set ${index + 1} duration in seconds`
+            : `Set ${index + 1} repetitions`}
           key={`reps-${set.id}-${set.completed ? 'done' : 'open'}`}
           editable={!set.completed}
           keyboardType="number-pad"
@@ -583,14 +730,25 @@ function SetRow({
         ) : null}
 
         <Tap
-          accessibilityLabel={set.completed ? `Set ${index + 1} done, tap to reopen` : `Complete set ${index + 1}`}
+          accessibilityLabel={set.completed
+            ? `Set ${index + 1} done, tap to reopen`
+            : running
+              ? `Timer running for set ${index + 1}`
+              : info.kind === 'duration'
+                ? `Start timer for set ${index + 1}`
+                : `Complete set ${index + 1}`}
           haptic="none"
           onPress={onToggle}
           scaleTo={0.88}>
-          <Animated.View style={[styles.checkButton, set.completed && styles.checkButtonOn, checkAnimated]}>
+          <Animated.View style={[
+            styles.checkButton,
+            running && styles.checkButtonRunning,
+            set.completed && styles.checkButtonOn,
+            checkAnimated,
+          ]}>
             <Glyph
-              color={set.completed ? palette.onLime : palette.inkLow}
-              name="check"
+              color={set.completed ? palette.onLime : running ? palette.lime : palette.inkLow}
+              name={set.completed ? 'check' : info.kind === 'duration' ? 'timer' : 'check'}
               size={18}
               strokeWidth={set.completed ? 2.6 : 1.9}
             />
@@ -603,6 +761,120 @@ function SetRow({
           <Pill icon="trophy" label="PR" tone="accent" />
         </View>
       ) : null}
+    </View>
+  );
+}
+
+function SetTimerPanel({
+  paused,
+  remaining,
+  target,
+  onCancel,
+  onDone,
+  onPause,
+  onResume,
+}: {
+  paused: boolean;
+  remaining: number;
+  target: number;
+  onCancel: () => void;
+  onDone: () => void;
+  onPause: () => void;
+  onResume: () => void;
+}) {
+  const ratio = target > 0 ? remaining / target : 0;
+  return (
+    <View style={styles.setTimerPanel}>
+      <Ring delay={0} size={76} thickness={7} value={ratio}>
+        <Text style={styles.setTimerTime}>{formatDuration(remaining)}</Text>
+        <Text style={styles.setTimerState}>{paused ? 'PAUSED' : 'LEFT'}</Text>
+      </Ring>
+      <View style={styles.setTimerMain}>
+        <View style={styles.setTimerTitleRow}>
+          <LivePulse />
+          <Text style={styles.setTimerTitle}>{paused ? 'Set paused' : 'Set in progress'}</Text>
+        </View>
+        <Text style={styles.setTimerHint}>Completes automatically at zero.</Text>
+        <View style={styles.setTimerActions}>
+          <Tap
+            accessibilityLabel={paused ? 'Resume set timer' : 'Pause set timer'}
+            onPress={paused ? onResume : onPause}
+            scaleTo={0.93}
+            style={styles.setTimerAction}>
+            <Glyph color={palette.ink} name={paused ? 'play' : 'pause'} size={14} />
+            <Text style={styles.setTimerActionText}>{paused ? 'Resume' : 'Pause'}</Text>
+          </Tap>
+          <Tap
+            accessibilityLabel="Finish timed set now"
+            haptic="medium"
+            onPress={onDone}
+            scaleTo={0.93}
+            style={[styles.setTimerAction, styles.setTimerActionDone]}>
+            <Glyph color={palette.onLime} name="check" size={14} />
+            <Text style={[styles.setTimerActionText, styles.setTimerActionTextDone]}>Done</Text>
+          </Tap>
+          <Tap accessibilityLabel="Cancel set timer" onPress={onCancel} scaleTo={0.9} style={styles.timerCancel}>
+            <Glyph color={palette.inkLow} name="close" size={14} />
+          </Tap>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function WatchLiveCard({
+  calories,
+  heartRate,
+  onStart,
+  state,
+}: {
+  calories?: number;
+  heartRate?: number;
+  onStart: () => void;
+  state: 'idle' | 'starting' | 'connected';
+}) {
+  if (state !== 'connected') {
+    return (
+      <Tap
+        accessibilityLabel="Track heart rate and calories with Apple Watch"
+        disabled={state === 'starting'}
+        onPress={onStart}
+        scaleTo={0.98}
+        style={styles.watchStart}>
+        <View style={styles.watchIcon}>
+          <Glyph color={palette.lime} name="watch" size={18} />
+        </View>
+        <View style={styles.watchStartCopy}>
+          <Text style={styles.watchStartTitle}>
+            {state === 'starting' ? 'Starting on Watch…' : 'Track with Apple Watch'}
+          </Text>
+          <Text style={styles.watchStartHint}>Live heart rate + active calories</Text>
+        </View>
+        <Glyph color={palette.inkLow} name="chevron" size={15} />
+      </Tap>
+    );
+  }
+
+  return (
+    <View style={styles.watchLive}>
+      <View style={styles.watchLiveHead}>
+        <View style={styles.watchConnectedDot} />
+        <Text style={styles.watchLiveLabel}>APPLE WATCH</Text>
+        <Text style={styles.watchLiveState}>CONNECTED</Text>
+      </View>
+      <View style={styles.watchMetrics}>
+        <View style={styles.watchMetric}>
+          <Glyph color="#FF667A" name="heart" size={16} />
+          <Text style={styles.watchMetricValue}>{heartRate ? Math.round(heartRate) : '—'}</Text>
+          <Text style={styles.watchMetricUnit}>BPM</Text>
+        </View>
+        <View style={styles.watchMetricDivider} />
+        <View style={styles.watchMetric}>
+          <Glyph color="#FF9B52" name="flame" size={16} />
+          <Text style={styles.watchMetricValue}>{Math.round(calories ?? 0)}</Text>
+          <Text style={styles.watchMetricUnit}>ACTIVE KCAL</Text>
+        </View>
+      </View>
     </View>
   );
 }
@@ -782,6 +1054,47 @@ const styles = StyleSheet.create({
   statValue: { ...text.headline, fontSize: 19, color: palette.ink, marginTop: 3, ...tabular },
   statUnit: { ...text.caption, fontSize: 10.5, color: palette.inkLow },
 
+  watchStart: {
+    minHeight: 58,
+    marginTop: 10,
+    paddingHorizontal: 10,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: `${palette.lime}3D`,
+    backgroundColor: alpha.limeFaint,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  watchIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: palette.limeSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  watchStartCopy: { flex: 1 },
+  watchStartTitle: { ...text.row, fontSize: 13.5, color: palette.ink },
+  watchStartHint: { ...text.caption, fontSize: 10, color: palette.inkLow, marginTop: 2 },
+  watchLive: {
+    marginTop: 10,
+    padding: 10,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: `${palette.lime}44`,
+    backgroundColor: alpha.limeFaint,
+  },
+  watchLiveHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  watchConnectedDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: palette.lime },
+  watchLiveLabel: { ...text.label, fontSize: 8, color: palette.inkMid },
+  watchLiveState: { ...text.label, fontSize: 8, color: palette.lime, marginLeft: 'auto' },
+  watchMetrics: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
+  watchMetric: { flex: 1, flexDirection: 'row', alignItems: 'baseline', gap: 5 },
+  watchMetricValue: { ...text.headline, fontSize: 19, color: palette.ink, ...tabular },
+  watchMetricUnit: { ...text.label, fontSize: 7.5, color: palette.inkLow },
+  watchMetricDivider: { width: 1, height: 22, backgroundColor: palette.lineHi, marginHorizontal: 10 },
+
   exerciseSlot: { marginTop: 12 },
   exerciseSlotLinked: { marginTop: 4 },
   supersetLink: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingBottom: 6, paddingHorizontal: 4 },
@@ -903,6 +1216,48 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   checkButtonOn: { backgroundColor: palette.lime, borderColor: palette.lime },
+  checkButtonRunning: { backgroundColor: palette.limeSoft, borderColor: `${palette.lime}88` },
+
+  setTimerPanel: {
+    marginHorizontal: 4,
+    marginBottom: 10,
+    padding: 10,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: `${palette.lime}55`,
+    backgroundColor: alpha.limeFaint,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  setTimerTime: { ...text.value, fontSize: 14, color: palette.ink, ...tabular },
+  setTimerState: { ...text.label, fontSize: 7, color: palette.inkLow, marginTop: 1 },
+  setTimerMain: { flex: 1 },
+  setTimerTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  setTimerTitle: { ...text.row, fontSize: 13.5, color: palette.ink },
+  setTimerHint: { ...text.caption, fontSize: 10, color: palette.inkLow, marginTop: 2 },
+  setTimerActions: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
+  setTimerAction: {
+    minHeight: 34,
+    paddingHorizontal: 10,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: palette.lineHi,
+    backgroundColor: palette.surfaceHi,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  setTimerActionDone: { backgroundColor: palette.lime, borderColor: palette.lime },
+  setTimerActionText: { ...text.value, fontSize: 10.5, color: palette.ink },
+  setTimerActionTextDone: { color: palette.onLime },
+  timerCancel: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   prChip: { position: 'absolute', right: 44, top: -12, zIndex: 3 },
 

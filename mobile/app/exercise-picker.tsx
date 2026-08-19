@@ -1,8 +1,9 @@
-import { useRouter } from 'expo-router';
+import { type Href, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import {
   FlatList,
   Image,
+  Keyboard,
   ScrollView,
   StyleSheet,
   Text,
@@ -32,6 +33,8 @@ import {
   type Exercise,
   type MuscleGroup,
 } from '@/src/lib/exercises';
+import { exerciseInfo } from '@/src/lib/training';
+import { useApp } from '@/src/store/app-store';
 import { palette, radius, space, tabular, text } from '@/src/theme';
 
 /** 'full body' → 'Full Body'. The data is lower-case; the chips are not. */
@@ -39,19 +42,27 @@ function titleCase(value: string) {
   return value.replace(/(^|\s)\S/g, (character) => character.toUpperCase());
 }
 
+type PickerExercise = Pick<Exercise, 'id' | 'name' | 'primaryMuscle' | 'secondaryMuscles' | 'equipment' | 'kind' | 'template' | 'gear'> & { custom?: boolean };
+
 export default function ExercisePickerScreen() {
   const router = useRouter();
+  const { data } = useApp();
   const [query, setQuery] = useState('');
   const [muscle, setMuscle] = useState<MuscleGroup | null>(null);
   const [equipment, setEquipment] = useState<Equipment | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
 
-  const results = useMemo(
-    () => searchExercises({ query, muscle, equipment }),
-    [query, muscle, equipment],
-  );
+  const results = useMemo<PickerExercise[]>(() => {
+    const needle = query.trim().toLowerCase();
+    const custom = data.training.customExercises
+      .map((exercise) => exerciseInfo(data.training, exercise.id))
+      .filter((exercise) => !needle || exercise.name.toLowerCase().includes(needle))
+      .filter((exercise) => !muscle || exercise.primaryMuscle === muscle)
+      .filter((exercise) => !equipment || exercise.equipment === equipment);
+    return [...custom, ...searchExercises({ query, muscle, equipment })];
+  }, [data.training, query, muscle, equipment]);
 
-  function toggle(exercise: Exercise) {
+  function toggle(exercise: PickerExercise) {
     setSelected((current) => current.includes(exercise.id)
       ? current.filter((id) => id !== exercise.id)
       : [...current, exercise.id]);
@@ -79,9 +90,11 @@ export default function ExercisePickerScreen() {
               accessibilityLabel="Search exercises"
               autoCorrect={false}
               onChangeText={setQuery}
+              onSubmitEditing={Keyboard.dismiss}
               placeholder="Search exercises"
               placeholderTextColor={palette.inkLow}
               selectionColor={palette.lime}
+              returnKeyType="done"
               style={styles.searchInput}
               value={query}
             />
@@ -123,11 +136,29 @@ export default function ExercisePickerScreen() {
         </View>
       </Reveal>
 
-      <Reveal index={2} style={styles.fill}>
+      <Reveal index={2}>
+        <Tap
+          accessibilityLabel="Create a custom exercise"
+          onPress={() => router.push('/custom-exercise' as Href)}
+          scaleTo={0.97}
+          style={styles.createCustom}>
+          <View style={styles.createIcon}><Glyph color={palette.lime} name="plus" size={16} /></View>
+          <View style={styles.rowCopy}>
+            <Text style={styles.createTitle}>Create custom exercise</Text>
+            <Text style={styles.createDetail}>Choose KG/reps, reps-only, or a timed movement</Text>
+          </View>
+          <Glyph color={palette.inkLow} name="chevron" size={15} />
+        </Tap>
+      </Reveal>
+
+      <Reveal index={3} style={styles.fill}>
         <FlatList
           contentContainerStyle={styles.list}
           data={results}
+          keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
+          onScrollBeginDrag={Keyboard.dismiss}
+          onTouchMove={Keyboard.dismiss}
           keyExtractor={(item) => item.id}
           ListEmptyComponent={(
             <EmptyState
@@ -161,12 +192,14 @@ export default function ExercisePickerScreen() {
                     </Text>
                   </View>
                   <Tap
-                    accessibilityLabel={`How to do ${item.name}`}
+                    accessibilityLabel={item.custom ? `Edit ${item.name}` : `How to do ${item.name}`}
                     hitSlop={8}
-                    onPress={() => router.push({ pathname: '/exercise/[id]', params: { id: item.id } })}
+                    onPress={() => router.push((item.custom
+                      ? { pathname: '/custom-exercise', params: { id: item.id } }
+                      : { pathname: '/exercise/[id]', params: { id: item.id } }) as Href)}
                     scaleTo={0.9}
                     style={styles.info}>
-                    <Text style={styles.infoText}>How to</Text>
+                    <Text style={styles.infoText}>{item.custom ? 'Edit' : 'How to'}</Text>
                   </Tap>
                   <View style={[styles.check, isSelected && styles.checkOn]}>
                     {isSelected ? <Glyph color={palette.onLime} name="check" size={14} strokeWidth={2.6} /> : null}
@@ -220,6 +253,21 @@ const styles = StyleSheet.create({
 
   filters: { gap: 7, paddingVertical: 11 },
   chipRow: { gap: 7, paddingHorizontal: space.md },
+  createCustom: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginHorizontal: space.md,
+    marginBottom: 10,
+    padding: 12,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: `${palette.lime}55`,
+    backgroundColor: palette.limeSoft,
+  },
+  createIcon: { width: 34, height: 34, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.surface },
+  createTitle: { ...text.row, color: palette.ink },
+  createDetail: { ...text.micro, color: palette.inkMid, marginTop: 2 },
 
   list: { paddingHorizontal: space.md, paddingBottom: space.md, gap: 8 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 11, padding: 10 },

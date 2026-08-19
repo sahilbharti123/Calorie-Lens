@@ -2,6 +2,10 @@ import React, { createContext, useCallback, useContext, useMemo, useRef } from '
 
 import { TEMPLATE_ROUTINE_SEEDS } from '@/src/lib/exercises';
 import {
+  isWorkoutSnapshotNewer,
+  revisionedWorkoutUpdate,
+} from '@/src/lib/watch-workout-contract';
+import {
   detectSetRecords,
   exerciseInfo,
   exerciseRecords,
@@ -17,6 +21,7 @@ import {
 } from '@/src/lib/training';
 import { useApp } from '@/src/store/app-store';
 import type {
+  CustomExercise,
   Routine,
   SessionExercise,
   WorkoutSession,
@@ -31,12 +36,21 @@ type WorkoutContextValue = {
   deleteRoutine: (routineId: string) => void;
   duplicateRoutine: (routineId: string) => void;
   importTemplateRoutine: (seedName: string) => void;
+  createCustomExercise: (exercise: Pick<CustomExercise, 'name' | 'equipment' | 'primaryMuscle' | 'kind'>) => CustomExercise;
+  updateCustomExercise: (id: string, patch: Pick<CustomExercise, 'name' | 'equipment' | 'primaryMuscle' | 'kind'>) => void;
+  deleteCustomExercise: (id: string) => boolean;
 
   startEmptyWorkout: () => void;
   startRoutine: (routineId: string) => void;
   resumeOrStartFromRoutine: (routineId: string) => void;
   updateActiveSession: (recipe: (session: WorkoutSession) => WorkoutSession) => void;
-  completeSet: (sessionExerciseId: string, setId: string) => string[];
+  updateLiveMetricsFromWatch: (metrics: WorkoutSession['liveMetrics']) => void;
+  upsertActiveWorkoutFromWatch: (session: WorkoutSession) => void;
+  completeSet: (
+    sessionExerciseId: string,
+    setId: string,
+    override?: Partial<WorkoutSet>,
+  ) => string[];
   discardActiveWorkout: () => void;
   finishActiveWorkout: () => string | null;
   deleteSession: (sessionId: string) => void;
@@ -140,16 +154,57 @@ export function WorkoutProvider({ children }: React.PropsWithChildren) {
     });
   }, [updateTraining]);
 
+  const createCustomExercise = useCallback((exercise: Pick<CustomExercise, 'name' | 'equipment' | 'primaryMuscle' | 'kind'>) => {
+    const now = new Date().toISOString();
+    const created: CustomExercise = {
+      ...exercise,
+      id: newId('custom-exercise'),
+      name: exercise.name.trim(),
+      createdAt: now,
+      updatedAt: now,
+    };
+    updateTraining((current) => ({
+      ...current,
+      customExercises: [...current.customExercises, created],
+    }));
+    return created;
+  }, [updateTraining]);
+
+  const updateCustomExercise = useCallback((id: string, patch: Pick<CustomExercise, 'name' | 'equipment' | 'primaryMuscle' | 'kind'>) => {
+    updateTraining((current) => ({
+      ...current,
+      customExercises: current.customExercises.map((exercise) => exercise.id === id
+        ? { ...exercise, ...patch, name: patch.name.trim(), updatedAt: new Date().toISOString() }
+        : exercise),
+    }));
+  }, [updateTraining]);
+
+  const deleteCustomExercise = useCallback((id: string) => {
+    const current = trainingRef.current;
+    const inUse = current.activeSession?.exercises.some((entry) => entry.exerciseId === id)
+      || current.routines.some((routine) => routine.exercises.some((entry) => entry.exerciseId === id));
+    if (inUse) return false;
+    updateTraining((training) => ({
+      ...training,
+      customExercises: training.customExercises.filter((exercise) => exercise.id !== id),
+      deletedCustomExerciseIds: [...new Set([...training.deletedCustomExerciseIds, id])].slice(-500),
+    }));
+    return true;
+  }, [updateTraining]);
+
   // ------------------------------------------------------------- live session
 
   const startEmptyWorkout = useCallback(() => {
+    const now = new Date().toISOString();
     updateTraining((current) => current.activeSession ? current : {
       ...current,
       activeSession: {
         id: newId('workout'),
         name: 'Workout',
-        startedAt: new Date().toISOString(),
+        startedAt: now,
         exercises: [],
+        watchRevision: 1,
+        watchUpdatedAt: now,
       },
     });
   }, [updateTraining]);
@@ -159,14 +214,17 @@ export function WorkoutProvider({ children }: React.PropsWithChildren) {
       if (current.activeSession) return current;
       const routine = current.routines.find((candidate) => candidate.id === routineId);
       if (!routine) return current;
+      const now = new Date().toISOString();
       return {
         ...current,
         activeSession: {
           id: newId('workout'),
           name: routine.name,
           routineId: routine.id,
-          startedAt: new Date().toISOString(),
+          startedAt: now,
           exercises: routine.exercises.map(sessionExerciseFromRoutine),
+          watchRevision: 1,
+          watchUpdatedAt: now,
         },
       };
     });
@@ -179,8 +237,64 @@ export function WorkoutProvider({ children }: React.PropsWithChildren) {
 
   const updateActiveSession = useCallback((recipe: (session: WorkoutSession) => WorkoutSession) => {
     updateTraining((current) => current.activeSession
-      ? { ...current, activeSession: recipe(current.activeSession) }
+      ? {
+          ...current,
+          activeSession: revisionedWorkoutUpdate(
+            current.activeSession,
+            recipe(current.activeSession),
+          ),
+        }
       : current);
+  }, [updateTraining]);
+
+  const updateLiveMetricsFromWatch = useCallback((metrics: WorkoutSession['liveMetrics']) => {
+    updateTraining((current) => current.activeSession
+      ? { ...current, activeSession: { ...current.activeSession, liveMetrics: metrics } }
+      : current);
+  }, [updateTraining]);
+
+  /**
+   * Applies a complete Watch snapshot atomically. The Watch sends snapshots,
+   * rather than a stream of fragile field mutations, so an offline session can
+   * be replayed after the phone reconnects without losing weight or rep edits.
+   */
+  const upsertActiveWorkoutFromWatch = useCallback((incoming: WorkoutSession) => {
+    updateTraining((current) => {
+      if (current.sessions.some((saved) => saved.id === incoming.id)) return current;
+      const active = current.activeSession;
+      if (!isWorkoutSnapshotNewer(incoming, active)) return current;
+
+      const priorExercises = new Map((active?.exercises ?? []).map((entry) => [entry.id, entry]));
+      const exercises = incoming.exercises.map((entry) => {
+        const prior = priorExercises.get(entry.id);
+        const priorSets = new Map((prior?.sets ?? []).map((set) => [set.id, set]));
+        const info = exerciseInfo(current, entry.exerciseId);
+        const records = exerciseRecords(current, entry.exerciseId);
+        return {
+          ...entry,
+          sets: entry.sets.map((set) => {
+            const previous = priorSets.get(set.id);
+            if (!set.completed || previous?.completed) {
+              return previous?.completed && set.completed
+                ? { ...set, prFlags: previous.prFlags }
+                : set;
+            }
+            const flags = detectSetRecords(set, info.kind, records);
+            return { ...set, prFlags: flags.length ? flags : undefined };
+          }),
+        };
+      });
+
+      return {
+        ...current,
+        activeSession: {
+          ...active,
+          ...incoming,
+          exercises,
+          liveMetrics: incoming.liveMetrics ?? active?.liveMetrics,
+        },
+      };
+    });
   }, [updateTraining]);
 
   /**
@@ -188,7 +302,11 @@ export function WorkoutProvider({ children }: React.PropsWithChildren) {
    * performance, and returns any PR labels earned (evaluated against history
    * from *before* this session, Hevy-style live detection).
    */
-  const completeSet = useCallback((sessionExerciseId: string, setId: string): string[] => {
+  const completeSet = useCallback((
+    sessionExerciseId: string,
+    setId: string,
+    override: Partial<WorkoutSet> = {},
+  ): string[] => {
     const current = trainingRef.current;
     const session = current.activeSession;
     if (!session) return [];
@@ -203,9 +321,10 @@ export function WorkoutProvider({ children }: React.PropsWithChildren) {
 
     const completed: WorkoutSet = {
       ...set,
-      weightKg: set.weightKg ?? fallback?.weightKg,
-      reps: set.reps ?? fallback?.reps,
-      durationSec: set.durationSec ?? fallback?.durationSec,
+      ...override,
+      weightKg: override.weightKg ?? set.weightKg ?? fallback?.weightKg,
+      reps: override.reps ?? set.reps ?? fallback?.reps,
+      durationSec: override.durationSec ?? set.durationSec ?? fallback?.durationSec,
       completed: true,
     };
     const before = exerciseRecords(current, exerciseEntry.exerciseId);
@@ -224,6 +343,8 @@ export function WorkoutProvider({ children }: React.PropsWithChildren) {
                 ...entry,
                 sets: entry.sets.map((candidate) => candidate.id === setId ? completed : candidate),
               }),
+          watchRevision: (state.activeSession.watchRevision ?? 0) + 1,
+          watchUpdatedAt: new Date().toISOString(),
         },
       };
     });
@@ -231,7 +352,13 @@ export function WorkoutProvider({ children }: React.PropsWithChildren) {
   }, [updateTraining]);
 
   const discardActiveWorkout = useCallback(() => {
-    updateTraining((current) => ({ ...current, activeSession: null }));
+    updateTraining((current) => ({
+      ...current,
+      activeWorkoutTombstone: current.activeSession
+        ? { workoutId: current.activeSession.id, clearedAt: new Date().toISOString() }
+        : current.activeWorkoutTombstone,
+      activeSession: null,
+    }));
   }, [updateTraining]);
 
   const finishActiveWorkout = useCallback((): string | null => {
@@ -247,7 +374,13 @@ export function WorkoutProvider({ children }: React.PropsWithChildren) {
       .map((entry) => ({ ...entry, sets: entry.sets.filter((set) => set.completed) }))
       .filter((entry) => entry.sets.length > 0);
     if (!exercises.length) {
-      updateTraining((state) => ({ ...state, activeSession: null }));
+      updateTraining((state) => ({
+        ...state,
+        activeWorkoutTombstone: state.activeSession
+          ? { workoutId: state.activeSession.id, clearedAt: endedAt.toISOString() }
+          : state.activeWorkoutTombstone,
+        activeSession: null,
+      }));
       return null;
     }
     const totals = sessionTotals({ ...session, exercises });
@@ -257,6 +390,8 @@ export function WorkoutProvider({ children }: React.PropsWithChildren) {
     );
     const bodyWeight = weightsRef.current.at(-1)?.kg;
     const energy = sessionEnergy({ ...session, exercises }, current, bodyWeight, durationMin);
+    const measuredCalories = session.liveMetrics?.activeCalories;
+    const hasMeasuredCalories = measuredCalories != null && measuredCalories > 0;
     const finished: WorkoutSession = {
       ...session,
       // The live session holds the raw text of the name field, so this is the
@@ -268,13 +403,19 @@ export function WorkoutProvider({ children }: React.PropsWithChildren) {
       totalVolumeKg: totals.volumeKg,
       totalSets: totals.sets,
       records,
-      calories: energy?.calories,
-      calorieLow: energy?.calorieLow,
-      calorieHigh: energy?.calorieHigh,
-      calorieBasis: energy?.basis,
+      calories: hasMeasuredCalories ? Math.round(measuredCalories) : energy?.calories,
+      calorieLow: hasMeasuredCalories ? undefined : energy?.calorieLow,
+      calorieHigh: hasMeasuredCalories ? undefined : energy?.calorieHigh,
+      calorieBasis: hasMeasuredCalories
+        ? 'Measured live by Apple Watch during this workout.'
+        : energy?.basis,
     };
     updateTraining((state) => ({
       ...state,
+      activeWorkoutTombstone: {
+        workoutId: session.id,
+        clearedAt: finished.endedAt!,
+      },
       activeSession: null,
       sessions: [...state.sessions, finished].slice(-400),
       routines: session.routineId
@@ -283,7 +424,20 @@ export function WorkoutProvider({ children }: React.PropsWithChildren) {
           : routine)
         : state.routines,
     }));
-    if (energy) {
+    if (hasMeasuredCalories) {
+      applyOperations([{
+        type: 'workout',
+        action: 'add',
+        name: finished.name,
+        durationMin,
+        calories: Math.round(measuredCalories),
+        intensity: 'moderate',
+        confidence: 'high',
+        sourceLabel: 'Apple Watch',
+        sourceId: session.id,
+        basis: 'Active energy measured live during the HealthKit workout session.',
+      }]);
+    } else if (energy) {
       applyOperations([{
         type: 'workout',
         action: 'add',
@@ -345,10 +499,15 @@ export function WorkoutProvider({ children }: React.PropsWithChildren) {
     deleteRoutine,
     duplicateRoutine,
     importTemplateRoutine,
+    createCustomExercise,
+    updateCustomExercise,
+    deleteCustomExercise,
     startEmptyWorkout,
     startRoutine,
     resumeOrStartFromRoutine,
     updateActiveSession,
+    updateLiveMetricsFromWatch,
+    upsertActiveWorkoutFromWatch,
     completeSet,
     discardActiveWorkout,
     finishActiveWorkout,
@@ -362,10 +521,15 @@ export function WorkoutProvider({ children }: React.PropsWithChildren) {
     deleteRoutine,
     duplicateRoutine,
     importTemplateRoutine,
+    createCustomExercise,
+    updateCustomExercise,
+    deleteCustomExercise,
     startEmptyWorkout,
     startRoutine,
     resumeOrStartFromRoutine,
     updateActiveSession,
+    updateLiveMetricsFromWatch,
+    upsertActiveWorkoutFromWatch,
     completeSet,
     discardActiveWorkout,
     finishActiveWorkout,

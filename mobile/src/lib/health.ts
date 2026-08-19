@@ -110,6 +110,12 @@ async function syncAppleHealth(): Promise<HealthSnapshot> {
   const asleepMs = sleep
     .filter((sample) => [1, 3, 4, 5].includes(sample.value))
     .reduce((sum, sample) => sum + (sample.endDate.getTime() - sample.startDate.getTime()), 0);
+  const latestSampleAt = latestIso([
+    ...steps.map((sample) => sample.endDate),
+    ...calories.map((sample) => sample.endDate),
+    ...weights.map((sample) => sample.endDate),
+    ...sleep.map((sample) => sample.endDate),
+  ]);
   return {
     steps: Math.round(steps.reduce((sum, sample) => sum + sample.quantity, 0)),
     activeCalories: Math.round(calories.reduce((sum, sample) => sum + sample.quantity, 0)),
@@ -122,6 +128,7 @@ async function syncAppleHealth(): Promise<HealthSnapshot> {
       sleep: sleep.length,
       weight: weights.length,
     },
+    latestSampleAt,
     source: 'Apple Health',
   };
 }
@@ -155,6 +162,12 @@ async function syncHealthConnect(): Promise<HealthSnapshot> {
     (sum, record) => sum + (new Date(record.endTime).getTime() - new Date(record.startTime).getTime()),
     0,
   );
+  const latestSampleAt = latestIso([
+    ...steps.records.map((record) => record.endTime),
+    ...calories.records.map((record) => record.endTime),
+    ...weights.records.map((record) => record.time),
+    ...sleep.records.map((record) => record.endTime),
+  ]);
   return {
     steps: Math.round(steps.records.reduce((sum, record) => sum + record.count, 0)),
     activeCalories: Math.round(
@@ -169,6 +182,15 @@ async function syncHealthConnect(): Promise<HealthSnapshot> {
       sleep: sleep.records.length,
       weight: weights.records.length,
     },
+    latestSampleAt,
     source: 'Health Connect',
   };
+}
+
+function latestIso(values: (Date | string | undefined)[]) {
+  const valid = values
+    .filter((value): value is Date | string => Boolean(value))
+    .map((value) => new Date(value).toISOString())
+    .sort();
+  return valid.at(-1);
 }

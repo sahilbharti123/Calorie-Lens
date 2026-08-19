@@ -19,6 +19,7 @@ import { StyleSheet, View } from 'react-native';
 import 'react-native-reanimated';
 
 import { BrandMark } from '@/src/components/brand-mark';
+import { WatchWorkoutSync } from '@/src/components/watch-workout-sync';
 import { AppProvider } from '@/src/store/app-store';
 import { AuthProvider, useAuth } from '@/src/store/auth-store';
 import { WorkoutProvider } from '@/src/store/workout-store';
@@ -99,6 +100,7 @@ function SessionRouter() {
   return (
     <AppProvider>
       <WorkoutProvider>
+        <WatchWorkoutSync />
         <Stack
           screenOptions={{
             contentStyle: { backgroundColor: palette.bg },
@@ -127,6 +129,8 @@ function SessionRouter() {
             />
             <Stack.Screen name="routine-editor" options={modalScreen('Routine')} />
             <Stack.Screen name="exercise-picker" options={modalScreen('Add exercises')} />
+            <Stack.Screen name="custom-exercise" options={modalScreen('Custom exercise')} />
+            <Stack.Screen name="edit-meal" options={modalScreen('Edit food')} />
             <Stack.Screen name="workout-history" options={{ title: 'History' }} />
             <Stack.Screen name="workout/[id]" options={{ title: 'Workout' }} />
             <Stack.Screen name="exercise/[id]" options={{ headerShown: false }} />

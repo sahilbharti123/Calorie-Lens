@@ -10,6 +10,7 @@ import {
   CountUp,
   Reveal,
   ListRow,
+  Ring,
   Screen,
   ScreenHeader,
   SectionTitle,
@@ -18,7 +19,7 @@ import {
   Well,
 } from '@/src/components/ui';
 import { dateKey } from '@/src/lib/date';
-import { healthSetupCopy, healthSnapshotHasSamples, syncNativeHealth } from '@/src/lib/health';
+import { healthSnapshotHasSamples, syncNativeHealth } from '@/src/lib/health';
 import { buildInsights, type Insight } from '@/src/lib/insights';
 import { personalDailyNudge } from '@/src/lib/personalization';
 import { dayTotals } from '@/src/lib/stats';
@@ -27,6 +28,7 @@ import { completedSessions } from '@/src/lib/training';
 import { weightToTargetCopy } from '@/src/lib/weight';
 import { useApp } from '@/src/store/app-store';
 import { palette, radius, space, tabular, text } from '@/src/theme';
+import type { HealthSnapshot } from '@/src/types';
 
 type Range = '7' | '30' | '90';
 
@@ -51,8 +53,6 @@ const TONE_COLOR: Record<Insight['tone'], string> = {
   watch: palette.warn,
   neutral: palette.inkMid,
 };
-
-const HEALTH_CATEGORIES = 'Steps, activity, sleep and weight';
 
 /**
  * What the provider row is allowed to claim. The note panel underneath states
@@ -94,7 +94,6 @@ export default function ProgressScreen() {
   const [openInsight, setOpenInsight] = useState<string | null>(null);
   const provider = data.healthSync?.source
     ?? (Platform.OS === 'ios' ? 'Apple Health' : 'Health Connect');
-  const setup = healthSetupCopy();
   const days = Number(range);
   const rangeLabel = `Last ${range} days`;
 
@@ -210,7 +209,7 @@ export default function ProgressScreen() {
   const streak = loggingStreak(data);
   const hydration = Math.round((today.waterMl / data.goals.waterMl) * 100);
   const weightPrompt = data.weights.length === 0
-    ? 'Tap Log weight, then type the scale number or say it aloud.'
+    ? 'Log your first weigh-in.'
     : weightPoints.length === 1
       ? 'One weigh-in in this window. Log another and the line appears.'
       : 'No weigh-ins in this window yet. Step on the scale to restart the line.';
@@ -303,6 +302,7 @@ export default function ProgressScreen() {
             detail={`${loggedDays.length} logged ${loggedDays.length === 1 ? 'day' : 'days'}`}
             icon="bowl"
             label="Avg intake"
+            progress={adherence}
             unit="kcal"
             value={avgCalories}
           />
@@ -311,6 +311,7 @@ export default function ProgressScreen() {
             detail={`of ${days} days`}
             icon="calendar"
             label="Logged"
+            progress={loggedDays.length / days}
             unit=""
             value={loggedDays.length}
           />
@@ -319,6 +320,7 @@ export default function ProgressScreen() {
             detail={streak === 0 ? 'log today to start' : streak === 1 ? 'day in a row' : 'days in a row'}
             icon="flame"
             label="Streak"
+            progress={streak / 7}
             unit=""
             value={streak}
           />
@@ -331,9 +333,7 @@ export default function ProgressScreen() {
             <Text style={styles.cardLabel}>AVERAGE AGAINST GOAL</Text>
             <View style={styles.cardValueRow}>
               <CountUp style={styles.cardNumber} suffix="%" value={Math.round(adherence * 100)} />
-              <Text style={styles.cardCaption}>
-                of {data.goals.calories.toLocaleString()} kcal a day
-              </Text>
+              <Text style={styles.cardCaption}>target {data.goals.calories.toLocaleString()}</Text>
             </View>
             <Bar delay={220} style={styles.cardBar} value={adherence} />
             <TrendChart
@@ -344,11 +344,6 @@ export default function ProgressScreen() {
               referenceLabel="Goal"
               unit=" kcal"
             />
-            {caloriePoints.length > 1 ? (
-              <Text style={styles.chartNote}>
-                The line ends on your last complete day — today is still being logged.
-              </Text>
-            ) : null}
           </Card>
         </Reveal>
 
@@ -447,13 +442,13 @@ export default function ProgressScreen() {
           </Reveal>
         ) : (
           <Reveal index={8} style={{ marginTop: space.sm }}>
-            <Well style={styles.moved}>
-              <Glyph color={palette.inkMid} name="info" size={15} />
-              <Text style={styles.movedText}>
-                Log three days of meals and this section starts reading patterns back to you —
-                protein adherence, calorie drift, training volume, and how wide your estimates
-                are running.
-              </Text>
+            <Well style={styles.patternEmpty}>
+              <View style={styles.patternDots}>
+                <View style={styles.patternDot} />
+                <View style={[styles.patternDot, styles.patternDotMid]} />
+                <View style={styles.patternDot} />
+              </View>
+              <Text style={styles.movedText}>Patterns appear after 3 logged days.</Text>
             </Well>
           </Reveal>
         )}
@@ -483,13 +478,6 @@ export default function ProgressScreen() {
               </View>
             </View>
 
-            {data.plan.summary ? (
-              <Well style={styles.planWell}>
-                <Text style={styles.planSummary}>{data.plan.summary}</Text>
-                {data.plan.method ? <Text style={styles.planMethod}>{data.plan.method}</Text> : null}
-              </Well>
-            ) : null}
-
             <View style={styles.planRows}>
               <ListRow
                 detail="Recalculates from your profile"
@@ -513,7 +501,7 @@ export default function ProgressScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.providerName}>{provider}</Text>
                 <Text style={styles.providerMeta}>
-                  {connectionState(outcome, data.healthSync)} · {HEALTH_CATEGORIES}
+                  {connectionState(outcome, data.healthSync)}
                 </Text>
               </View>
               <Tap
@@ -542,24 +530,41 @@ export default function ProgressScreen() {
               </Well>
             ) : null}
 
-            <Well style={styles.setup}>
-              <Text style={styles.setupTitle}>{setup.title}</Text>
-              <Text style={styles.setupBody}>{setup.detail}</Text>
-              <Text style={styles.setupBody}>
-                Phone and wearable providers can reconcile samples after a delay, so totals may change after refresh.
-              </Text>
-            </Well>
-          </Card>
-        </Reveal>
+            {data.healthSync?.sampleCounts ? (
+              <View
+                accessible
+                accessibilityLabel={healthCoverageCopy(data.healthSync.sampleCounts)}
+                style={styles.healthCoverage}>
+                <Text style={styles.healthCoverageTitle}>SHARED DATA</Text>
+                <Text style={styles.healthCoverageText}>
+                  {healthCoverageCopy(data.healthSync.sampleCounts)}
+                </Text>
+                {data.healthSync.latestSampleAt ? (
+                  <Text style={styles.healthCoverageMeta}>
+                    Latest source sample {relativeTime(data.healthSync.latestSampleAt)}
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
 
-        <Reveal index={11}>
-          <Text style={styles.privacy}>
-            Health access is requested by the operating system. Vigorly reads only the categories you approve.
-          </Text>
+          </Card>
         </Reveal>
       </ScrollView>
     </Screen>
   );
+}
+
+function healthCoverageCopy(counts: NonNullable<HealthSnapshot['sampleCounts']>) {
+  const labels: [keyof typeof counts, string][] = [
+    ['steps', 'steps'],
+    ['activeCalories', 'active calories'],
+    ['sleep', 'sleep'],
+    ['weight', 'weight'],
+  ];
+  const shared = labels.filter(([key]) => counts[key] > 0).map(([, label]) => label);
+  const empty = labels.filter(([key]) => counts[key] === 0).map(([, label]) => label);
+  if (!shared.length) return 'No approved samples were returned for steps, active calories, sleep, or weight.';
+  return `${shared.join(', ')} available${empty.length ? ` · no samples returned for ${empty.join(', ')}` : ''}.`;
 }
 
 /* ------------------------------------------------------------------ *
@@ -574,6 +579,7 @@ function StatTile({
   detail,
   decimals = 0,
   accent = palette.lime,
+  progress = 0,
 }: {
   icon: GlyphName;
   label: string;
@@ -582,18 +588,20 @@ function StatTile({
   detail: string;
   decimals?: number;
   accent?: string;
+  progress?: number;
 }) {
   return (
-    <Well style={styles.tile}>
-      <View style={[styles.tileIcon, { backgroundColor: `${accent}1A` }]}>
-        <Glyph color={accent} name={icon} size={14} />
-      </View>
+    <Well accessibilityLabel={`${label}, ${Math.round(value)} ${unit}. ${detail}`} style={styles.tile}>
+      <Ring colors={[accent, accent]} size={46} thickness={4} track={`${accent}1F`} value={progress}>
+        <View style={[styles.tileIcon, { backgroundColor: `${accent}14` }]}>
+          <Glyph color={accent} name={icon} size={14} />
+        </View>
+      </Ring>
       <Text style={styles.tileLabel}>{label.toUpperCase()}</Text>
       <View style={styles.tileValueRow}>
         <CountUp decimals={decimals} style={styles.tileValue} value={value} />
         {unit ? <Text style={styles.tileUnit}>{unit}</Text> : null}
       </View>
-      <Text numberOfLines={1} style={styles.tileDetail}>{detail}</Text>
     </Well>
   );
 }
@@ -616,13 +624,14 @@ function StatRow({
   last?: boolean;
 }) {
   return (
-    <View style={[styles.statRow, !last && styles.statRowBorder]}>
+    <View
+      accessibilityLabel={`${label}, ${value}${unit}. ${detail}`}
+      style={[styles.statRow, !last && styles.statRowBorder]}>
       <View style={[styles.statRowIcon, { backgroundColor: `${accent}14` }]}>
         <Glyph color={accent} name={icon} size={16} />
       </View>
       <View style={{ flex: 1 }}>
         <Text numberOfLines={1} style={styles.statRowTitle}>{label}</Text>
-        <Text numberOfLines={1} style={styles.statRowDetail}>{detail}</Text>
       </View>
       <CountUp style={[styles.statRowValue, { color: accent }]} suffix={unit} value={value} />
     </View>
@@ -675,6 +684,10 @@ const insightStyles = {
   chevronOpen: { transform: [{ rotate: '180deg' }] },
   moved: { flexDirection: 'row' as const, alignItems: 'flex-start' as const, gap: space.sm, padding: 14 },
   movedText: { ...text.caption, color: palette.inkMid, flex: 1 },
+  patternEmpty: { alignItems: 'center' as const, gap: space.sm, paddingVertical: space.lg },
+  patternDots: { flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 7, height: 28 },
+  patternDot: { width: 8, height: 12, borderRadius: 4, backgroundColor: palette.lineHi },
+  patternDotMid: { height: 28, backgroundColor: palette.lime },
 
   /* plan */
   planRow: { flexDirection: 'row' as const, alignItems: 'center' as const },
@@ -688,9 +701,6 @@ const insightStyles = {
     marginBottom: space.xs,
   },
   planValue: { ...text.headline, fontSize: 17, color: palette.ink, textAlign: 'center' as const, ...tabular },
-  planWell: { marginTop: space.md },
-  planSummary: { ...text.body, fontSize: 12.5, color: palette.ink },
-  planMethod: { ...text.caption, fontSize: 10.5, color: palette.inkLow, marginTop: space.xs },
   planRows: { marginTop: space.sm },
 };
 
@@ -727,34 +737,30 @@ const styles = StyleSheet.create({
   targetAction: { ...text.value, fontSize: 11.5, color: palette.lime, paddingVertical: 8 },
 
   tiles: { flexDirection: 'row', gap: space.sm, marginTop: space.md },
-  tile: { flex: 1, minHeight: 112, padding: 11 },
+  tile: { flex: 1, minHeight: 124, padding: 11 },
   tileIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: space.sm,
   },
-  tileLabel: { ...text.label, fontSize: 8.5, letterSpacing: 1, color: palette.inkLow },
+  tileLabel: { ...text.label, fontSize: 8.5, letterSpacing: 1, color: palette.inkLow, marginTop: 8 },
   tileValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: space.xs, marginTop: space.xs },
   tileValue: { ...text.headline, fontSize: 18, color: palette.ink, ...tabular },
   tileUnit: { ...text.caption, fontSize: 9.5, color: palette.inkLow },
-  tileDetail: { ...text.caption, fontSize: 10, color: palette.inkLow, marginTop: space.xs },
 
   cardLabel: { ...text.label, color: palette.inkLow },
   cardValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: space.sm, marginTop: space.xs },
   cardNumber: { ...text.headline, color: palette.ink, ...tabular },
   cardCaption: { ...text.caption, fontSize: 11.5, color: palette.inkMid, flex: 1 },
   cardBar: { marginTop: space.sm },
-  chartNote: { ...text.caption, fontSize: 10.5, color: palette.inkLow, marginTop: space.xs },
 
   rowCard: { paddingHorizontal: 14 },
   statRow: { minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: 10 },
   statRowBorder: { borderBottomWidth: 1, borderBottomColor: palette.line },
   statRowIcon: { width: 34, height: 34, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   statRowTitle: { ...text.row, color: palette.ink },
-  statRowDetail: { ...text.caption, color: palette.inkLow, marginTop: space.xs },
   statRowValue: { ...text.value, ...tabular, textAlign: 'right' },
 
   meterRow: { gap: space.sm },
@@ -777,6 +783,10 @@ const styles = StyleSheet.create({
 
   message: { flexDirection: 'row', gap: space.sm, alignItems: 'flex-start', marginTop: space.md },
   messageText: { ...text.caption, color: palette.inkMid, flex: 1 },
+  healthCoverage: { marginTop: space.md, paddingTop: space.sm, borderTopWidth: 1, borderTopColor: palette.line },
+  healthCoverageTitle: { ...text.label, color: palette.inkLow },
+  healthCoverageText: { ...text.caption, color: palette.ink, marginTop: space.xs },
+  healthCoverageMeta: { ...text.micro, color: palette.inkLow, marginTop: space.xs },
 
   setup: { marginTop: space.sm },
   setupTitle: { ...text.value, fontSize: 12, color: palette.ink },

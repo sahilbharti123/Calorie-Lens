@@ -6,6 +6,7 @@ import type {
   PersonalProfile,
   PrimaryGoal,
 } from '@/src/types';
+import { buildInsights } from '@/src/lib/insights';
 
 const activityFactors = {
   'mostly-seated': 1.2,
@@ -121,7 +122,7 @@ export function calculatePersonalTargets(profile: PersonalProfile): {
   if (profile.workoutPreference === 'restarting') steps = Math.min(steps, 6000);
   steps = roundTo(clamp(steps, 5000, 12000), 500);
 
-  const trainingDays = clamp(profile.trainingDays ?? 3, 1, 7);
+  const trainingDays = clamp(profile.trainingDays ?? 3, 0, 7);
   const availableMinutes = clamp(profile.availableMinutes ?? 30, 10, 120);
   const weeklyWorkoutMinutes = roundTo(trainingDays * availableMinutes, 5);
   const strengthDays = goal === 'build-muscle'
@@ -277,6 +278,19 @@ export function personalOfflineReply(message: string, data: AppData, day: DayLog
   const proteinGap = Math.max(0, Math.round(data.goals.protein - totals.protein));
   const calorieGap = Math.round(data.goals.calories - totals.calories);
 
+  if (/how am i|how.*doing|progress|trend|this week|last week/.test(lower)) {
+    const lead = buildInsights(data, day)[0];
+    if (lead) {
+      return coachTone(profile, `${lead.title}. ${lead.body}`);
+    }
+    return coachTone(profile, 'There are not enough logged days for a weekly pattern yet. Log ordinary meals and completed workouts for three days, then ask again.');
+  }
+  if (/why.*target|how.*calculated|explain.*plan|where.*number/.test(lower)) {
+    return coachTone(
+      profile,
+      `Your plan uses ${data.plan.method}. ${data.plan.summary}. It is a starting estimate, not a diagnosis; use consistent two-to-four-week weight and training trends before changing it.`,
+    );
+  }
   if (/protein|meal|eat|food|dinner|lunch|breakfast/.test(lower)) {
     return coachTone(
       profile,
@@ -330,6 +344,9 @@ function proteinSuggestion(profile: PersonalProfile, proteinGap: number) {
 }
 
 function workoutSuggestion(profile: PersonalProfile, goals: Goals) {
+  if (profile.trainingDays === 0 || goals.weeklyWorkoutMinutes === 0) {
+    return 'Your plan currently has no scheduled training days. Treat this as a recovery phase, keep movement within your clinician’s guidance, and add a day when you are ready.';
+  }
   const days = profile.trainingDays ?? Math.max(1, goals.strengthDays);
   const minutes = profile.availableMinutes ?? Math.round(goals.weeklyWorkoutMinutes / days);
   if (profile.primaryGoal === 'build-muscle') {

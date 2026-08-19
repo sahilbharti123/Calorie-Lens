@@ -151,8 +151,8 @@ export default function TrainScreen() {
         <ScreenHeader
           eyebrow={
             week.workouts
-              ? `${week.workouts} session${week.workouts === 1 ? '' : 's'} in the last 7 days`
-              : 'No sessions in the last 7 days'
+              ? `${week.workouts} session${week.workouts === 1 ? '' : 's'} this week`
+              : 'Ready when you are'
           }
           title="Train"
         />
@@ -190,8 +190,8 @@ export default function TrainScreen() {
                   <CountUp style={styles.heroNumber} value={week.volumeKg} />
                   <Text style={styles.heroSub}>
                     {week.workouts
-                      ? `kg across ${week.workouts} session${week.workouts === 1 ? '' : 's'} in the last 7 days`
-                      : 'kg logged in the last 7 days — today is a good day to start'}
+                      ? `kg · ${week.workouts} session${week.workouts === 1 ? '' : 's'}`
+                      : 'kg · start your first session'}
                   </Text>
                 </View>
                 <View style={styles.heroBadge}>
@@ -227,18 +227,18 @@ export default function TrainScreen() {
                   style={styles.heroButton}
                 />
               )}
-              <Text style={styles.heroHint}>Log sets as you go · rest timer · PR detection</Text>
             </Card>
           )}
         </Reveal>
 
         {active ? (
           <Reveal index={2} style={styles.weekRow}>
-            <Metric icon="dumbbell" label="Workouts" value={String(week.workouts)} />
+            <Metric icon="dumbbell" label="Workouts" progress={week.workouts / 3} value={String(week.workouts)} />
             <Metric
               accent={palette.info}
               icon="timer"
               label="Time"
+              progress={week.minutes / Math.max(1, data.goals.weeklyWorkoutMinutes)}
               value={week.minutes ? formatDuration(week.minutes * 60) : '0m'}
             />
             <Metric
@@ -277,8 +277,8 @@ export default function TrainScreen() {
                             <Text numberOfLines={1} style={styles.routineName}>{routine.name}</Text>
                             <Text numberOfLines={1} style={styles.routineMeta}>
                               {routine.exercises.length
-                                ? `${routine.exercises.length} exercise${routine.exercises.length === 1 ? '' : 's'} · ${shape.sets} sets · ~${shape.minutes}m`
-                                : 'Tap to add exercises'}
+                                ? `${routine.exercises.length} exercises · ${shape.sets} sets · ${shape.minutes}m`
+                                : 'Add exercises'}
                             </Text>
                           </View>
                         </Tap>
@@ -408,9 +408,12 @@ export default function TrainScreen() {
               })}
             </Card>
           ) : (
-            <Text style={styles.templateHint}>
-              Proven starter programs and splits, ready to import in one tap.
-            </Text>
+            <View style={styles.templatePreview}>
+              {TEMPLATE_ROUTINE_SEEDS.slice(0, 3).map((seed) => (
+                <View key={seed.name} style={styles.templateDot} />
+              ))}
+              <Text style={styles.templateHint}>Starter programs</Text>
+            </View>
           )}
         </Reveal>
 
@@ -442,8 +445,7 @@ export default function TrainScreen() {
                 <View style={styles.muscleFoot}>
                   <Glyph color={palette.inkLow} name="info" size={13} />
                   <Text style={styles.muscleHint}>
-                    10–20 hard sets per muscle per week is a common hypertrophy guideline. Amber
-                    marks a muscle under {WEEKLY_MIN_SETS} this week.
+                    10–20 sets / muscle · amber is under {WEEKLY_MIN_SETS}
                   </Text>
                 </View>
               </Card>
@@ -494,7 +496,7 @@ export default function TrainScreen() {
                   onPress={startEmpty}
                 />
               }
-              body="Finish your first session and your history, records and charts appear here."
+              body="Finish a session to reveal history and records."
               icon="chart"
               title="No workouts logged"
             />
@@ -641,14 +643,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  heroHint: {
-    ...text.caption,
-    fontSize: 10.5,
-    color: palette.inkLow,
-    textAlign: 'center',
-    marginTop: space.sm,
-  },
-
   heroStat: { flex: 1 },
   heroStatLabel: { ...text.label, fontSize: 8.5, letterSpacing: 1, color: palette.inkLow },
   heroStatValue: { ...text.value, fontSize: 14, color: palette.ink, marginTop: space.xs, ...tabular },
@@ -710,7 +704,9 @@ const styles = StyleSheet.create({
 
   /* templates */
   listCard: { paddingHorizontal: 14 },
-  templateHint: { ...text.caption, color: palette.inkLow, marginTop: space.xs },
+  templatePreview: { flexDirection: 'row', alignItems: 'center', gap: 7, minHeight: 34 },
+  templateDot: { width: 26, height: 5, borderRadius: 3, backgroundColor: palette.lineHi },
+  templateHint: { ...text.caption, color: palette.inkLow, marginLeft: 2 },
   templateRow: {
     minHeight: 66,
     flexDirection: 'row',

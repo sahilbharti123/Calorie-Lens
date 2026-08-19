@@ -2,6 +2,7 @@ import * as Haptics from 'expo-haptics';
 import { type Href, useRouter } from 'expo-router';
 import { type ComponentProps, useState } from 'react';
 import {
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -21,11 +22,33 @@ import {
   Reveal,
   Screen,
   SectionTitle,
+  Tap,
 } from '@/src/components/ui';
 import { useApp } from '@/src/store/app-store';
 import { targetWeightError } from '@/src/lib/weight';
 import { palette, radius, space, tabular, text } from '@/src/theme';
 import type { Goals } from '@/src/types';
+
+const PROFILE_OPTIONS = {
+  activityLevel: [
+    ['mostly-seated', 'Mostly seated'], ['lightly-active', 'Lightly active'],
+    ['active', 'Active'], ['very-active', 'Very active'],
+  ],
+  goalPace: [['gentle', 'Gentle'], ['steady', 'Steady'], ['ambitious', 'Ambitious']],
+  workoutPreference: [
+    ['gym', 'Gym'], ['walking', 'Walking'], ['home', 'Home'], ['mixed', 'Mixed'], ['restarting', 'Restarting'],
+  ],
+  experienceLevel: [['new', 'New'], ['some', 'Some'], ['experienced', 'Experienced']],
+  dietStyle: [
+    ['home-indian', 'Home Indian'], ['vegetarian', 'Vegetarian'], ['vegan', 'Vegan'],
+    ['mixed', 'Mixed'], ['high-protein', 'High protein'],
+  ],
+  mainChallenge: [
+    ['portions', 'Portions'], ['protein', 'Protein'], ['cravings', 'Cravings'],
+    ['time', 'Time'], ['consistency', 'Consistency'],
+  ],
+  coachingTone: [['gentle', 'Gentle'], ['direct', 'Direct'], ['data-led', 'Data-led']],
+} as const;
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -44,20 +67,32 @@ export default function SettingsScreen() {
   const [weightKg, setWeightKg] = useState(currentWeight ? String(currentWeight) : '');
   const [targetWeightKg, setTargetWeightKg] = useState(data.profile.targetWeightKg ? String(data.profile.targetWeightKg) : '');
   const [bowlMl, setBowlMl] = useState(data.estimation.bowlMl ? String(data.estimation.bowlMl) : '');
+  const [profile, setProfile] = useState(data.profile);
+  const [trainingDays, setTrainingDays] = useState(String(data.profile.trainingDays ?? 3));
+  const [availableMinutes, setAvailableMinutes] = useState(String(data.profile.availableMinutes ?? 30));
+  const [mealsPerDay, setMealsPerDay] = useState(String(data.profile.mealsPerDay ?? 3));
+  const [allergies, setAllergies] = useState(data.profile.allergies.join(', '));
+  const [injuries, setInjuries] = useState(data.profile.injuries.join(', '));
 
   function save() {
     const parsedWeight = Number(weightKg);
     const parsedTargetWeight = Number(targetWeightKg);
     const parsedBowl = Number(bowlMl);
+    const parsedStrengthDays = Number(values.strengthDays);
     savePersonalization(
       {
-        ...data.profile,
+        ...profile,
         weightKg: Number.isFinite(parsedWeight) && parsedWeight > 0
           ? Math.min(250, Math.max(35, parsedWeight))
           : data.profile.weightKg,
         targetWeightKg: Number.isFinite(parsedTargetWeight) && parsedTargetWeight > 0
           ? Math.min(250, Math.max(35, parsedTargetWeight))
           : undefined,
+        trainingDays: clampInteger(trainingDays, 0, 7, profile.trainingDays ?? 3),
+        availableMinutes: clampInteger(availableMinutes, 5, 180, profile.availableMinutes ?? 30),
+        mealsPerDay: clampInteger(mealsPerDay, 1, 8, profile.mealsPerDay ?? 3),
+        allergies: splitList(allergies),
+        injuries: splitList(injuries),
       },
       Number.isFinite(parsedBowl) && parsedBowl > 0
         ? Math.min(1000, Math.max(50, parsedBowl))
@@ -71,12 +106,19 @@ export default function SettingsScreen() {
       waterMl: Math.max(250, Number(values.waterMl) || data.goals.waterMl),
       steps: Math.max(500, Number(values.steps) || data.goals.steps),
       weeklyWorkoutMinutes: Math.max(
-        10,
-        Number(values.weeklyWorkoutMinutes) || data.goals.weeklyWorkoutMinutes,
+        0,
+        values.weeklyWorkoutMinutes.trim() !== '' && Number.isFinite(Number(values.weeklyWorkoutMinutes))
+          ? Number(values.weeklyWorkoutMinutes)
+          : data.goals.weeklyWorkoutMinutes,
       ),
       strengthDays: Math.min(
         7,
-        Math.max(0, Number(values.strengthDays) || data.goals.strengthDays),
+        Math.max(
+          0,
+          values.strengthDays.trim() !== '' && Number.isFinite(parsedStrengthDays)
+            ? parsedStrengthDays
+            : data.goals.strengthDays,
+        ),
       ),
     });
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -103,7 +145,10 @@ export default function SettingsScreen() {
         style={styles.flex}>
         <ScrollView
           contentContainerStyle={styles.content}
+          keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
+          onScrollBeginDrag={Keyboard.dismiss}
+          onTouchMove={Keyboard.dismiss}
           showsVerticalScrollIndicator={false}
           style={styles.flex}>
 
@@ -186,6 +231,62 @@ export default function SettingsScreen() {
 
           {/* ---------- Daily goals ---------- */}
           <Reveal index={3}>
+            <SectionTitle title="Plan preferences" />
+            <Card style={styles.preferencesCard}>
+              <ChoiceField
+                label="Daily activity"
+                onChange={(value) => setProfile((current) => ({ ...current, activityLevel: value }))}
+                options={PROFILE_OPTIONS.activityLevel}
+                value={profile.activityLevel ?? 'lightly-active'}
+              />
+              <ChoiceField
+                label="Goal pace"
+                onChange={(value) => setProfile((current) => ({ ...current, goalPace: value }))}
+                options={PROFILE_OPTIONS.goalPace}
+                value={profile.goalPace ?? 'gentle'}
+              />
+              <ChoiceField
+                label="Training style"
+                onChange={(value) => setProfile((current) => ({ ...current, workoutPreference: value }))}
+                options={PROFILE_OPTIONS.workoutPreference}
+                value={profile.workoutPreference ?? 'mixed'}
+              />
+              <ChoiceField
+                label="Experience"
+                onChange={(value) => setProfile((current) => ({ ...current, experienceLevel: value }))}
+                options={PROFILE_OPTIONS.experienceLevel}
+                value={profile.experienceLevel ?? 'some'}
+              />
+              <ChoiceField
+                label="Diet style"
+                onChange={(value) => setProfile((current) => ({ ...current, dietStyle: value }))}
+                options={PROFILE_OPTIONS.dietStyle}
+                value={profile.dietStyle ?? 'mixed'}
+              />
+              <ChoiceField
+                label="Main challenge"
+                onChange={(value) => setProfile((current) => ({ ...current, mainChallenge: value }))}
+                options={PROFILE_OPTIONS.mainChallenge}
+                value={profile.mainChallenge ?? 'consistency'}
+              />
+              <ChoiceField
+                label="Coach style"
+                onChange={(value) => setProfile((current) => ({ ...current, coachingTone: value }))}
+                options={PROFILE_OPTIONS.coachingTone}
+                value={profile.coachingTone ?? 'gentle'}
+              />
+              <View style={styles.grid}>
+                <Field label="Training days" onChangeText={setTrainingDays} unit="/ week" value={trainingDays} />
+                <Field label="Time available" onChangeText={setAvailableMinutes} unit="min" value={availableMinutes} />
+                <Field label="Meals per day" onChangeText={setMealsPerDay} unit="meals" value={mealsPerDay} />
+              </View>
+              <TextField label="Allergies" onChangeText={setAllergies} placeholder="e.g. dairy, peanuts" value={allergies} />
+              <TextField label="Injuries or limitations" onChangeText={setInjuries} placeholder="e.g. sore right knee" value={injuries} />
+              <Text style={styles.helper}>Separate multiple items with commas. Coach suggestions use these limits, but do not replace clinical advice.</Text>
+            </Card>
+          </Reveal>
+
+          <Reveal index={4}>
             <SectionTitle title="Daily goals" />
             <Card>
               <View style={styles.grid}>
@@ -241,7 +342,7 @@ export default function SettingsScreen() {
             </Card>
           </Reveal>
 
-          <Reveal index={4}>
+          <Reveal index={5}>
             <Text style={styles.note}>
               Food and exercise values remain estimates. Vigorly shows the source and range before saving.
             </Text>
@@ -254,6 +355,65 @@ export default function SettingsScreen() {
       </KeyboardAvoidingView>
     </Screen>
   );
+}
+
+function ChoiceField<T extends string>({
+  label,
+  onChange,
+  options,
+  value,
+}: {
+  label: string;
+  onChange: (value: T) => void;
+  options: readonly (readonly [T, string])[];
+  value: T;
+}) {
+  return (
+    <View style={styles.choiceField}>
+      <Text style={styles.fieldLabel}>{label.toUpperCase()}</Text>
+      <View style={styles.choices}>
+        {options.map(([option, title]) => {
+          const selected = value === option;
+          return (
+            <Tap
+              accessibilityLabel={`${label}: ${title}${selected ? ', selected' : ''}`}
+              accessibilityRole="button"
+              key={option}
+              onPress={() => onChange(option)}
+              style={[styles.choice, selected && styles.choiceSelected]}>
+              <Text style={[styles.choiceText, selected && styles.choiceTextSelected]}>{title}</Text>
+            </Tap>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+function TextField(props: { label: string; onChangeText: (value: string) => void; placeholder: string; value: string }) {
+  return (
+    <View style={styles.choiceField}>
+      <Text style={styles.fieldLabel}>{props.label.toUpperCase()}</Text>
+      <TextInput
+        accessibilityLabel={props.label}
+        onChangeText={props.onChangeText}
+        placeholder={props.placeholder}
+        placeholderTextColor={palette.inkLow}
+        returnKeyType="done"
+        style={[styles.shell, styles.textInput]}
+        value={props.value}
+      />
+    </View>
+  );
+}
+
+function splitList(value: string) {
+  return [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))];
+}
+
+function clampInteger(value: string, min: number, max: number, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, Math.round(parsed))) : fallback;
 }
 
 /** Dark numeric field: inset well, hairline border that lights up on focus. */
@@ -276,6 +436,7 @@ function Field({
           keyboardType="number-pad"
           selectTextOnFocus
           {...props}
+          accessibilityLabel={props.accessibilityLabel ?? `${label}, ${unit}`}
           onBlur={() => setFocused(false)}
           onChangeText={(next) => onChangeText(next.replace(/[^\d.]/g, ''))}
           onFocus={() => setFocused(true)}
@@ -309,6 +470,13 @@ const styles = StyleSheet.create({
   heroBody: { ...text.caption, color: palette.inkMid, marginTop: 5 },
 
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  preferencesCard: { gap: 18 },
+  choiceField: { gap: 7 },
+  choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  choice: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 13, borderRadius: radius.pill, borderWidth: 1, borderColor: palette.lineHi, backgroundColor: palette.surfaceLo },
+  choiceSelected: { borderColor: palette.lime, backgroundColor: palette.limeSoft },
+  choiceText: { ...text.caption, color: palette.inkMid },
+  choiceTextSelected: { color: palette.lime },
   field: { flexBasis: '40%', flexGrow: 1, gap: 7 },
   fieldLabel: { ...text.label, color: palette.inkLow },
   shell: {
@@ -330,6 +498,7 @@ const styles = StyleSheet.create({
     color: palette.ink,
     paddingVertical: 14,
   },
+  textInput: { ...text.body, color: palette.ink, paddingHorizontal: 13, paddingVertical: 12 },
   unit: { ...text.caption, fontSize: 10.5, color: palette.inkLow },
 
   linkCard: { paddingHorizontal: 14 },

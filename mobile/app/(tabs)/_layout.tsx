@@ -44,10 +44,10 @@ export default function TabLayout() {
 function GlassTabBar({ state, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, { bottom: Math.max(insets.bottom, 8) }]}>
       <BlurView intensity={Platform.OS === 'ios' ? 60 : 0} style={StyleSheet.absoluteFill} tint="dark" />
       <View style={[StyleSheet.absoluteFill, styles.tint]} />
-      <View style={[styles.row, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+      <View style={styles.row}>
         {state.routes.map((route, index) => {
           const focused = state.index === index;
           return (
@@ -118,21 +118,26 @@ function TabButton({
 const styles = StyleSheet.create({
   wrap: {
     position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    borderTopWidth: 1,
-    borderTopColor: palette.line,
+    left: 12,
+    right: 12,
+    borderWidth: 1,
+    borderColor: palette.lineHi,
+    borderRadius: 28,
     overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.38,
+    shadowRadius: 20,
+    elevation: 16,
   },
   tint: { backgroundColor: Platform.OS === 'ios' ? 'rgba(7,9,10,0.62)' : 'rgba(7,9,10,0.97)' },
-  row: { flexDirection: 'row', paddingTop: 10 },
-  tab: { flex: 1, alignItems: 'center', gap: 3 },
-  iconWrap: { width: 40, height: 28, alignItems: 'center', justifyContent: 'center' },
+  row: { flexDirection: 'row', paddingVertical: 9 },
+  tab: { flex: 1, alignItems: 'center', gap: 2 },
+  iconWrap: { width: 42, height: 30, alignItems: 'center', justifyContent: 'center' },
   halo: {
     position: 'absolute',
-    width: 40,
-    height: 28,
+    width: 42,
+    height: 30,
     borderRadius: radius.pill,
     backgroundColor: 'rgba(198, 255, 60, 0.14)',
   },

@@ -1,6 +1,6 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Keyboard, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 
 import { Glyph } from '@/src/components/glyph';
@@ -76,7 +76,13 @@ export default function WorkoutDetailScreen() {
   return (
     <Screen edges={['bottom']}>
       <Stack.Screen options={{ title: celebrate ? 'Workout complete' : session.name }} />
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardDismissMode="on-drag"
+        keyboardShouldPersistTaps="handled"
+        onScrollBeginDrag={Keyboard.dismiss}
+        onTouchMove={Keyboard.dismiss}
+        showsVerticalScrollIndicator={false}>
         {celebrate ? (
           <Celebration
             meta={`Workout #${training.sessions.length} saved${prSets.length ? ` · ${prSets.length} personal record${prSets.length > 1 ? 's' : ''}` : ''}`}
@@ -164,7 +170,9 @@ export default function WorkoutDetailScreen() {
                   <Glyph color={palette.fat} name="flame" size={16} />
                 </View>
                 <Text style={styles.energyTitle}>
-                  ~{session.calorieLow}–{session.calorieHigh} active kcal (midpoint {session.calories})
+                  {session.calorieLow != null && session.calorieHigh != null
+                    ? `~${session.calorieLow}–${session.calorieHigh} active kcal (midpoint ${session.calories})`
+                    : `${session.calories} active kcal measured by Apple Watch`}
                 </Text>
               </View>
               <Text style={styles.energyBasis}>{session.calorieBasis}</Text>
@@ -182,9 +190,11 @@ export default function WorkoutDetailScreen() {
                 accessibilityLabel="Routine name"
                 autoFocus
                 onChangeText={setRoutineName}
+                onSubmitEditing={saveAsRoutine}
                 placeholder={session.name}
                 placeholderTextColor={palette.inkLow}
                 selectionColor={palette.lime}
+                returnKeyType="done"
                 style={styles.routineInput}
                 value={routineName}
               />

@@ -18,6 +18,7 @@ import {
   SectionTitle,
   Tap,
   VoiceBar,
+  Well,
 } from '@/src/components/ui';
 import { friendlyDay, greeting } from '@/src/lib/date';
 import { mealGroupToOperation, recentMealGroups, savedMealToOperation, type MealGroup } from '@/src/lib/meals';
@@ -45,19 +46,26 @@ export default function TodayScreen() {
     applyOperations,
     dismissVaultReset,
     reportHealthSyncError,
+    removeMealBatch,
     saveMeal,
     vaultReset,
   } = useApp();
   const [healthBusy, setHealthBusy] = useState(false);
+  const [undoBatch, setUndoBatch] = useState<{ id: string; label: string } | null>(null);
 
   const totals = dayTotals(today);
-  const burned = workoutTotals(today);
+  const loggedWorkoutEnergy = workoutTotals(today).calories;
+  const burnedCalories = today.activeCalories > 0 ? today.activeCalories : loggedWorkoutEnergy;
+  const burnedSource = today.activeCalories > 0
+    ? (data.healthSync?.source ?? 'connected health')
+    : 'logged workouts';
   const goal = Math.max(1, data.goals.calories);
   const remaining = Math.round(data.goals.calories - totals.calories);
   const ratio = totals.calories / goal;
   const over = remaining < 0;
   const recentMeals = useMemo(() => recentMealGroups(data, 3), [data]);
   const nextSlot = slotForTime();
+  const firstName = (session?.user.displayName ?? 'there').trim().split(/\s+/)[0];
 
   async function syncHealth() {
     if (healthBusy) return;
@@ -74,12 +82,16 @@ export default function TodayScreen() {
   }
 
   function repeatRecent(group: MealGroup) {
-    applyOperations([mealGroupToOperation(group)]);
+    const batchId = mealBatchId();
+    applyOperations([{ ...mealGroupToOperation(group, nextSlot), batchId }]);
+    setUndoBatch({ id: batchId, label: group.name });
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   }
 
   function repeatSaved(meal: SavedMeal) {
-    applyOperations([savedMealToOperation(meal)]);
+    const batchId = mealBatchId();
+    applyOperations([{ ...savedMealToOperation(meal, nextSlot), batchId }]);
+    setUndoBatch({ id: batchId, label: meal.name });
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   }
 
@@ -99,10 +111,9 @@ export default function TodayScreen() {
               </View>
             </Tap>
           }
-          title="Today"
+          eyebrow={friendlyDay()}
+          title={`${greeting()}, ${firstName}`}
         />
-
-        <Text style={styles.dayline}>{friendlyDay()} · {greeting()}</Text>
 
         <HealthFreshness
           busy={healthBusy}
@@ -165,10 +176,12 @@ export default function TodayScreen() {
               {/* `flame` is the streak glyph on this screen and nothing else —
                   energy burned reads as `trend` in `palette.fat`, so one icon
                   never carries two meanings 12pt apart. */}
-              {burned.calories > 0 ? (
+              {burnedCalories > 0 ? (
                 <View style={styles.burnRow}>
                   <Glyph color={palette.fat} name="trend" size={12} />
-                  <Text style={styles.burnText}>+{Math.round(burned.calories)} burned today</Text>
+                  <Text style={styles.burnText}>
+                    +{Math.round(burnedCalories)} active kcal · {burnedSource}
+                  </Text>
                 </View>
               ) : null}
             </View>
@@ -184,7 +197,7 @@ export default function TodayScreen() {
         {/* ---------- Log ---------- */}
         <Reveal index={2} style={styles.voice}>
           <VoiceBar
-            label="Say it or type it — review before saving"
+            label="Speak or type"
             slot={nextSlot}
             title={`Log ${slotLabels[nextSlot].toLowerCase()}`}
           />
@@ -220,6 +233,20 @@ export default function TodayScreen() {
                   />
                 ))}
             </View>
+            {undoBatch ? (
+              <Well style={styles.repeatUndo}>
+                <Text numberOfLines={1} style={styles.repeatUndoText}>{undoBatch.label} logged</Text>
+                <Tap
+                  accessibilityLabel={`Undo logging ${undoBatch.label}`}
+                  onPress={() => {
+                    removeMealBatch(undoBatch.id);
+                    setUndoBatch(null);
+                  }}
+                  style={styles.repeatUndoAction}>
+                  <Text style={styles.repeatUndoActionText}>UNDO</Text>
+                </Tap>
+              </Well>
+            ) : null}
           </View>
         ) : null}
 
@@ -239,6 +266,7 @@ export default function TodayScreen() {
             icon="water"
             label="Water"
             onPress={() => router.push('/water-log' as Href)}
+            progress={today.waterMl / Math.max(1, data.goals.waterMl)}
             value={`${(today.waterMl / 1000).toFixed(1)} L`}
           />
           <Metric
@@ -246,6 +274,7 @@ export default function TodayScreen() {
             detail={`${data.goals.steps.toLocaleString()} goal`}
             icon="steps"
             label="Steps"
+            progress={today.steps / Math.max(1, data.goals.steps)}
             value={today.steps.toLocaleString()}
           />
           <Metric
@@ -253,6 +282,7 @@ export default function TodayScreen() {
             detail={today.sleepHours ? 'From Health' : 'Not synced'}
             icon="sleep"
             label="Sleep"
+            progress={(today.sleepHours ?? 0) / 8}
             value={today.sleepHours ? `${today.sleepHours} h` : '—'}
           />
         </Reveal>
@@ -295,8 +325,6 @@ export default function TodayScreen() {
 const styles = StyleSheet.create({
   content: { paddingHorizontal: space.md, paddingBottom: space.tabClearance },
 
-  dayline: { ...text.body, color: palette.inkMid, marginTop: -10, marginBottom: space.md },
-
   notice: { borderColor: `${palette.warn}44`, marginBottom: space.sm },
   noticeHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 7 },
   noticeTitle: { ...text.row, color: palette.ink },
@@ -336,12 +364,17 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: palette.line,
     paddingVertical: 8,
+    marginBottom: space.md,
   },
   healthIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   healthTitle: { ...text.value, color: palette.ink },
   healthDetail: { ...text.caption, color: palette.inkMid, marginTop: 2 },
   repeatSection: { marginTop: space.sm },
   repeatList: { borderTopWidth: 1, borderBottomWidth: 1, borderColor: palette.line },
+  repeatUndo: { marginTop: space.sm, minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  repeatUndoText: { ...text.caption, color: palette.ink, flex: 1 },
+  repeatUndoAction: { minWidth: 64, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  repeatUndoActionText: { ...text.label, color: palette.lime },
   repeatRow: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: space.sm },
   repeatCopy: { flex: 1 },
   repeatName: { ...text.row, color: palette.ink },
@@ -365,16 +398,18 @@ function HealthFreshness({
   const nativeHealth = Platform.OS === 'ios' || Platform.OS === 'android';
   const title = record?.source ?? (Platform.OS === 'ios' ? 'Apple Health' : 'Health Connect');
   const detail = !nativeHealth
-    ? 'Available in iOS and Android builds'
+    ? 'Native app only'
     : busy
-    ? 'Refreshing approved data…'
+    ? 'Refreshing…'
     : record?.status === 'error'
-      ? 'Needs attention · tap to retry'
+      ? 'Tap to retry'
       : record?.status === 'empty'
-        ? 'Connected · no shared samples yet'
-        : record?.lastSuccessAt
-          ? `Synced ${relativeTime(record.lastSuccessAt)}`
-          : 'Not connected · tap to set up';
+        ? 'No shared data'
+        : record?.latestSampleAt
+          ? `Latest sample ${relativeTime(record.latestSampleAt)}`
+          : record?.lastSuccessAt
+          ? `Checked ${relativeTime(record.lastSuccessAt)}`
+          : 'Tap to connect';
   const color = record?.status === 'error'
     ? palette.danger
     : record?.status === 'current'
@@ -436,6 +471,10 @@ function slotForTime(): MealSlot {
   if (hour < 15) return 'lunch';
   if (hour < 18) return 'snack';
   return 'dinner';
+}
+
+function mealBatchId() {
+  return `meal-batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function relativeTime(iso: string) {

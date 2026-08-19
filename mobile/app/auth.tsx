@@ -1,6 +1,7 @@
 import { type ComponentProps, useState } from 'react';
 import {
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -61,7 +62,7 @@ export default function AuthScreen() {
       setError('Tell us what to call you.');
       return;
     }
-    if (mode !== 'recover' && password.length < 10) {
+    if (mode === 'signup' && password.length < 10) {
       setError('Use at least 10 characters for your password.');
       return;
     }
@@ -121,22 +122,26 @@ export default function AuthScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.flex}>
         <ScrollView
+          testID="auth-form-scroll"
           contentContainerStyle={styles.content}
+          keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
+          onScrollBeginDrag={Keyboard.dismiss}
+          onTouchMove={Keyboard.dismiss}
           showsVerticalScrollIndicator={false}>
           <Reveal>
             <View style={styles.brandRow}>
               <BrandMark size={64} />
               <View style={styles.brandCopy}>
-                <Text style={styles.wordmark}>VIGORLY</Text>
-                <Text style={styles.kicker}>SECURE · SYNCED · YOURS</Text>
+                <Text maxFontSizeMultiplier={1.35} style={styles.wordmark}>VIGORLY</Text>
+                <Text maxFontSizeMultiplier={1.35} style={styles.kicker}>SECURE · SYNCED · YOURS</Text>
               </View>
             </View>
           </Reveal>
 
           <Reveal index={1} style={styles.intro}>
-            <Text accessibilityRole="header" style={styles.title}>{title}</Text>
-            <Text style={styles.subtitle}>
+            <Text accessibilityRole="header" maxFontSizeMultiplier={1.6} style={styles.title}>{title}</Text>
+            <Text maxFontSizeMultiplier={2} style={styles.subtitle}>
               {mode === 'recover'
                 ? 'We’ll email a secure link. Your password is handled by Supabase Auth and is never stored in your fitness data.'
                 : 'Sign in to securely back up your plan, meals, workouts and progress with Supabase.'}
@@ -151,7 +156,7 @@ export default function AuthScreen() {
             <Reveal index={2}>
               <Tap accessibilityLabel="Back to sign in" onPress={() => changeMode('login')} style={styles.backLink}>
                 <Glyph color={palette.lime} name="chevron" size={14} />
-                <Text style={styles.linkText}>Back to sign in</Text>
+                <Text maxFontSizeMultiplier={1.8} style={styles.linkText}>Back to sign in</Text>
               </Tap>
             </Reveal>
           )}
@@ -195,7 +200,7 @@ export default function AuthScreen() {
               setError('');
               setMessage('');
             }} style={styles.forgot}>
-              <Text style={styles.linkText}>Forgot password?</Text>
+              <Text maxFontSizeMultiplier={1.8} style={styles.linkText}>Forgot password?</Text>
             </Tap>
           ) : null}
 
@@ -237,7 +242,7 @@ export default function AuthScreen() {
 
             <View style={styles.divider}>
               <View style={styles.rule} />
-              <Text style={styles.dividerLabel}>OR</Text>
+              <Text maxFontSizeMultiplier={1.5} style={styles.dividerLabel}>OR</Text>
               <View style={styles.rule} />
             </View>
 
@@ -246,13 +251,13 @@ export default function AuthScreen() {
               label="Use guest mode on this device"
               onPress={continueOffline}
             />
-            <Text style={styles.offlineNote}>
+            <Text maxFontSizeMultiplier={2} style={styles.offlineNote}>
               Guest data stays encrypted on this device. If you create an account later, Vigorly will merge it into your private cloud vault.
             </Text>
           </Reveal>
 
           <Reveal index={6} style={styles.privacyWrap}>
-            <Text style={styles.privacy}>
+            <Text maxFontSizeMultiplier={2} style={styles.privacy}>
               Vigorly is a fitness tracker, not medical care. Food and exercise values are estimates.
             </Text>
           </Reveal>
@@ -269,9 +274,13 @@ function Field({
   const [focused, setFocused] = useState(false);
   return (
     <View style={styles.field}>
-      <Text style={styles.fieldLabel}>{label.toUpperCase()}</Text>
+      <Text maxFontSizeMultiplier={1.8} style={styles.fieldLabel}>{label.toUpperCase()}</Text>
       <TextInput
         {...props}
+        accessibilityLabel={props.accessibilityLabel ?? label}
+        maxFontSizeMultiplier={2}
+        onSubmitEditing={props.onSubmitEditing ?? Keyboard.dismiss}
+        returnKeyType={props.returnKeyType ?? 'done'}
         onBlur={() => setFocused(false)}
         onFocus={() => setFocused(true)}
         placeholderTextColor={palette.inkLow}
@@ -294,7 +303,7 @@ function Notice({
   return (
     <View style={[styles.notice, { borderColor: `${hue}33`, backgroundColor: `${hue}10` }]}>
       <Glyph color={hue} name={icon} size={15} />
-      <Text style={[styles.noticeText, { color: hue }]}>{body}</Text>
+      <Text maxFontSizeMultiplier={2} style={[styles.noticeText, { color: hue }]}>{body}</Text>
     </View>
   );
 }

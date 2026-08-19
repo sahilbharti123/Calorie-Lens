@@ -13,6 +13,7 @@ import { dateKey } from '@/src/lib/date';
 import { healthMetricHasSamples, healthSnapshotHasSamples } from '@/src/lib/health';
 import { mergeSavedMeals, savedMealFromGroup, type MealGroup } from '@/src/lib/meals';
 import { calculatePersonalTargets } from '@/src/lib/personalization';
+import { metricByNewest, resolveMealLocations } from '@/src/lib/sync-merge';
 import {
   readEncryptedJson,
   removeEncryptedJson,
@@ -228,6 +229,17 @@ function unionById<T extends { id: string }>(left: T[], right: T[]) {
   return [...values.values()];
 }
 
+function mergeMeals(left: MealItem[], right: MealItem[]) {
+  const values = new Map<string, MealItem>();
+  for (const value of [...left, ...right]) {
+    const existing = values.get(value.id);
+    if (!existing || (value.updatedAt ?? value.loggedAt) >= (existing.updatedAt ?? existing.loggedAt)) {
+      values.set(value.id, value);
+    }
+  }
+  return [...values.values()];
+}
+
 export function mergeAppData(localInput: Partial<AppData>, remoteInput: Partial<AppData>) {
   const local = normalizeData(localInput);
   const remote = normalizeData(remoteInput);
@@ -263,22 +275,59 @@ export function mergeAppData(localInput: Partial<AppData>, remoteInput: Partial<
       };
       continue;
     }
+    const water = metricByNewest(
+      localDay.waterMl,
+      localDay.waterUpdatedAt,
+      remoteDay.waterMl,
+      remoteDay.waterUpdatedAt,
+    );
+    const steps = metricByNewest(
+      localDay.steps,
+      localDay.stepsUpdatedAt,
+      remoteDay.steps,
+      remoteDay.stepsUpdatedAt,
+    );
+    const activeCalories = metricByNewest(
+      localDay.activeCalories,
+      localDay.activeCaloriesUpdatedAt,
+      remoteDay.activeCalories,
+      remoteDay.activeCaloriesUpdatedAt,
+    );
+    const sleep = metricByNewest(
+      localDay.sleepHours,
+      localDay.sleepUpdatedAt,
+      remoteDay.sleepHours,
+      remoteDay.sleepUpdatedAt,
+    );
     days[date] = {
       ...remoteDay,
       ...localDay,
-      meals: unionById(remoteDay.meals, localDay.meals)
+      meals: mergeMeals(remoteDay.meals, localDay.meals)
         .filter((meal) => !deletedMealIds.includes(meal.id)),
       workouts: unionById(remoteDay.workouts, localDay.workouts)
         .filter((workout) => !deletedWorkoutIds.includes(workout.id)),
-      // Water accumulates, so the larger figure is the more complete one.
-      waterMl: Math.max(remoteDay.waterMl, localDay.waterMl),
-      // Steps, active energy and sleep are *set* rather than added — by a health
-      // sync or by the user correcting a mistyped figure. Taking the maximum
-      // silently reverted every correction downwards, so the local value wins.
-      steps: localDay.steps || remoteDay.steps,
-      activeCalories: localDay.activeCalories || remoteDay.activeCalories,
-      sleepHours: localDay.sleepHours || remoteDay.sleepHours,
+      // These metrics can be corrected downwards (including to zero), so truth
+      // is determined by the newest write rather than the largest/truthy value.
+      waterMl: water.value,
+      waterUpdatedAt: water.updatedAt,
+      steps: steps.value,
+      stepsUpdatedAt: steps.updatedAt,
+      activeCalories: activeCalories.value,
+      activeCaloriesUpdatedAt: activeCalories.updatedAt,
+      sleepHours: sleep.value,
+      sleepUpdatedAt: sleep.updatedAt,
     };
+  }
+  // A meal can be moved to another date. Resolve duplicate IDs globally after
+  // per-day merging so the newest edited location wins on every device.
+  const mealLocations = resolveMealLocations(
+    Object.fromEntries(Object.entries(days).map(([date, day]) => [date, day.meals])),
+  );
+  for (const day of Object.values(days)) day.meals = [];
+  for (const { date, meal } of mealLocations) {
+    const destination = days[date] ?? emptyDay(date);
+    destination.meals.push(meal);
+    days[date] = destination;
   }
   const weights = new Map<string, WeightPoint>();
   for (const point of [...remote.weights, ...local.weights]) weights.set(point.date, point);
@@ -333,8 +382,12 @@ type AppContextValue = {
   dismissVaultReset: () => void;
   syncState: SyncState;
   syncError: string;
+  /** Last cloud round-trip completed by this running app session. */
+  lastSyncedAt: string;
   applyOperations: (operations: LogOperation[]) => void;
   removeMeal: (id: string) => void;
+  removeMealBatch: (batchId: string) => void;
+  updateMeal: (id: string, patch: Partial<MealItem>, targetDate?: string) => void;
   removeWorkout: (id: string) => void;
   saveMeal: (group: MealGroup) => void;
   removeSavedMeal: (id: string) => void;
@@ -352,6 +405,7 @@ type AppContextValue = {
   replaceData: (data: Partial<AppData>) => void;
   syncNow: () => Promise<void>;
   clearLocalData: () => Promise<void>;
+  clearFitnessHistory: () => void;
 };
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -366,9 +420,11 @@ export function AppProvider({ children }: React.PropsWithChildren) {
   const [cloudVersion, setCloudVersion] = useState(0);
   const [syncState, setSyncState] = useState<SyncState>('offline');
   const [syncError, setSyncError] = useState('');
+  const [lastSyncedAt, setLastSyncedAt] = useState('');
   const dataRef = useRef(data);
   const versionRef = useRef(cloudVersion);
   const syncingRef = useRef(false);
+  const syncQueuedRef = useRef(false);
   /** Newest vault snapshot still owed to disk, or null when nothing is pending. */
   const pendingWriteRef = useRef<{ key: string; envelope: StoredEnvelope } | null>(null);
 
@@ -383,17 +439,21 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     let active = true;
     setHydrated(false);
     setSyncState(session ? 'syncing' : 'offline');
+    setLastSyncedAt('');
     async function load() {
       const key = storageKey(scope);
       let saved = await readEncryptedJson<StoredEnvelope | AppData>(key);
       if (!saved && !session) {
         saved = await readEncryptedJson<AppData>(LEGACY_STORAGE_KEY);
       }
-      if (!saved && session) {
-        saved = await readEncryptedJson<StoredEnvelope | AppData>(storageKey('guest'))
+      let guestSaved: StoredEnvelope | AppData | null = null;
+      if (session) {
+        guestSaved = await readEncryptedJson<StoredEnvelope | AppData>(storageKey('guest'))
           ?? await readEncryptedJson<AppData>(LEGACY_STORAGE_KEY);
       }
-      const localData = normalizeData(isEnvelope(saved) ? saved.data : saved);
+      const accountData = normalizeData(isEnvelope(saved) ? saved.data : saved);
+      const guestData = normalizeData(isEnvelope(guestSaved) ? guestSaved.data : guestSaved);
+      const localData = guestSaved ? mergeAppData(accountData, guestData) : accountData;
       let nextData = localData;
       let nextVersion = isEnvelope(saved) ? saved.cloudVersion : 0;
       if (session) {
@@ -412,6 +472,11 @@ export function AppProvider({ children }: React.PropsWithChildren) {
           }
           nextVersion = uploaded.version;
           setSyncState('synced');
+          setLastSyncedAt(new Date().toISOString());
+          if (guestSaved) {
+            await removeEncryptedJson(storageKey('guest'));
+            await removeEncryptedJson(LEGACY_STORAGE_KEY);
+          }
         } catch (error) {
           setSyncState('error');
           setSyncError(error instanceof Error ? error.message : 'Cloud sync failed.');
@@ -452,28 +517,43 @@ export function AppProvider({ children }: React.PropsWithChildren) {
   const dismissVaultReset = useCallback(() => setVaultReset(false), []);
 
   const syncNow = useCallback(async () => {
-    if (!session || !hydrated || syncingRef.current) {
+    if (!session || !hydrated) {
       if (!session) setSyncState('offline');
       return;
     }
+    if (syncingRef.current) {
+      syncQueuedRef.current = true;
+      return;
+    }
     syncingRef.current = true;
-    setSyncState('syncing');
-    setSyncError('');
     try {
-      let response;
-      let nextData = dataRef.current;
-      try {
-        response = await writeCloudSnapshot(nextData, versionRef.current);
-      } catch (error) {
-        if (!(error instanceof CloudConflictError)) throw error;
-        nextData = mergeAppData(nextData, error.snapshot.payload);
-        setData(nextData);
-        dataRef.current = nextData;
-        response = await writeCloudSnapshot(nextData, error.snapshot.version);
-      }
-      setCloudVersion(response.version);
-      versionRef.current = response.version;
-      setSyncState('synced');
+      do {
+        syncQueuedRef.current = false;
+        setSyncState('syncing');
+        setSyncError('');
+        const remote = await readCloudSnapshot(session.user.id);
+        let nextData = remote.payload && Object.keys(remote.payload).length
+          ? mergeAppData(dataRef.current, remote.payload)
+          : dataRef.current;
+        if (nextData !== dataRef.current) {
+          setData(nextData);
+          dataRef.current = nextData;
+        }
+        let response;
+        try {
+          response = await writeCloudSnapshot(nextData, remote.version);
+        } catch (error) {
+          if (!(error instanceof CloudConflictError)) throw error;
+          nextData = mergeAppData(nextData, error.snapshot.payload);
+          setData(nextData);
+          dataRef.current = nextData;
+          response = await writeCloudSnapshot(nextData, error.snapshot.version);
+        }
+        setCloudVersion(response.version);
+        versionRef.current = response.version;
+        setSyncState('synced');
+        setLastSyncedAt(new Date().toISOString());
+      } while (syncQueuedRef.current);
     } catch (error) {
       setSyncState('error');
       setSyncError(error instanceof Error ? error.message : 'Cloud sync failed.');
@@ -520,12 +600,13 @@ export function AppProvider({ children }: React.PropsWithChildren) {
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'background' || state === 'inactive') flushLocalWrite();
+      if (state === 'active') void syncNow();
     });
     return () => {
       subscription.remove();
       flushLocalWrite();
     };
-  }, [flushLocalWrite]);
+  }, [flushLocalWrite, syncNow]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -557,18 +638,24 @@ export function AppProvider({ children }: React.PropsWithChildren) {
             id: id('meal'),
             slot: operation.slot,
             loggedAt,
+            updatedAt: loggedAt,
+            dayKey: dateKey(),
+            batchId: operation.batchId,
           }));
           next.meals.push(...items);
         } else if (operation.type === 'water') {
           next.waterMl = operation.action === 'set'
             ? Math.max(0, operation.amount)
             : Math.max(0, next.waterMl + operation.amount);
+          next.waterUpdatedAt = loggedAt;
         } else if (operation.type === 'steps') {
           next.steps = operation.action === 'set'
             ? Math.max(0, operation.amount)
             : Math.max(0, next.steps + operation.amount);
+          next.stepsUpdatedAt = loggedAt;
         } else if (operation.type === 'sleep') {
           next.sleepHours = Math.max(0, operation.amount);
+          next.sleepUpdatedAt = loggedAt;
         } else if (operation.type === 'workout') {
           const workout: Workout = {
             id: id('workout'),
@@ -598,12 +685,69 @@ export function AppProvider({ children }: React.PropsWithChildren) {
   }, [updateToday]);
 
   const removeMeal = useCallback((mealId: string) => {
-    updateToday((day) => ({ ...day, meals: day.meals.filter((meal) => meal.id !== mealId) }));
     setData((current) => ({
       ...current,
+      days: Object.fromEntries(Object.entries(current.days).map(([key, day]) => [key, {
+        ...day,
+        meals: day.meals.filter((meal) => meal.id !== mealId),
+      }])),
       deletedMealIds: [...new Set([...current.deletedMealIds, mealId])].slice(-1000),
     }));
-  }, [updateToday]);
+  }, []);
+
+  const removeMealBatch = useCallback((batchId: string) => {
+    setData((current) => {
+      const removedIds: string[] = [];
+      const days = Object.fromEntries(Object.entries(current.days).map(([key, day]) => [key, {
+        ...day,
+        meals: day.meals.filter((meal) => {
+          if (meal.batchId !== batchId) return true;
+          removedIds.push(meal.id);
+          return false;
+        }),
+      }]));
+      return {
+        ...current,
+        days,
+        deletedMealIds: [...new Set([...current.deletedMealIds, ...removedIds])].slice(-1000),
+      };
+    });
+  }, []);
+
+  const updateMeal = useCallback((mealId: string, patch: Partial<MealItem>, targetDate?: string) => {
+    setData((current) => {
+      let found: MealItem | undefined;
+      let sourceDate = '';
+      for (const [key, day] of Object.entries(current.days)) {
+        const meal = day.meals.find((candidate) => candidate.id === mealId);
+        if (meal) { found = meal; sourceDate = key; break; }
+      }
+      if (!found) return current;
+      const destinationDate = targetDate ?? sourceDate;
+      const updatedAt = new Date().toISOString();
+      const updated: MealItem = {
+        ...found,
+        ...patch,
+        id: found.id,
+        dayKey: destinationDate,
+        updatedAt,
+        loggedAt: destinationDate === sourceDate
+          ? found.loggedAt
+          : `${destinationDate}T12:00:00.000Z`,
+      };
+      const days = { ...current.days };
+      days[sourceDate] = {
+        ...days[sourceDate],
+        meals: days[sourceDate].meals.filter((meal) => meal.id !== mealId),
+      };
+      const destination = days[destinationDate] ?? emptyDay(destinationDate);
+      days[destinationDate] = {
+        ...destination,
+        meals: [...destination.meals.filter((meal) => meal.id !== mealId), updated],
+      };
+      return { ...current, days };
+    });
+  }, []);
 
   const removeWorkout = useCallback((workoutId: string) => {
     updateToday((day) => ({
@@ -696,15 +840,21 @@ export function AppProvider({ children }: React.PropsWithChildren) {
   }, []);
 
   const applyHealthSnapshot = useCallback((snapshot: HealthSnapshot) => {
+    const updatedAt = new Date().toISOString();
     updateToday((day) => ({
       ...day,
       steps: healthMetricHasSamples(snapshot, 'steps') ? (snapshot.steps ?? day.steps) : day.steps,
+      stepsUpdatedAt: healthMetricHasSamples(snapshot, 'steps') ? updatedAt : day.stepsUpdatedAt,
       activeCalories: healthMetricHasSamples(snapshot, 'activeCalories')
         ? (snapshot.activeCalories ?? day.activeCalories)
         : day.activeCalories,
+      activeCaloriesUpdatedAt: healthMetricHasSamples(snapshot, 'activeCalories')
+        ? updatedAt
+        : day.activeCaloriesUpdatedAt,
       sleepHours: healthMetricHasSamples(snapshot, 'sleep')
         ? (snapshot.sleepHours ?? day.sleepHours)
         : day.sleepHours,
+      sleepUpdatedAt: healthMetricHasSamples(snapshot, 'sleep') ? updatedAt : day.sleepUpdatedAt,
     }));
     setData((current) => {
       const now = new Date().toISOString();
@@ -717,6 +867,8 @@ export function AppProvider({ children }: React.PropsWithChildren) {
           status: hasSamples ? 'current' as const : 'empty' as const,
           lastAttemptAt: now,
           lastSuccessAt: now,
+          latestSampleAt: snapshot.latestSampleAt,
+          sampleCounts: snapshot.sampleCounts,
           message: hasSamples
             ? `Updated from ${snapshot.source}.`
             : `Connected to ${snapshot.source}, but no shared samples were found.`,
@@ -838,6 +990,27 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     }
   }, [scope, session]);
 
+  const clearFitnessHistory = useCallback(() => {
+    setData((current) => ({
+      ...current,
+      days: {},
+      weights: [],
+      coachMessages: [],
+      coachMemory: initialCoachMemory,
+      deletedMealIds: [],
+      deletedWorkoutIds: [],
+      training: {
+        ...current.training,
+        sessions: [],
+        activeSession: null,
+        deletedSessionIds: [],
+        activeWorkoutTombstone: current.training.activeSession
+          ? { workoutId: current.training.activeSession.id, clearedAt: new Date().toISOString() }
+          : current.training.activeWorkoutTombstone,
+      },
+    }));
+  }, []);
+
   const today = data.days[dateKey()] ?? emptyDay();
   const value = useMemo<AppContextValue>(() => ({
     data,
@@ -847,8 +1020,11 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     dismissVaultReset,
     syncState,
     syncError,
+    lastSyncedAt,
     applyOperations,
     removeMeal,
+    removeMealBatch,
+    updateMeal,
     removeWorkout,
     saveMeal,
     removeSavedMeal,
@@ -866,6 +1042,7 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     replaceData,
     syncNow,
     clearLocalData,
+    clearFitnessHistory,
   }), [
     data,
     today,
@@ -874,8 +1051,11 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     dismissVaultReset,
     syncState,
     syncError,
+    lastSyncedAt,
     applyOperations,
     removeMeal,
+    removeMealBatch,
+    updateMeal,
     removeWorkout,
     saveMeal,
     removeSavedMeal,
@@ -893,6 +1073,7 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     replaceData,
     syncNow,
     clearLocalData,
+    clearFitnessHistory,
   ]);
 
   return (

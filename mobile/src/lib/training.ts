@@ -32,6 +32,7 @@ export const initialTraining: TrainingData = {
   sessions: [],
   activeSession: null,
   customExercises: [],
+  deletedCustomExerciseIds: [],
   deletedRoutineIds: [],
   deletedSessionIds: [],
   defaultRestSec: 90,
@@ -46,11 +47,16 @@ export function normalizeTraining(saved?: Partial<TrainingData> | null): Trainin
     routines: saved?.routines ?? [],
     sessions: saved?.sessions ?? [],
     activeSession: saved?.activeSession ?? null,
-    customExercises: saved?.customExercises ?? [],
+    customExercises: (saved?.customExercises ?? []).map((exercise) => ({
+      ...exercise,
+      updatedAt: exercise.updatedAt ?? exercise.createdAt,
+    })),
+    deletedCustomExerciseIds: saved?.deletedCustomExerciseIds ?? [],
     deletedRoutineIds: saved?.deletedRoutineIds ?? [],
     deletedSessionIds: saved?.deletedSessionIds ?? [],
     defaultRestSec: saved?.defaultRestSec ?? 90,
     rpeEnabled: saved?.rpeEnabled ?? false,
+    activeWorkoutTombstone: saved?.activeWorkoutTombstone,
     updatedAt: saved?.updatedAt ?? '',
   };
 }
@@ -65,10 +71,32 @@ export function mergeTraining(local: TrainingData, remote: TrainingData): Traini
   }
   const sessions = new Map<string, WorkoutSession>();
   for (const session of [...remote.sessions, ...local.sessions]) sessions.set(session.id, session);
-  const customs = new Map(
-    [...remote.customExercises, ...local.customExercises].map((custom) => [custom.id, custom] as const),
-  );
+  const deletedCustomExerciseIds = [...new Set([
+    ...local.deletedCustomExerciseIds,
+    ...remote.deletedCustomExerciseIds,
+  ])].slice(-500);
+  const customs = new Map<string, TrainingData['customExercises'][number]>();
+  for (const custom of [...remote.customExercises, ...local.customExercises]) {
+    const existing = customs.get(custom.id);
+    if (!existing || custom.updatedAt >= existing.updatedAt) customs.set(custom.id, custom);
+  }
   const newestSettings = (local.updatedAt || '') >= (remote.updatedAt || '') ? local : remote;
+  const tombstones = [local.activeWorkoutTombstone, remote.activeWorkoutTombstone]
+    .filter((value): value is NonNullable<TrainingData['activeWorkoutTombstone']> => Boolean(value))
+    .sort((a, b) => a.clearedAt.localeCompare(b.clearedAt));
+  const activeWorkoutTombstone = tombstones.at(-1);
+  const activeCandidates = [local.activeSession, remote.activeSession]
+    .filter((value): value is WorkoutSession => Boolean(value))
+    .filter((session) => !(
+      activeWorkoutTombstone?.workoutId === session.id
+      && activeWorkoutTombstone.clearedAt >= (session.watchUpdatedAt ?? session.startedAt)
+    ))
+    .sort((a, b) => {
+      const revisionDifference = (a.watchRevision ?? 0) - (b.watchRevision ?? 0);
+      return revisionDifference || (a.watchUpdatedAt ?? a.startedAt).localeCompare(
+        b.watchUpdatedAt ?? b.startedAt,
+      );
+    });
   return {
     routines: [...routines.values()]
       .filter((routine) => !deletedRoutineIds.includes(routine.id))
@@ -77,12 +105,14 @@ export function mergeTraining(local: TrainingData, remote: TrainingData): Traini
       .filter((session) => !deletedSessionIds.includes(session.id))
       .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
       .slice(-400),
-    activeSession: local.activeSession ?? remote.activeSession ?? null,
-    customExercises: [...customs.values()],
+    activeSession: activeCandidates.at(-1) ?? null,
+    customExercises: [...customs.values()].filter((exercise) => !deletedCustomExerciseIds.includes(exercise.id)),
+    deletedCustomExerciseIds,
     deletedRoutineIds,
     deletedSessionIds,
     defaultRestSec: newestSettings.defaultRestSec,
     rpeEnabled: newestSettings.rpeEnabled,
+    activeWorkoutTombstone,
     updatedAt: [local.updatedAt, remote.updatedAt].sort().at(-1) ?? '',
   };
 }

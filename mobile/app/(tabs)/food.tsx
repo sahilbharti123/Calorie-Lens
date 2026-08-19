@@ -1,5 +1,6 @@
-import { useRouter } from 'expo-router';
+import { type Href, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Glyph, type GlyphName } from '@/src/components/glyph';
@@ -12,6 +13,7 @@ import {
   Pill,
   PrimaryButton,
   Reveal,
+  Ring,
   Screen,
   ScreenHeader,
   SectionTitle,
@@ -37,7 +39,8 @@ const BAND_HEIGHT = 12;
 
 export default function FoodScreen() {
   const router = useRouter();
-  const { applyOperations, data, today, removeMeal, removeSavedMeal } = useApp();
+  const { applyOperations, data, today, removeMeal, removeMealBatch, removeSavedMeal } = useApp();
+  const [undoBatch, setUndoBatch] = useState<{ id: string; label: string } | null>(null);
 
   const totals = dayTotals(today);
   const logged = today.meals.length;
@@ -140,6 +143,12 @@ export default function FoodScreen() {
               </Text>
             </View>
 
+            <View style={styles.macroDials}>
+              <MacroDial color={macroColor.protein} goal={data.goals.protein} label="Protein" value={totals.protein} />
+              <MacroDial color={macroColor.carbs} goal={data.goals.carbs} label="Carbs" value={totals.carbs} />
+              <MacroDial color={macroColor.fat} goal={data.goals.fat} label="Fat" value={totals.fat} />
+            </View>
+
             {/* The one entry costing the most certainty, one tap from a fix. */}
             {widest ? (
               <Well style={styles.tighten}>
@@ -149,7 +158,7 @@ export default function FoodScreen() {
                   icon="alert"
                   last
                   onPress={() =>
-                    router.push({ pathname: '/quick-log', params: { slot: widest.meal.slot } })
+                    router.push({ pathname: '/edit-meal', params: { id: widest.meal.id } } as unknown as Href)
                   }
                   title={widest.meal.name}
                   unit="kcal"
@@ -162,7 +171,7 @@ export default function FoodScreen() {
 
         {/* ---------- Log ---------- */}
         <Reveal index={2} style={styles.voice}>
-          <VoiceBar label="Say “2 rotis and one bowl dal”" />
+          <VoiceBar label="Speak or type" />
         </Reveal>
 
         {data.savedMeals.length ? (
@@ -180,7 +189,9 @@ export default function FoodScreen() {
                       key={meal.id}
                       last={index === Math.min(data.savedMeals.length, 6) - 1}
                       onPress={() => {
-                        applyOperations([savedMealToOperation(meal)]);
+                        const batchId = `meal-batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+                        applyOperations([{ ...savedMealToOperation(meal, slotForTime()), batchId }]);
+                        setUndoBatch({ id: batchId, label: meal.name });
                         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                       }}
                       right={
@@ -201,6 +212,25 @@ export default function FoodScreen() {
                 })}
               </Card>
             </Reveal>
+            {undoBatch ? (
+              <Reveal index={4}>
+                <Well style={styles.undoWell}>
+                  <View style={styles.undoCopy}>
+                    <Glyph color={palette.lime} name="check" size={16} />
+                    <Text numberOfLines={1} style={styles.undoText}>{undoBatch.label} logged</Text>
+                  </View>
+                  <Tap
+                    accessibilityLabel={`Undo logging ${undoBatch.label}`}
+                    onPress={() => {
+                      removeMealBatch(undoBatch.id);
+                      setUndoBatch(null);
+                    }}
+                    style={styles.undoButton}>
+                    <Text style={styles.undoButtonText}>UNDO</Text>
+                  </Tap>
+                </Well>
+              </Reveal>
+            ) : null}
           </>
         ) : null}
 
@@ -220,9 +250,9 @@ export default function FoodScreen() {
                   onPress={() => router.push('/quick-log')}
                 />
               }
-              body="Type or say what you ate. Vigorly estimates calories and macros, then lets you review before saving."
+              body="Speak or type a meal. Review it, then save."
               icon="bowl"
-              title="Your day starts with one sentence"
+              title="Nothing logged yet"
             />
           </Reveal>
         ) : null}
@@ -254,7 +284,12 @@ export default function FoodScreen() {
                 </Tap>
 
                 {meals.map((meal) => (
-                  <MealRow key={meal.id} meal={meal} onRemove={() => removeMeal(meal.id)} />
+                  <MealRow
+                    key={meal.id}
+                    meal={meal}
+                    onEdit={() => router.push({ pathname: '/edit-meal', params: { id: meal.id } } as unknown as Href)}
+                    onRemove={() => removeMeal(meal.id)}
+                  />
                 ))}
               </Card>
             </Reveal>
@@ -266,7 +301,7 @@ export default function FoodScreen() {
 }
 
 /** One logged item: calories loud, macros quiet, delete always reachable. */
-function MealRow({ meal, onRemove }: { meal: MealItem; onRemove: () => void }) {
+function MealRow({ meal, onEdit, onRemove }: { meal: MealItem; onEdit: () => void; onRemove: () => void }) {
   const energy =
     meal.calorieLow != null && meal.calorieHigh != null
       ? `${meal.calorieLow}–${meal.calorieHigh}`
@@ -297,12 +332,21 @@ function MealRow({ meal, onRemove }: { meal: MealItem; onRemove: () => void }) {
       </View>
 
       <Tap
+        accessibilityLabel={`Edit ${meal.name}`}
+        hitSlop={8}
+        onPress={onEdit}
+        scaleTo={0.88}
+        style={styles.rowAction}>
+        <Glyph color={palette.lime} name="edit" size={16} />
+      </Tap>
+
+      <Tap
         accessibilityLabel={`Delete ${meal.name}`}
         haptic="medium"
         hitSlop={10}
         onPress={onRemove}
         scaleTo={0.88}
-        style={styles.trash}>
+        style={styles.rowAction}>
         <Glyph color={palette.inkLow} name="trash" size={16} />
       </Tap>
     </View>
@@ -314,6 +358,27 @@ function MacroTag({ symbol, value, color }: { symbol: string; value: number; col
     <View style={styles.macroTag}>
       <Text style={[styles.macroTagKey, { color }]}>{symbol}</Text>
       <Text style={styles.macroTagValue}>{value} g</Text>
+    </View>
+  );
+}
+
+function MacroDial({
+  color,
+  goal,
+  label,
+  value,
+}: {
+  color: string;
+  goal: number;
+  label: string;
+  value: number;
+}) {
+  return (
+    <View style={styles.macroDial}>
+      <Ring colors={[color, color]} size={58} thickness={5} track={`${color}1F`} value={goal > 0 ? value / goal : 0}>
+        <Text style={styles.macroDialValue}>{Math.round(value)}</Text>
+      </Ring>
+      <Text style={styles.macroDialLabel}>{label}</Text>
     </View>
   );
 }
@@ -343,6 +408,14 @@ function widestGuess(meals: MealItem[]) {
     if (!worst || high - low > worst.high - worst.low) return { meal, low, high };
     return worst;
   }, null);
+}
+
+function slotForTime(now = new Date()): MealSlot {
+  const hour = now.getHours();
+  if (hour < 11) return 'breakfast';
+  if (hour < 15) return 'lunch';
+  if (hour < 18) return 'snack';
+  return 'dinner';
 }
 
 const styles = StyleSheet.create({
@@ -393,11 +466,21 @@ const styles = StyleSheet.create({
   bandRange: { ...text.value, color: palette.ink, ...tabular },
   bandTarget: { ...text.caption, color: palette.inkLow, ...tabular },
 
+  macroDials: { flexDirection: 'row', justifyContent: 'space-around', marginTop: space.md },
+  macroDial: { alignItems: 'center', gap: 6 },
+  macroDialValue: { ...text.value, color: palette.ink, ...tabular },
+  macroDialLabel: { ...text.micro, color: palette.inkMid },
+
   tighten: { marginTop: space.md, paddingVertical: 0 },
 
   voice: { marginTop: space.md },
   savedCard: { paddingHorizontal: 14 },
   savedDelete: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  undoWell: { marginTop: space.sm, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  undoCopy: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: space.xs },
+  undoText: { ...text.caption, color: palette.ink, flex: 1 },
+  undoButton: { minWidth: 64, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  undoButtonText: { ...text.label, color: palette.lime },
   emptyWrap: { marginBottom: space.sm },
 
   slotCard: { paddingHorizontal: 14, marginBottom: space.sm },
@@ -444,7 +527,7 @@ const styles = StyleSheet.create({
   mealEnergy: { alignItems: 'flex-end' },
   mealKcal: { ...text.headline, fontSize: 17, color: palette.ink, ...tabular },
   mealKcalUnit: { ...text.label, fontSize: 7.5, letterSpacing: 1.1, color: palette.inkLow, marginTop: space.xs },
-  trash: {
+  rowAction: {
     width: 34,
     height: 34,
     borderRadius: 12,

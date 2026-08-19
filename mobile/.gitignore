@@ -38,8 +38,8 @@ yarn-error.*
 
 app-example
 
-# generated native folders
-/ios
+# The iOS project is source-controlled because Vigorly includes a native
+# HealthKit bridge and a companion watchOS target that Expo cannot reproduce.
 /android
 
 # Local agent guidance

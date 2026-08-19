@@ -39,6 +39,24 @@ export type LearnedFood = {
   updatedAt: string;
 };
 
+/** Ingredient evidence attached to one composed dish, never logged as a second meal item. */
+export type RecipeIngredient = {
+  name: string;
+  quantity?: string;
+  calories?: number;
+  protein?: number;
+  carbs?: number;
+  fat?: number;
+};
+
+export type MealRecipe = {
+  /** A broad finished-dish reference, or a calculation from this portion's ingredients. */
+  mode: 'dish-estimate' | 'ingredient-sum';
+  ingredients: RecipeIngredient[];
+  /** The exact ingredient sentence, retained so the user can edit it again. */
+  input?: string;
+};
+
 export type MealItem = {
   id: string;
   name: string;
@@ -56,6 +74,10 @@ export type MealItem = {
   assumptions?: string[];
   slot: MealSlot;
   loggedAt: string;
+  updatedAt?: string;
+  dayKey?: string;
+  batchId?: string;
+  recipe?: MealRecipe;
   source: 'usda' | 'typical' | 'label' | 'ai' | 'local' | 'manual';
 };
 
@@ -89,9 +111,13 @@ export type DayLog = {
   meals: MealItem[];
   workouts: Workout[];
   waterMl: number;
+  waterUpdatedAt?: string;
   steps: number;
+  stepsUpdatedAt?: string;
   activeCalories: number;
+  activeCaloriesUpdatedAt?: string;
   sleepHours: number;
+  sleepUpdatedAt?: string;
 };
 
 export type Goals = {
@@ -226,6 +252,31 @@ export type SessionExercise = {
   sets: WorkoutSet[];
 };
 
+/**
+ * A duration set that is currently running. Absolute timestamps make the
+ * countdown resilient to navigation, app backgrounding, and process restore.
+ */
+export type ActiveSetTimer = {
+  sessionExerciseId: string;
+  setId: string;
+  targetSec: number;
+  startedAt: string;
+  endsAt: string;
+  pausedRemainingSec?: number;
+};
+
+export type ActiveRestTimer = {
+  endsAt: number;
+  totalSec: number;
+};
+
+export type LiveWorkoutMetrics = {
+  heartRateBpm?: number;
+  activeCalories?: number;
+  source: 'Apple Watch' | 'Apple Health';
+  updatedAt: string;
+};
+
 export type WorkoutSession = {
   id: string;
   name: string;
@@ -242,6 +293,12 @@ export type WorkoutSession = {
   calorieHigh?: number;
   calorieBasis?: string;
   note?: string;
+  activeSetTimer?: ActiveSetTimer;
+  activeRestTimer?: ActiveRestTimer;
+  liveMetrics?: LiveWorkoutMetrics;
+  /** Monotonic Watch-side revision used to reject stale/offline sync packets. */
+  watchRevision?: number;
+  watchUpdatedAt?: string;
 };
 
 export type CustomExercise = {
@@ -251,6 +308,7 @@ export type CustomExercise = {
   primaryMuscle: string;
   kind: 'weight-reps' | 'reps-only' | 'duration';
   createdAt: string;
+  updatedAt: string;
 };
 
 export type TrainingData = {
@@ -258,10 +316,13 @@ export type TrainingData = {
   sessions: WorkoutSession[];
   activeSession: WorkoutSession | null;
   customExercises: CustomExercise[];
+  deletedCustomExerciseIds: string[];
   deletedRoutineIds: string[];
   deletedSessionIds: string[];
   defaultRestSec: number;
   rpeEnabled: boolean;
+  /** A workout-specific tombstone; unrelated routine edits must never clear Watch work. */
+  activeWorkoutTombstone?: { workoutId: string; clearedAt: string };
   updatedAt: string;
 };
 
@@ -306,6 +367,7 @@ export type LogOperation =
       action: 'add';
       slot: MealSlot;
       description: string;
+      batchId?: string;
       items: Omit<MealItem, 'id' | 'slot' | 'loggedAt'>[];
     }
   | { type: 'water'; action: 'add' | 'set'; amount: number }
@@ -395,6 +457,7 @@ export type HealthSnapshot = {
     sleep: number;
     weight: number;
   };
+  latestSampleAt?: string;
   source: 'Apple Health' | 'Health Connect';
 };
 
@@ -403,5 +466,7 @@ export type HealthSyncRecord = {
   status: 'current' | 'empty' | 'error';
   lastAttemptAt: string;
   lastSuccessAt?: string;
+  latestSampleAt?: string;
+  sampleCounts?: HealthSnapshot['sampleCounts'];
   message?: string;
 };

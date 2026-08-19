@@ -13,7 +13,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.advaice.calorielens",
-      "buildNumber": "8",
+      "buildNumber": "14",
       "icon": {
         "light": "./assets/images/icon.png",
         "dark": "./assets/images/icon-dark.png",
@@ -24,8 +24,7 @@
         "UIViewControllerBasedStatusBarAppearance": false,
         "NSPhotoLibraryUsageDescription": "Vigorly does not read your photo library. iOS requires this notice because a bundled framework links the photo APIs.",
         "NSPhotoLibraryAddUsageDescription": "Vigorly does not save anything to your photo library. Backups are written as files you choose a location for.",
-        "NSFaceIDUsageDescription": "Face ID unlocks the encryption key protecting your locally stored fitness data.",
-        "NSSpeechRecognitionUsageDescription": "Vigorly transcribes your dictation on this device to turn it into a food or workout entry.",
+        "NSSpeechRecognitionUsageDescription": "Vigorly uses Apple speech recognition while you dictate a food or workout entry. Processing may use an installed offline language pack or Apple’s speech service.",
         "NSMicrophoneUsageDescription": "Vigorly uses the microphone only while you are dictating a food or workout entry."
       },
       "privacyManifests": {
@@ -98,15 +97,15 @@
         "expo-speech-recognition",
         {
           "microphonePermission": "Vigorly uses the microphone only while you are dictating a food or workout entry.",
-          "speechRecognitionPermission": "Vigorly transcribes your dictation on this device to turn it into a food or workout entry."
+          "speechRecognitionPermission": "Vigorly uses operating-system speech recognition while you dictate a food or workout entry. Processing may use an installed offline language pack or the operating system’s speech service."
         }
       ],
       "expo-sqlite",
       [
         "@kingstinct/react-native-healthkit",
         {
-          "NSHealthShareUsageDescription": "Vigorly reads steps, activity, sleep, and weight to keep your fitness dashboard current.",
-          "NSHealthUpdateUsageDescription": "Vigorly can save fitness information that you explicitly confirm.",
+          "NSHealthShareUsageDescription": "Vigorly reads steps, heart rate, active energy, workouts, sleep, and weight to show live workout progress and keep your fitness dashboard current.",
+          "NSHealthUpdateUsageDescription": "Vigorly saves workouts and fitness information that you explicitly start or confirm on iPhone or Apple Watch.",
           "background": true
         }
       ],
