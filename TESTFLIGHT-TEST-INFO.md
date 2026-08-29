@@ -1,5 +1,10 @@
 # TestFlight → Test Information
 
+> **Historical beta copy.** Coach, correction flows, sync, and the exercise
+> library have changed since this was written. Refresh every statement against
+> `HANDOVER.md` and the current TestFlight candidate before pasting it into App
+> Store Connect.
+
 Paste-ready copy for the App Store Connect form, plus the Supabase settings that
 decide whether a tester can actually create an account.
 

@@ -24,7 +24,7 @@ AI endpoints. See [`DEPLOY.md`](DEPLOY.md).
   rep ranges and per-exercise rest timers; a live workout logger with the
   previous performance beside every set, set types (warm-up/failure/drop),
   optional RPE, automatic rest countdown and live PR detection; workout
-  history, per-exercise records and charts; and an 85+ exercise library with
+  history, per-exercise records and charts; and a 262-exercise library with
   step-by-step instructions and animated form demos
 - A native Apple Watch workout logger: start a synced routine or quick workout,
   enter weight and reps with the Digital Crown, run duration sets and rest

@@ -1,5 +1,11 @@
 # Vigorly — TestFlight runbook (Advaice Limited)
 
+> **Historical early-build document.** The checked-in iOS project now contains
+> a manually maintained Apple Watch target. Do **not** follow the
+> `expo prebuild --clean` instruction below; it can remove that target. Use
+> `HANDOVER.md`, `mobile/README.md`, and `mobile/RELEASE-ACCEPTANCE.md` for the
+> current workflow.
+
 Getting build **1.0.0 (2)** into TestFlight under the **Advaice Limited** team
 (`95R5R7A683`), built on your own Mac. No third-party build service is involved
 and no signing credential leaves your machine.

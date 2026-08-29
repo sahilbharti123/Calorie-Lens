@@ -1,3 +1,5 @@
+import { EXTENDED_EXERCISES } from '@/src/lib/exercise-catalog-extra';
+
 /**
  * Built-in exercise library.
  *
@@ -160,7 +162,7 @@ function ex(
   };
 }
 
-export const EXERCISES: Exercise[] = [
+const CORE_EXERCISES: Exercise[] = [
   // ------------------------------------------------------------------ chest
   ex('bench-press', 'Bench Press (Barbell)', 'chest', ['triceps', 'shoulders'], 'barbell', 'weight-reps', 'bench-press', 'barbell', 5.0, [
     'Lie on the bench with your eyes under the bar, feet flat on the floor.',
@@ -898,6 +900,9 @@ export const EXERCISES: Exercise[] = [
   ]),
 ];
 
+/** Core movements plus the extended catalog used by phone, voice, and Watch. */
+export const EXERCISES: Exercise[] = [...CORE_EXERCISES, ...EXTENDED_EXERCISES];
+
 export const TEMPLATE_ROUTINE_SEEDS: {
   name: string;
   folder: string;
@@ -991,14 +996,26 @@ export function searchExercises(options: {
   muscle?: MuscleGroup | null;
   equipment?: Equipment | null;
 }) {
-  const query = (options.query ?? '').trim().toLowerCase();
+  const normalize = (value: string) => value
+    .toLocaleLowerCase()
+    .replace(/[’']/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  const query = normalize(options.query ?? '');
   return EXERCISES.filter((exercise) => {
     if (options.muscle && exercise.primaryMuscle !== options.muscle
       && !exercise.secondaryMuscles.includes(options.muscle)) return false;
     if (options.equipment && exercise.equipment !== options.equipment) return false;
     if (!query) return true;
-    return exercise.name.toLowerCase().includes(query)
-      || exercise.aliases.some((alias) => alias.includes(query))
-      || exercise.primaryMuscle.includes(query);
+    const searchable = normalize([
+      exercise.name,
+      ...exercise.aliases,
+      exercise.primaryMuscle,
+      ...exercise.secondaryMuscles,
+      exercise.equipment,
+      exercise.kind === 'duration' ? 'timed timer' : exercise.kind === 'reps-only' ? 'bodyweight reps' : 'weight reps kg',
+    ].join(' '));
+    const tokens = query.split(/\s+/).filter(Boolean);
+    return tokens.every((token) => searchable.includes(token));
   });
 }

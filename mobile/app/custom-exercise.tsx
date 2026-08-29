@@ -31,14 +31,14 @@ function titleCase(value: string) {
 
 export default function CustomExerciseScreen() {
   const router = useRouter();
-  const { id } = useLocalSearchParams<{ id?: string }>();
+  const { id, name: suggestedName } = useLocalSearchParams<{ id?: string; name?: string }>();
   const { data } = useApp();
   const workouts = useWorkouts();
   const existing = useMemo(
     () => data.training.customExercises.find((exercise) => exercise.id === id),
     [data.training.customExercises, id],
   );
-  const [name, setName] = useState(existing?.name ?? '');
+  const [name, setName] = useState(existing?.name ?? suggestedName?.trim() ?? '');
   const [kind, setKind] = useState<ExerciseKind>(existing?.kind ?? 'weight-reps');
   const [equipment, setEquipment] = useState<Equipment>((existing?.equipment as Equipment) ?? 'other');
   const [muscle, setMuscle] = useState<MuscleGroup>((existing?.primaryMuscle as MuscleGroup) ?? 'full body');

@@ -27,6 +27,7 @@ import { emitExercisePick } from '@/src/lib/exercise-pick-bus';
 import { photosFor } from '@/src/lib/exercise-photos';
 import {
   EQUIPMENT_TYPES,
+  EXERCISES,
   MUSCLE_GROUPS,
   searchExercises,
   type Equipment,
@@ -80,6 +81,13 @@ export default function ExercisePickerScreen() {
     setEquipment(null);
   }
 
+  function customExerciseHref() {
+    const suggested = query.trim();
+    return (suggested
+      ? `/custom-exercise?name=${encodeURIComponent(suggested)}`
+      : '/custom-exercise') as Href;
+  }
+
   return (
     <Screen edges={['bottom']}>
       <Reveal>
@@ -91,7 +99,7 @@ export default function ExercisePickerScreen() {
               autoCorrect={false}
               onChangeText={setQuery}
               onSubmitEditing={Keyboard.dismiss}
-              placeholder="Search exercises"
+              placeholder={`Search ${EXERCISES.length} exercises`}
               placeholderTextColor={palette.inkLow}
               selectionColor={palette.lime}
               returnKeyType="done"
@@ -139,12 +147,12 @@ export default function ExercisePickerScreen() {
       <Reveal index={2}>
         <Tap
           accessibilityLabel="Create a custom exercise"
-          onPress={() => router.push('/custom-exercise' as Href)}
+          onPress={() => router.push(customExerciseHref())}
           scaleTo={0.97}
           style={styles.createCustom}>
           <View style={styles.createIcon}><Glyph color={palette.lime} name="plus" size={16} /></View>
           <View style={styles.rowCopy}>
-            <Text style={styles.createTitle}>Create custom exercise</Text>
+            <Text numberOfLines={1} style={styles.createTitle}>{query.trim() ? `Create “${query.trim()}”` : 'Create custom exercise'}</Text>
             <Text style={styles.createDetail}>Choose KG/reps, reps-only, or a timed movement</Text>
           </View>
           <Glyph color={palette.inkLow} name="chevron" size={15} />
@@ -162,8 +170,12 @@ export default function ExercisePickerScreen() {
           keyExtractor={(item) => item.id}
           ListEmptyComponent={(
             <EmptyState
-              action={<PrimaryButton icon="restart" label="Clear filters" onPress={clearFilters} />}
-              body="Nothing matches that combination yet. Widen the muscle or equipment filter and try again."
+              action={query.trim()
+                ? <PrimaryButton icon="plus" label={`Create “${query.trim()}”`} onPress={() => router.push(customExerciseHref())} />
+                : <PrimaryButton icon="restart" label="Clear filters" onPress={clearFilters} />}
+              body={query.trim()
+                ? 'Save it as a custom movement now, then log it like every built-in exercise.'
+                : 'Nothing matches that filter combination. Widen a filter and try again.'}
               icon="search"
               title="No exercises match"
             />

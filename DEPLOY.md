@@ -35,7 +35,7 @@ Everything except cross-device sync:
   and engine run on the device.
 - Clarifying questions when a portion, bowl size, duration, or intensity is
   missing — the app asks rather than guessing, with no model involved.
-- The whole Train tab: 100-exercise library, routines, live logging, rest
+- The whole Train tab: 262-exercise library, routines, live logging, rest
   timers, PR detection, records, and charts.
 - The Coach tab: the day's focus, your plan, and insights computed
   arithmetically from your own entries by `mobile/src/lib/insights.ts`.
